@@ -29,14 +29,20 @@ $('zoomout').onclick = () => setZoom(zoom - 0.1);
 /* Esc interrompe o turno da aba atual. Registrado no topo de propósito: os outros
    handlers de Esc (paleta, model-pop, imagens) fecham overlays sem `preventDefault`
    e rodariam depois — assim a checagem enxerga o overlay ainda aberto e um Esc de
-   "fechar" nunca aborta turno. */
+   "fechar" nunca aborta turno. Vale com o foco no composer/busca (é de lá que o
+   usuário vê o turno rodando); só o terminal embutido consome o Esc (ex.: vim). */
+/* Decisão pura do atalho Esc: aborta quando o turno trabalha, sem overlay aberto
+   e sem foco no terminal embutido (o foco no composer/busca não bloqueia). */
+export function shouldAbortOnEsc({ overlayOpen, inTerminal, working }) {
+  return !overlayOpen && !inTerminal && !!working;
+}
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
-  if (document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.settings-pop:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)')) return;
-  const tag = document.activeElement ? document.activeElement.tagName : '';
-  if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+  const overlayOpen = !!document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.settings-pop:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)');
+  const ae = document.activeElement;
+  const inTerminal = !!(ae && ae.closest && ae.closest('#termdock'));
   const t = tabs.find(x => current && x.key === current.key);
-  if (t && t.working) abortTurn();
+  if (shouldAbortOnEsc({ overlayOpen, inTerminal, working: !!(t && t.working) })) abortTurn();
 });
 
 let current = null;
@@ -331,10 +337,13 @@ function askDeleteSession(s) {
 
 async function addProject() {
   let path = '';
+  // O seletor nativo pode abrir atrás de outra janela: avisa para procurá-lo.
+  setStatus('seletor de pasta aberto — procure a janela de arquivos…');
   try {
     path = String(await inv('pick_directory')).trim();
   } catch (e) {
     if (!String(e).includes('cancelado')) setStatus(String(e));
+    else setStatus('pronto');
     return;
   }
   if (!path) return;
@@ -4466,6 +4475,8 @@ $('forkbtn').onclick = async (e) => {
   sendCommand({ type: 'get_fork_messages' });
 };
 $('detailback').onclick = closeDetail;
+// Clique fora da caixinha (no scrim) também volta — padrão dos overlays do projeto.
+$('detail').addEventListener('mousedown', (e) => { if (e.target === $('detail')) closeDetail(); });
 
 $('modeltoggle').onclick = (e) => {
   e.stopPropagation();

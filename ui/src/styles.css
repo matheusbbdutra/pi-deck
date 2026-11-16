@@ -34,7 +34,9 @@
          grid-template-rows:34px 30px 1fr; background:var(--bg); color:var(--fg);
          font:12.5px/1.6 var(--mono); overflow:hidden; }
   body.no-subs { grid-template-columns:minmax(220px,var(--w-aside)) minmax(0,1fr); }
-  body.no-subs section { display:none; }
+  /* Precisa de ID: `#rightpanel { display:flex }` (1,0,0) vence
+     `body.no-subs section` (0,1,2) e o painel nunca sumia. */
+  body.no-subs #rightpanel { display:none; }
 
   header { grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:0 12px;
            border-bottom:1px solid var(--line); background:var(--panel); }
@@ -66,7 +68,9 @@
   button.icon:hover { color:var(--accent); border-color:var(--accent); }
   button.on { color:var(--accent); border-color:var(--accent); }
 
-  aside, main { overflow-y:auto; overflow-x:hidden; min-width:0; }
+  aside, main, section { min-width:0; min-height:0; }
+  aside, main { overflow-y:auto; overflow-x:hidden; }
+  section { overflow:hidden; }
   aside { border-right:1px solid var(--line); background:var(--panel);
           display:flex; flex-direction:column; overflow:hidden; position:relative; }
   section { border-left:1px solid var(--line); background:var(--panel); min-width:0; }
@@ -272,7 +276,7 @@
   .md-code-lang { padding:4px 9px; font-family:var(--mono); font-size:10px; color:var(--mute);
                   background:var(--bg-3); border-bottom:1px solid var(--line-soft); }
   .md-code-box pre { margin:0; padding:9px 10px; font-family:var(--mono); font-size:11.5px;
-                     line-height:1.5; color:var(--ink-1); }
+                     line-height:1.5; color:var(--ink-1); overflow-x:auto; max-width:100%; }
   .scroll-x { overflow-x:auto; max-width:100%; }
   .md-table { border-collapse:collapse; font-size:12px; min-width:100%; }
   .md-table th, .md-table td { border:1px solid var(--line); padding:5px 9px;
@@ -300,7 +304,7 @@
   .tool-card.collapsed .tool-body { display:none; }
 
   /* composer */
-  .composer { position:relative; padding:12px 32px 18px; border-top:1px solid var(--line); background:var(--bg); }
+  .composer { position:relative; padding:10px 32px 14px; border-top:1px solid var(--line); background:var(--bg); }
   /* paleta de comandos / */
   .palette { position:absolute; bottom:100%; left:50%; transform:translateX(-50%);
              width:min(820px, 100%); max-height:340px; display:flex; flex-direction:column;
@@ -327,9 +331,15 @@
                      letter-spacing:.08em; color:var(--mute); }
 
   .composer-card { position:relative; width:100%; max-width:var(--composer-w, 820px); margin:0 auto; background:var(--bg-4);
-                   border:1px solid var(--line); border-radius:8px; padding:8px 10px 6px; }
-  .composer-bar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:2px; }
-  .composer-bar .spacer { flex:1; }
+                   border:1px solid var(--line); border-radius:8px; padding:6px 8px 5px; }
+  /* Uma linha só: o wrap jogava o enviar para a linha de baixo, sozinho e longe.
+     Em largura curta a barra rola na horizontal (sem scrollbar visível) em vez de quebrar. */
+  .composer-bar { display:flex; flex-wrap:nowrap; align-items:center; gap:4px; margin-top:0;
+                  overflow-x:auto; scrollbar-width:none; }
+  .composer-bar::-webkit-scrollbar { display:none; }
+  .composer-bar .spacer { flex:1 0 4px; }
+  .composer-bar > * { flex:none; }
+  .composer-bar .pill { min-width:0; }
   /* terminal embutido: tool window no rodapé da coluna principal (abaixo do composer) */
   .term-dock { flex:none; position:relative; z-index:6; display:flex; flex-direction:column;
                height:240px; background:var(--bg-4); border-top:1px solid var(--line); overflow:hidden; }
@@ -568,20 +578,29 @@
   .model-ctx { color:var(--mute); font-size:10.5px; flex:none; }
   .model-empty { padding:10px; color:var(--mute); font-size:11px; }
 
-  /* detalhe de subagent */
-  .detail { position:fixed; top:64px; left:300px; right:340px; bottom:0; background:var(--bg);
-            z-index:20; display:flex; flex-direction:column; }
-  body.no-subs .detail { right:0; }
+  /* detalhe de subagent: ocupa a célula do centro (col 2 / row 3) em vez de
+     offsets fixos — acompanha as colunas em qualquer zoom/largura. */
+  /* Detalhe do subagent: caixinha modal no meio, cobrindo a conversa principal.
+     Scrim fixo (fora do grid: imune a zoom, colunas redimensionadas e painel
+     aberto/fechado) + caixa central com o padrão dos overlays do projeto. */
+  .detail { position:fixed; inset:64px 0 0 0; z-index:30; display:flex;
+            align-items:center; justify-content:center; padding:26px;
+            background:rgba(4,6,10,.72); }
   .detail.hidden { display:none; }
+  .detail-box { width:min(960px,94vw); max-height:100%; min-height:0;
+                display:flex; flex-direction:column; overflow:hidden;
+                background:var(--bg); border:1px solid var(--line-strong);
+                border-radius:10px; box-shadow:0 24px 64px rgba(0,0,0,.6); }
   .detail-head { display:flex; align-items:center; gap:10px; padding:7px 12px;
                  border-bottom:1px solid var(--line); background:var(--panel); }
   .detail-head > button {
+    flex:none;
     background:var(--ctl-bg); border:1px solid var(--line); color:var(--dim);
     padding:4px 11px; border-radius:14px; font-family:var(--mono); font-size:11px;
     cursor:pointer; display:flex; align-items:center; gap:6px; line-height:1.3;
   }
   .detail-head > button:hover { color:var(--ink-0); border-color:var(--accent); background:var(--badge); }
-  .detail-title { font-family:var(--mono); font-size:11.5px; color:var(--dim);
+  .detail-title { flex:1; min-width:0; font-family:var(--mono); font-size:11.5px; color:var(--dim);
                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .detail-log { flex:1; overflow-y:auto; overflow-x:hidden; padding:14px 18px 24px; }
   .detail-log > * { max-width:920px; }

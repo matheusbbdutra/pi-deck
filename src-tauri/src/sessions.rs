@@ -381,8 +381,16 @@ pub fn copy_text(text: String) -> Result<(), String> {
 
 /// Abre o seletor de pasta do sistema e devolve o caminho escolhido.
 /// Seletor de arquivo para anexar como contexto (o caminho vai no texto do prompt).
+/// Async de propósito: o `zenity` bloqueia até o diálogo fechar e comando síncrono
+/// prende a thread principal do Tauri — o GNOME declara "Not Responding".
 #[tauri::command]
-pub fn pick_file() -> Result<String, String> {
+pub async fn pick_file() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(pick_file_blocking)
+        .await
+        .map_err(|e| format!("seletor de arquivo falhou: {e}"))?
+}
+
+fn pick_file_blocking() -> Result<String, String> {
     #[cfg(target_os = "linux")]
     let out = std::process::Command::new("zenity")
         .args(["--file-selection", "--title=Anexar arquivo como contexto"])
@@ -516,8 +524,17 @@ fn read_clipboard_image_linux() -> Vec<u8> {
         .unwrap_or_default()
 }
 
+/// Async pelo mesmo motivo do `pick_file`: `zenity --file-selection --directory`
+/// fica aberto (muitas vezes atrás de outra janela) e o `.output()` síncrono
+/// congelaria o app até o usuário achar e fechar o diálogo.
 #[tauri::command]
-pub fn pick_directory() -> Result<String, String> {
+pub async fn pick_directory() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(pick_directory_blocking)
+        .await
+        .map_err(|e| format!("seletor de pasta falhou: {e}"))?
+}
+
+fn pick_directory_blocking() -> Result<String, String> {
     #[cfg(target_os = "linux")]
     let out = std::process::Command::new("zenity")
         .args([

@@ -20,6 +20,7 @@ let shouldRestoreLocalRow;
 let appendCapped;
 let setZoom;
 let shouldProbeTurn;
+let shouldAbortOnEsc;
 let clampWidth;
 let clampColumns;
 let syncStopButton;
@@ -48,7 +49,7 @@ beforeAll(async () => {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn,
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
      healthChipState } = await import('../ui/src/main.js'));
 });
@@ -480,5 +481,56 @@ describe('tema por JSON', () => {
     resetTheme();
     expect(localStorage.getItem('theme')).toBe(null);
     expect(document.documentElement.style.getPropertyValue('--bg')).toBe('');
+  });
+});
+
+describe('Esc interrompe o turno', () => {
+  it('aborta com turno trabalhando e foco no composer', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: true })).toBe(true);
+  });
+
+  it('não aborta sem turno trabalhando', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: false })).toBe(false);
+  });
+
+  it('não aborta com overlay aberto (Esc é de fechar)', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: true, inTerminal: false, working: true })).toBe(false);
+  });
+
+  it('não rouba o Esc do terminal embutido', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: true, working: true })).toBe(false);
+  });
+});
+
+describe('layout com zoom', () => {
+  it('colunas laterais relativas em vez de espremer o centro', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    // Regressão: `300px 1fr 340px` fixos — com zoom a viewport CSS encolhe e o
+    // centro sumia (painel direito engolia tudo). Relativas (%/vars) escalam juntas.
+    expect(css).toMatch(/--w-aside:\s*24%;\s*--w-panel:\s*27%/);
+    expect(css).toMatch(/grid-template-columns:\s*minmax\(220px,\s*var\(--w-aside\)\)\s+minmax\(0,\s*1fr\)\s+minmax\(240px,\s*var\(--w-panel\)\)/);
+    expect(css).toMatch(/body\.no-subs\s*\{\s*grid-template-columns:\s*minmax\(220px,\s*var\(--w-aside\)\)\s+minmax\(0,\s*1fr\)/);
+    // O painel fechado some de verdade: `#rightpanel` (1,0,0) vence `section` (0,1,2).
+    expect(css).toMatch(/body\.no-subs\s+#rightpanel\s*\{\s*display:\s*none/);
+  });
+
+  it('abre como caixinha modal no meio, fora do grid', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    const html = readFileSync(resolve(process.cwd(), 'ui/index.html'), 'utf8');
+    // Regressão: célula do grid ou offsets fixos quebravam com zoom/colunas
+    // redimensionadas (virava terceira coluna ou cortava o transcript). Agora é
+    // scrim fixo + caixa central, imune ao layout das colunas.
+    expect(css).not.toMatch(/\.detail\s*\{[^}]*grid-column/);
+    expect(css).not.toMatch(/\.detail\s*\{[^}]*left:\s*300px/);
+    expect(css).toMatch(/\.detail\s*\{[^}]*position:\s*fixed[^}]*align-items:\s*center[^}]*justify-content:\s*center/);
+    expect(css).toMatch(/\.detail-box\s*\{/);
+    expect(html).toContain('class="detail-box"');
+    // Título longo (worker id) não pode empurrar a caixa: flex com piso zero.
+    expect(css).toMatch(/\.detail-title\s*\{[^}]*flex:\s*1[^}]*min-width:\s*0/);
+  });
+
+  it('bloco de código rola em vez de cortar linha longa', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    expect(css).toMatch(/\.md-code-box pre\s*\{[^}]*overflow-x:\s*auto/);
   });
 });
