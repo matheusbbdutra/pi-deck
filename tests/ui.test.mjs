@@ -20,6 +20,7 @@ let shouldRestoreLocalRow;
 let appendCapped;
 let setZoom;
 let shouldProbeTurn;
+let shouldAbortOnEsc;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -42,7 +43,7 @@ beforeAll(async () => {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn } = await import('../ui/src/main.js'));
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -225,5 +226,39 @@ describe('tema por JSON', () => {
     resetTheme();
     expect(localStorage.getItem('theme')).toBe(null);
     expect(document.documentElement.style.getPropertyValue('--bg')).toBe('');
+  });
+});
+
+describe('Esc interrompe o turno', () => {
+  it('aborta com turno trabalhando e foco no composer', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: true })).toBe(true);
+  });
+
+  it('não aborta sem turno trabalhando', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: false })).toBe(false);
+  });
+
+  it('não aborta com overlay aberto (Esc é de fechar)', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: true, inTerminal: false, working: true })).toBe(false);
+  });
+
+  it('não rouba o Esc do terminal embutido', () => {
+    expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: true, working: true })).toBe(false);
+  });
+});
+
+describe('layout com zoom', () => {
+  it('colunas laterais cedem (minmax) em vez de espremer o centro', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    // Regressão: `300px 1fr 340px` fixos — com zoom a viewport CSS encolhe e o
+    // centro sumia (painel direito engolia tudo). minmax deixa as laterais ceder.
+    expect(css).toMatch(/grid-template-columns:\s*clamp\(150px,\s*23%,\s*320px\)\s+minmax\(0,\s*1fr\)\s+clamp\(170px,\s*27%,\s*360px\)/);
+    expect(css).toMatch(/body\.no-subs\s*\{\s*grid-template-columns:\s*clamp\(150px,\s*23%,\s*320px\)\s+minmax\(0,\s*1fr\)/);
+  });
+
+  it('detalhe do subagent ocupa a célula do centro, sem offsets fixos', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    expect(css).not.toMatch(/\.detail\s*\{[^}]*left:\s*300px/);
+    expect(css).toMatch(/\.detail\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*3/);
   });
 });
