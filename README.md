@@ -9,7 +9,7 @@ Sessions grouped by project, live subagent runs, and a transcript that reads lik
 
 [![Release](https://img.shields.io/github/v/release/matheusbbdutra/pi-deck?label=release&color=7aa2f7)](https://github.com/matheusbbdutra/pi-deck/releases/latest)
 [![License](https://img.shields.io/github/license/matheusbbdutra/pi-deck?color=7ee787)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-8a93a8)](https://github.com/matheusbbdutra/pi-deck/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20windows-8a93a8)](https://github.com/matheusbbdutra/pi-deck/releases/latest)
 
 [Install](#install) · [Features](#features) · [Shortcuts](#shortcuts) · [How it works](#how-it-works) · [Development](#development)
 
@@ -33,8 +33,9 @@ Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/rel
 | Any Linux | `pi-deck_<version>_amd64.AppImage` | `chmod +x pi-deck_*.AppImage && ./pi-deck_*.AppImage` |
 | Windows | `pi-deck_<version>_x64-setup.exe` | run the installer |
 | Windows (MSI) | `pi-deck_<version>_x64_en-US.msi` | `msiexec /i pi-deck_*.msi` |
-| macOS (Apple Silicon) | `pi-deck_<version>_aarch64.dmg` | open the DMG, drag to Applications |
-| macOS (Intel) | `pi-deck_<version>_x64.dmg` | open the DMG, drag to Applications |
+
+> **macOS is not supported.** There is no way to validate it here (no macOS host or VM), and
+> shipping an untested `.dmg` would be a promise we can't keep.
 
 ### Requirements
 
@@ -42,8 +43,8 @@ Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/rel
 - **Node.js 22+** (pi's own runtime)
 - Linux only: `libwebkit2gtk-4.1`, `libsoup-3.0`, `gtk+-3.0`, `librsvg2`
 
-> Binaries are **unsigned** (no Apple/Authenticode certificate). macOS Gatekeeper and
-> Windows SmartScreen will warn on first launch.
+> Binaries are **unsigned** (no Authenticode certificate). Windows SmartScreen will warn
+> on first launch.
 
 ## Features
 
@@ -163,7 +164,8 @@ new session on start.
 
 - Session tabs are not persisted across restarts; switching tabs reloads from disk, so
   in-flight text from an inactive tab is not replayed.
-- Windows and macOS builds are unsigned.
+- Windows builds are unsigned and are **built in CI but not validated at runtime** here (no Windows host); paths and shell handling outside POSIX are not exercised.
+- macOS is not supported (no host/VM to validate).
 - `tool_call` / `model_select` hooks are logged only when they actually fire.
 - Machine-translated UI: the interface is in Brazilian Portuguese.
 

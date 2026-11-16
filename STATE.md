@@ -12,6 +12,7 @@
 
 - v0.1.18 (local; commits `c687c17` + merge `40a6513` + `ad6936d`): UI deixa de ser single-file — `ui/index.html` 4824→249 linhas, CSS/JS em `ui/src/{styles.css,main.js,rpc.js,shared.js,markdown.js,tool-cards.js}`, build Vite (`frontendDist: ../ui/dist`, `beforeBuildCommand`). **`cargo build --release` NÃO embute a UI** (`tauri-build` marca `cfg(dev)`): só `npm run build`/`tauri build` gera binário correto. Fix: `list_children_in` checa existência do diretório antes de `contained_in` (sessão sem children mostrava `os error 2`). PR #1 mergeado (fnm + login com binário resolvido) + patch de Windows (`quote_bin`; `cmd.exe` não trata single quote). `cargo test` 35/35; `clippy` não instalado nesta toolchain.
 - Em andamento: painel **Git read-only** (item 1 do scout contra `Relrin/pi-deck`): `git status --porcelain=v2 --branch -uall --renames` + `git diff HEAD --numstat`, aba nova no painel direito.
+- Terminal embutido: surgery em 3 bugs reais (envelope `{event,payload}` do Tauri, cwd caindo em `/` antes da sessão, e `TERM` herdado — `otter-term` sem terminfo fazia o zle repintar `ls` como `lsls`). Suporte real hoje: **Linux + shell POSIX**; **macOS removido** do CI/README (sem VM para validar) e Windows só compila, sem validação de runtime.
 
 ## Onde estamos (2026-11-15)
 

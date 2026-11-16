@@ -77,7 +77,7 @@ jobs:
           --all-targets -- -D warnings
 
   build:
-    name: ${{ matrix.os }} ${{ matrix.target || '' }}
+    name: ${{ matrix.os }}
     needs: [test, clippy]
     strategy:
       fail-fast: false
@@ -87,11 +87,6 @@ jobs:
             args: --bundles deb,rpm,appimage
           - os: windows-latest
             args: --bundles msi,nsis
-          - os: macos-latest
-            args: --bundles app,dmg
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            args: --bundles app,dmg --target x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -120,15 +115,10 @@ jobs:
       # pinned: dtolnay/rust-toolchain stable
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
 
-      - name: Alvo extra (macOS Intel)
-        if: matrix.target != ''
-        run: rustup target add ${{ matrix.target }}
-
       # pinned: swatinem/rust-cache v2
       - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: src-tauri
-          key: ${{ matrix.target || 'native' }}
 
       - name: Instalar dependências
         run: npm ci
@@ -140,7 +130,7 @@ jobs:
         # pinned: actions/upload-artifact v4
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ${{ matrix.os }}-${{ matrix.target || 'native' }}
+          name: ${{ matrix.os }}
           if-no-files-found: error
           # Lista explícita: glob amplo pegava arquivos dentro do .app do macOS
           # (icon.icns) e as duas pernas macOS colidiam no upload.
