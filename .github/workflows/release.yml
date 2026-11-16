@@ -181,6 +181,10 @@ jobs:
     name: publish
     needs: build
     runs-on: ubuntu-latest
+    # `contents: write` só aqui: é o único job que cria release e sobe assets.
+    # O `read` no topo do workflow é para os jobs de teste/build (zizmor).
+    permissions:
+      contents: write
 
     steps:
       # pinned: actions/checkout v4
