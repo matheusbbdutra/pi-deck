@@ -1139,6 +1139,18 @@ let gitAmend = false;
 let gitLease = false; // toggle explícito: só ele habilita --force-with-lease
 let gitBusy = false;  // ação em voo: trava duplo clique
 
+/* O status vem do disco: atualiza sozinho a cada 5 s (pausado com a janela
+   oculta e durante ação de escrita). Um `git status` custa ms — watcher nativo
+   de fs não se paga aqui. */
+let gitPoll = null;
+function startGitPoll() {
+  if (gitPoll) return;
+  gitPoll = setInterval(() => {
+    if (document.hidden || gitBusy) return;
+    if (current && current.cwd) loadGit();
+  }, 5000);
+}
+
 async function loadGit() {
   const cwd = current && current.cwd;
   const seq = viewSeq;
@@ -1749,13 +1761,6 @@ listen('rpc-exit', (ev) => {
 
 /* =============== respostas do RPC (modelo, thinking, estado) =============== */
 
-function selectValue(sel, value) {
-  if (!value) return;
-  for (const opt of sel.options) {
-    if (opt.value === value) { sel.value = value; return; }
-  }
-}
-
 function contextLabel(n) {
   if (!n) return '';
   if (n >= 1000000) return (Math.round(n / 100000) / 10) + 'M';
@@ -1784,10 +1789,6 @@ function loadLastModel() {
     const m = JSON.parse(localStorage.getItem('last-model') || 'null');
     if (m && m.id) updateModelButton(m);
   } catch { /* ignora */ }
-}
-
-function saveLevels() {
-  try { localStorage.setItem('levels-cache', JSON.stringify(levelList)); } catch { /* sem storage */ }
 }
 
 function loadCachedLevels() {
@@ -2695,11 +2696,6 @@ function note(text) {
   scrollBottom(true);
 }
 
-function runLogin(provider) {
-  if (!provider) { openProvPicker(); return; }
-  startLogin(provider);
-}
-
 /** Reconhece `/nome args` como comando do app. */
 function parseAppCommand(text) {
   const m = String(text).match(/^\/([A-Za-z0-9:_-]+)\s*([\s\S]*)$/);
@@ -2932,7 +2928,9 @@ function closeCmdk() {
   if (document.activeElement === $('cmdkinput')) $('input').focus();
 }
 
-function toggleCmdk() { cmdk.open ? closeCmdk() : openCmdk(); }
+function toggleCmdk() {
+  if (cmdk.open) closeCmdk(); else openCmdk();
+}
 
 function renderCmdk() {
   const raw = $('cmdkinput').value.trim().toLowerCase();
@@ -3124,10 +3122,7 @@ function parseInstalledSources(text) {
 }
 
 /* ---------- servidores MCP ---------- */
-let mcpServers = [];
-
 function renderMCP(servers, highlight) {
-  mcpServers = servers;
   const host = $('mcplist');
   if (!servers.length) {
     setEmpty(host, 'nenhum servidor MCP configurado');
@@ -3969,6 +3964,7 @@ warmModels();
   checkAuth();
   try { homeDir = await inv('home_dir'); } catch { homeDir = null; }
   restoreTabs();
+  startGitPoll();
   await loadSessions();
   // Abas da sessão anterior voltam como leitura; o foco reconecta via ensureRpc.
   if (!current && activeTab) {
