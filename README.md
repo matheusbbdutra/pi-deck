@@ -68,6 +68,19 @@ Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/rel
   its transcript.
 - Banner when `pi-subagents` didn't load, instead of a silently empty panel.
 
+**Git, terminal and plans** (right panel is a fixed split: Subagents on top, Git at the bottom)
+- **Git**: branch, ahead/behind, changed files with `+add`/`−del` and per-file status; clicking a
+  file opens its diff (session patch with *undo hunk* when the agent edited it, `git diff HEAD`
+  otherwise). Write actions: stage-as-intent, commit/amend, discard, stash/pop, `pull --ff-only`,
+  push (and `--force-with-lease` behind an explicit toggle). Status refreshes every 5 s and after
+  every action.
+- **Terminal**: real PTY (`portable-pty` + xterm.js) docked at the bottom, tabs, resizable,
+  `TERM=xterm-256color` forced so `zle`/`readline` redraw correctly.
+- **Plans**: read-only progress for `plans/`, `docs/plans/`, `specs/`, `docs/spec/`, `docs/*.plan.md`
+  and root `PLAN.md`/`TASKS.md`/`TODO.md`/`SPEC.md` — `done/total`, current step and a progress bar.
+- **Theme**: token-based CSS (`--bg-0..4`, `--ink-0..6`, …) with a JSON theme applied through
+  `style.setProperty`; invalid keys/values are ignored instead of breaking the UI.
+
 **Model, thinking, context**
 - Model picker with search, grouped by provider, showing context size; instant on boot from
   `pi --list-models`, refined by RPC.
@@ -102,8 +115,13 @@ Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/rel
 | Key | Action |
 |---|---|
 | `Ctrl+Enter` | send message |
-| `Ctrl+B` | show/hide the subagents panel |
-| `Esc` | close the model picker |
+| `Esc` | interrupt the running turn (also closes pickers/overlays first) |
+| `Ctrl+B` | show/hide the right panel |
+| `Ctrl+\`` | show/hide the embedded terminal |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | zoom in / out / reset (0.6–2.0) |
+| `Ctrl+drag` | resize the sidebar or the right panel border |
+| `Ctrl+wheel` (over the composer) | widen/narrow the composer |
+| `Ctrl+K` | command palette |
 
 ## How it works
 

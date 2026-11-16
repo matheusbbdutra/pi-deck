@@ -20,6 +20,9 @@ let shouldRestoreLocalRow;
 let appendCapped;
 let setZoom;
 let shouldProbeTurn;
+let clampWidth;
+let clampColumns;
+let syncStopButton;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -42,7 +45,8 @@ beforeAll(async () => {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn } = await import('../ui/src/main.js'));
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn,
+     clampWidth, clampColumns, syncStopButton } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -129,8 +133,141 @@ describe('setZoom', () => {
   });
 });
 
-describe('shouldProbeTurn', () => {
-  const base = { silenceMs: 45000, probeIntervalMs: 30000 };
+describe('clampWidth', () => {
+  it('sobe para o mínimo', () => {
+    expect(clampWidth(100, 180, 520)).toBe(180);
+  });
+
+  it('desce para o máximo', () => {
+    expect(clampWidth(900, 180, 520)).toBe(520);
+  });
+
+  it('mantém valor dentro da faixa e trata lixo como mínimo', () => {
+    expect(clampWidth(300, 180, 520)).toBe(300);
+    expect(clampWidth('310', 180, 520)).toBe(310);
+    expect(clampWidth(NaN, 180, 520)).toBe(180);
+    expect(clampWidth(undefined, 240, 720)).toBe(240);
+  });
+});
+
+describe('clampColumns', () => {
+  it('não mexe quando o centro cabe', () => {
+    expect(clampColumns(300, 340, 1400)).toEqual({ aside: 300, panel: 340 });
+  });
+
+  it('reduz as colunas para preservar 320px de centro', () => {
+    const fit = clampColumns(520, 720, 1000);
+    expect(fit.aside + fit.panel).toBeLessThanOrEqual(1000 - 320);
+    expect(fit.aside).toBeGreaterThanOrEqual(180);
+    expect(fit.panel).toBeGreaterThanOrEqual(240);
+  });
+
+  it('reduz mais a coluna que estourou (a outra fica no piso)', () => {
+    const fit = clampColumns(180, 720, 1000);
+    expect(fit.aside).toBe(180);
+    expect(fit.panel).toBe(1000 - 320 - 180);
+  });
+
+  it('não desce abaixo dos pisos quando nem os pisos cabem', () => {
+    expect(clampColumns(520, 720, 640)).toEqual({ aside: 180, panel: 240 });
+  });
+});
+
+describe('grip do composer: Ctrl+wheel', () => {
+  const card = () => document.querySelector('.composer-card');
+  const wheel = (init) => new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init });
+  const varPx = () => parseFloat(document.body.style.getPropertyValue('--composer-w'));
+
+  it('sem Ctrl não intercepta nem persiste', () => {
+    const ev = wheel({ deltaY: -1 });
+    card().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(Number.isNaN(varPx())).toBe(true);
+    expect(localStorage.getItem('composer-w')).toBe(null);
+  });
+
+  it('com Ctrl alarga 40px por passo e persiste', () => {
+    card().dispatchEvent(wheel({ ctrlKey: true, deltaY: -1 }));
+    expect(varPx()).toBe(860);
+    expect(localStorage.getItem('composer-w')).toBe('860');
+    const ev = wheel({ ctrlKey: true, deltaY: -1 });
+    card().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(varPx()).toBe(900);
+  });
+
+  it('com Ctrl encolhe 40px por passo até o piso de 520', () => {
+    for (let i = 0; i < 40; i++) card().dispatchEvent(wheel({ ctrlKey: true, deltaY: 1 }));
+    expect(varPx()).toBe(520);
+    expect(localStorage.getItem('composer-w')).toBe('520');
+  });
+
+  it('com Ctrl alarga até o teto de 1600', () => {
+    for (let i = 0; i < 40; i++) card().dispatchEvent(wheel({ ctrlKey: true, deltaY: -1 }));
+    expect(varPx()).toBe(1600);
+    expect(localStorage.getItem('composer-w')).toBe('1600');
+  });
+});
+
+describe('colunas laterais: Ctrl + arrastar', () => {
+  const gripAside = () => document.getElementById('colgripaside');
+  const pointer = (type, init) => gripAside().dispatchEvent(
+    new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, ...init }));
+  const varPx = (name) => parseFloat(document.body.style.getPropertyValue(name));
+
+  it('sem Ctrl o grip não captura e não mexe na largura', () => {
+    pointer('pointerdown', { clientX: 100 });
+    pointer('pointermove', { clientX: 200 });
+    expect(Number.isNaN(varPx('--w-aside'))).toBe(true);
+    expect(localStorage.getItem('w-aside')).toBe(null);
+  });
+
+  it('com Ctrl arrasta em px, preserva o centro e só persiste ao soltar', () => {
+    pointer('pointerdown', { clientX: 100, ctrlKey: true });
+    pointer('pointermove', { clientX: 200, ctrlKey: true });
+    // 320 (partida sem layout medido) + 100 pedidos; o clamp devolve o que cabe
+    // na janela de 1024px com 320px de centro: 380 + 323.
+    expect(varPx('--w-aside')).toBe(380);
+    expect(varPx('--w-panel')).toBe(323);
+    expect(localStorage.getItem('w-aside')).toBe(null);
+    pointer('pointerup', { clientX: 200, ctrlKey: true });
+    expect(localStorage.getItem('w-aside')).toBe('380');
+    expect(localStorage.getItem('w-panel')).toBe('323');
+  });
+
+  it('com zoom 2.0 o resize reaplica os pisos (sem largura fixa estourando)', () => {
+    setZoom(2);
+    window.dispatchEvent(new Event('resize'));
+    // 1024/2 = 512px úteis: nem os pisos cabem com 320px de centro, então as
+    // colunas ficam no piso e o `minmax(220px,…)` do CSS continua mandando.
+    expect(varPx('--w-aside')).toBe(180);
+    expect(varPx('--w-panel')).toBe(240);
+    setZoom(1);
+    window.dispatchEvent(new Event('resize'));
+    expect(varPx('--w-aside')).toBe(380);
+  });
+});
+
+describe('syncStopButton', () => {
+  const stop = () => document.getElementById('stopbtn');
+  const send = () => document.getElementById('send');
+
+  it('turno rodando mostra o parar e mantém o envio clicável (fila)', () => {
+    syncStopButton(true);
+    expect(stop().classList.contains('hidden')).toBe(false);
+    expect(send().disabled).toBe(false);
+    expect(send().title).toBe('Enfileirar mensagem (turno rodando)');
+  });
+
+  it('turno parado esconde o parar e volta o título de envio', () => {
+    syncStopButton(false);
+    expect(stop().classList.contains('hidden')).toBe(true);
+    expect(send().disabled).toBe(false);
+    expect(send().title).toBe('Enviar (Enter)');
+  });
+});
+
+describe('shouldProbeTurn', () => {  const base = { silenceMs: 45000, probeIntervalMs: 30000 };
 
   it('não sonda antes do silêncio', () => {
     // 44s de silêncio: ainda dentro da janela, o turno pode estar só demorando.

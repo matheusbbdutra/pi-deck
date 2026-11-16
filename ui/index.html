@@ -57,6 +57,7 @@
   </div>
   <div id="sessions"><div class="empty">carregando…</div></div>
   <div class="side-foot"><span id="piversion">pi …</span><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
+  <div id="colgripaside" class="col-grip col-grip-aside" title="arraste com Ctrl para redimensionar"></div>
 </aside>
 
 <main>
@@ -111,6 +112,7 @@
         <button id="attachbtn" class="chip-btn" title="Anexar arquivo como contexto (insere o caminho no texto)">@</button>
         <button id="unque" class="chip-btn" title="Desfazer fila: devolve as mensagens enfileiradas ao composer sem interromper o turno">↩</button>
         <button id="forkbtn" class="chip-btn" title="Criar fork (nova sessão) a partir de uma mensagem anterior — a original é preservada">fork</button>
+        <button id="stopbtn" class="stop hidden" title="Interromper o turno (Esc)" aria-label="Interromper">■</button>
         <button id="send" class="primary send" title="Enviar (Enter)">↑</button>
       </div>
       <div id="modelpop" class="model-pop hidden">
@@ -146,6 +148,7 @@
 </main>
 
 <section id="rightpanel">
+  <div id="colgrippanel" class="col-grip col-grip-panel" title="arraste com Ctrl para redimensionar"></div>
   <!-- split fixo: subagents em cima, git embaixo; as tabs do topo são o lugar
        das próximas abas, o Git não é aba -->
   <div class="split-top">

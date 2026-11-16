@@ -94,6 +94,18 @@ function setTyping(on, label) {
   if (label) $('typinglabel').textContent = label;
 }
 
+/** Botão de parar do composer: aparece só com turno rodando.
+    O `#send` fica SEMPRE habilitado de propósito — com turno rodando ele enfileira
+    (`streamingBehavior: steer`) e a fila é recurso pedido (`#unque` devolve as
+    mensagens ao composer); só o `title` muda para dizer que é enfileiramento. */
+export function syncStopButton(working) {
+  const stop = $('stopbtn');
+  if (stop) stop.classList.toggle('hidden', !working);
+  const send = $('send');
+  if (send) send.title = working ? 'Enfileirar mensagem (turno rodando)' : 'Enviar (Enter)';
+  return !!working;
+}
+
 /**
  * Turno em andamento é estado da ABA, não da janela: sem isso o "enviado…/pensando…"
  * da aba anterior continuava na tela depois de trocar (inclusive em sessão nova vazia).
@@ -112,6 +124,8 @@ function setTurn(sessionId, working, phase) {
   }
   if (current && current.key === sessionId) {
     setTyping(working, (t && t.phase) || phase || 'pensando…');
+    // Mesmo caminho do indicador: o botão de parar segue o turno da aba em foco.
+    syncStopButton(!!working);
     if (working) { setStatus('trabalhando'); setState('busy'); }
   }
 }
@@ -231,6 +245,7 @@ function applyTurnUi() {
   const t = current ? tabs.find(x => x.key === current.key) : null;
   const on = !!(t && t.working);
   setTyping(on, (t && t.phase) || 'pensando…');
+  syncStopButton(on);
   if (on) { setStatus('trabalhando'); setState('busy'); }
 }
 function setStatus(t) { $('status').textContent = stripAnsi(t); }
@@ -1063,6 +1078,176 @@ function initSplit() {
   });
 }
 
+/* =============== colunas laterais e largura do composer =============== */
+/* Os dois grips verticais (`.col-grip`, dentro da `aside` e do `#rightpanel`) só
+   capturam o ponteiro com Ctrl pressionado: `body.ctrl-held` liga o
+   `pointer-events` deles no keydown. Sem Ctrl o clique atravessa para o conteúdo,
+   então arrastar a borda não rouba clique de lista nem seleção de texto.
+   As larguras ficam em px (não em %) para escalarem junto com o `zoom` do body;
+   `usableWidth()` desconta o zoom ao comparar com a janela. */
+const ASIDE_MIN = 180, ASIDE_MAX = 520;
+const PANEL_MIN = 240, PANEL_MAX = 720;
+const CENTER_MIN = 320;        // piso do composer/transcript entre as duas colunas
+const COMPOSER_MIN = 520, COMPOSER_MAX = 1600, COMPOSER_DEFAULT = 820;
+const COMPOSER_STEP = 40;      // px por passo de Ctrl+wheel sobre o composer
+/* Partida do arrasto quando não há layout medido (primeira pintura, jsdom). */
+const ASIDE_DEFAULT = 320, PANEL_DEFAULT = 340;
+
+/** Clampa um número em [min, max]; valor não numérico cai no mínimo. */
+export function clampWidth(v, min, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Colunas laterais sem espremer o centro: o excedente sobre `total - 320` sai das
+    duas na proporção da folga de cada uma (quem está no teto não cede), e nenhuma
+    desce do próprio piso. Se nem os pisos couberem, devolve os pisos. */
+export function clampColumns(asidePx, panelPx, totalPx) {
+  const aside = clampWidth(asidePx, ASIDE_MIN, ASIDE_MAX);
+  const panel = clampWidth(panelPx, PANEL_MIN, PANEL_MAX);
+  const total = Number(totalPx);
+  if (!Number.isFinite(total) || total <= 0) return { aside, panel };
+  const over = aside + panel + CENTER_MIN - total;
+  if (over <= 0) return { aside, panel };
+  const slackAside = aside - ASIDE_MIN;
+  const slackPanel = panel - PANEL_MIN;
+  const slack = slackAside + slackPanel;
+  if (over >= slack) return { aside: ASIDE_MIN, panel: PANEL_MIN };
+  return {
+    aside: Math.floor(aside - over * (slackAside / slack)),
+    panel: Math.floor(panel - over * (slackPanel / slack)),
+  };
+}
+
+/** Fator do `zoom` aplicado no body (1 quando ausente/inválido). */
+function zoomFactor() {
+  const z = parseFloat(document.body.style.zoom);
+  return Number.isFinite(z) && z > 0 ? z : 1;
+}
+
+/** Largura útil do layout em px de CSS (o zoom divide a janela). */
+function usableWidth() {
+  const vw = Number(window.innerWidth) || 0;
+  return vw ? vw / zoomFactor() : 0;
+}
+
+/** Largura renderizada de uma coluna em px de CSS, já sem o zoom. */
+function columnPx(id) {
+  const node = $(id);
+  const rect = node && node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+  const w = rect ? rect.width : 0;
+  return w > 0 ? w / zoomFactor() : 0;
+}
+
+let colWanted = null;   // px de CSS pedidos pelo usuário (null = % padrão do CSS)
+let composerWidth = 0;  // 0 = max-width padrão do CSS
+
+function applyColumns(persist) {
+  if (!colWanted) {
+    colWanted = { aside: columnPx('sidebar') || ASIDE_DEFAULT, panel: columnPx('rightpanel') || PANEL_DEFAULT };
+  }
+  const fit = clampColumns(colWanted.aside, colWanted.panel, usableWidth());
+  document.body.style.setProperty('--w-aside', Math.round(fit.aside) + 'px');
+  document.body.style.setProperty('--w-panel', Math.round(fit.panel) + 'px');
+  if (persist) {
+    try {
+      localStorage.setItem('w-aside', String(Math.round(fit.aside)));
+      localStorage.setItem('w-panel', String(Math.round(fit.panel)));
+    } catch { /* sem storage */ }
+  }
+  return fit;
+}
+
+function setComposerWidth(px, persist) {
+  composerWidth = clampWidth(px, COMPOSER_MIN, COMPOSER_MAX);
+  document.body.style.setProperty('--composer-w', Math.round(composerWidth) + 'px');
+  if (persist) {
+    try { localStorage.setItem('composer-w', String(Math.round(composerWidth))); } catch { /* sem storage */ }
+  }
+  return composerWidth;
+}
+
+/** Base do primeiro wheel: largura atual do card, ou o padrão do CSS se o jsdom
+    (sem layout) não a resolve. */
+function composerBasePx(card) {
+  if (composerWidth) return composerWidth;
+  const w = card && window.getComputedStyle ? parseFloat(window.getComputedStyle(card).maxWidth) : NaN;
+  return Number.isFinite(w) && w > 0 ? w : COMPOSER_DEFAULT;
+}
+
+function readSavedPx(key) {
+  try { return Number(localStorage.getItem(key)) || 0; } catch { return 0; }
+}
+
+/** Arrasto de uma borda. `side` diz qual var o movimento alimenta: a da esquerda
+    cresce com o cursor (`x`), a da direita cresce ao contrário. */
+function dragGrip(grip, side) {
+  if (!grip) return;
+  let drag = null;
+  grip.addEventListener('pointerdown', (e) => {
+    if (!e.ctrlKey || (e.button !== undefined && e.button !== 0)) return;
+    e.preventDefault();
+    if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
+    const base = colWanted || {
+      aside: columnPx('sidebar') || ASIDE_DEFAULT,
+      panel: columnPx('rightpanel') || PANEL_DEFAULT,
+    };
+    drag = { x: e.clientX, z: zoomFactor(), base: { aside: base.aside, panel: base.panel } };
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const delta = (e.clientX - drag.x) / drag.z; // px de CSS: o body é escalado pelo zoom
+    colWanted = side === 'aside'
+      ? { aside: drag.base.aside + delta, panel: drag.base.panel }
+      : { aside: drag.base.aside, panel: drag.base.panel - delta };
+    applyColumns(false);
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    applyColumns(true);
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+}
+
+function initColumnResize() {
+  // Boot: reaplica o salvo antes do primeiro render (sem salvar de novo).
+  const aside = readSavedPx('w-aside');
+  const panel = readSavedPx('w-panel');
+  if (aside || panel) {
+    colWanted = { aside: aside || ASIDE_DEFAULT, panel: panel || PANEL_DEFAULT };
+    applyColumns(false);
+  }
+  const composer = readSavedPx('composer-w');
+  if (composer) setComposerWidth(composer, false);
+
+  dragGrip($('colgripaside'), 'aside');
+  dragGrip($('colgrippanel'), 'panel');
+
+  // Ctrl libera o `pointer-events` dos grips (CSS não lê modificador).
+  const syncCtrl = (e) => document.body.classList.toggle('ctrl-held', !!e.ctrlKey);
+  document.addEventListener('keydown', syncCtrl);
+  document.addEventListener('keyup', syncCtrl);
+  window.addEventListener('blur', () => document.body.classList.remove('ctrl-held'));
+
+  // Ctrl+wheel sobre o composer muda a largura máxima do card; fora dele o wheel
+  // é do conteúdo (transcript) e não é interceptado.
+  const card = document.querySelector('.composer-card');
+  if (card) {
+    card.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const step = e.deltaY < 0 ? COMPOSER_STEP : -COMPOSER_STEP;
+      setComposerWidth(composerBasePx(card) + step, true);
+    }, { passive: false });
+  }
+
+  // Janela menor (ou zoom maior) pode espremer o centro: re-clampa o que foi fixado.
+  window.addEventListener('resize', () => { if (colWanted) applyColumns(false); });
+}
+
 /** Lê as edições do disco (sessão + children). Só roda com o painel Git visível:
     é dele que sai o diff com "desfazer hunk" para o arquivo clicado. */
 async function loadEdits() {
@@ -1652,7 +1837,7 @@ function renderPlans() {
   if (plansError) { host.appendChild(el('div', 'empty', plansError)); return; }
   if (!plansData) { host.appendChild(el('div', 'empty', 'nenhum plano')); return; }
   if (plansData.repo !== true) {
-    host.appendChild(el('div', 'empty', 'sem pasta plans/ neste projeto'));
+    host.appendChild(el('div', 'empty', 'nenhum plano encontrado (plans/, docs/spec, PLAN.md…)'));
     return;
   }
   const list = Array.isArray(plansData.plans) ? plansData.plans : [];
@@ -1665,6 +1850,7 @@ function renderPlans() {
     const item = el('div', 'plan-item');
     const row = el('div', 'file-row');
     row.appendChild(el('span', 'file-name', String(p.name || file)));
+    if (p.source) row.appendChild(el('span', 'plan-source', String(p.source)));
     if (p.current) row.appendChild(el('span', 'plan-current', String(p.current)));
     row.appendChild(el('span', 'file-count', total ? done + '/' + total : 'sem checklist'));
     item.appendChild(row);
@@ -3998,6 +4184,7 @@ async function checkUpdate(manual) {
 
 /* =============== wiring =============== */
 $('send').onclick = send;
+$('stopbtn').onclick = () => abortTurn();
 $('loadmorebtn').onclick = loadEarlier;
 $('scrollbottom').onclick = () => {
   const l = $('log');
@@ -4386,6 +4573,7 @@ $('panelsubs').onclick = () => {
 $('panelplans').onclick = () => { switchPanelPane('plans'); loadPlans(); };
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
 initSplit();
+initColumnResize();
 // Dock do terminal: cwd/home vêm da sessão ativa (o PTY não segue trocas de sessão sozinho)
 initTerminal({ getCwd: () => (current && current.cwd) || '' });
 // Diff dos tool cards: `tool-cards.js` não pode importar `main.js` (ciclo).
