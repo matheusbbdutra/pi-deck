@@ -316,7 +316,8 @@
   .img-view.hidden { display:none; }
   .img-view img { max-width:92vw; max-height:92vh; border-radius:6px;
                   border:1px solid var(--line); }
-  textarea { width:100%; resize:none; height:44px; background:transparent; color:var(--fg);
+  textarea { width:100%; resize:none; min-height:44px; max-height:40vh; overflow-y:auto;
+             background:transparent; color:var(--fg);
              border:none; padding:2px 2px 6px; font-family:var(--mono); font-size:12.5px;
              line-height:1.5; outline:none; }
   textarea::placeholder { color:#4d5568; }
@@ -369,9 +370,17 @@
               text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:right; }
   .file-count { flex:none; font-size:9.5px; padding:1px 5px; border-radius:3px;
                 background:#1e2130; color:var(--dim); }
-  /* aba git: sinais +add/−del (sem classe nova fora destas duas) */
+  /* aba git: sinais +add/−del + barra de ações e compositor de commit */
   .git-add { flex:none; color:var(--ok); font-size:9.5px; }
   .git-del { flex:none; color:var(--err); font-size:9.5px; }
+  .git-bar { display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+             padding:6px 10px; border-bottom:1px solid var(--line-soft); }
+  .git-bar button { padding:3px 8px; font-size:10.5px; }
+  .git-bar button:disabled { opacity:.45; cursor:default; }
+  .git-check { display:flex; align-items:center; gap:4px; color:var(--dim);
+               font-family:var(--mono); font-size:10.5px; cursor:pointer; }
+  .git-composer { border-top:1px solid var(--line); padding:4px 10px 8px; }
+  .git-composer .git-bar { border-bottom:none; padding:4px 0 0; }
   /* diff de arquivo editado */
   .diff { margin:0 0 14px; border:1px solid #1e2431; border-radius:6px; background:#0c0f16;
           overflow:hidden; }

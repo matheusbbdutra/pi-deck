@@ -52,7 +52,13 @@ fn main() {
             sessions::paste_image,
             sessions::open_terminal_login,
             git::git_status,
-            git::git_file_diff
+            git::git_file_diff,
+            git::git_commit,
+            git::git_discard,
+            git::git_stash,
+            git::git_stash_pop,
+            git::git_pull,
+            git::git_push
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

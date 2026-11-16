@@ -659,6 +659,7 @@ async function send() {
   const app = parseAppCommand(message);
   if (app) {
     $('input').value = '';
+    autosizeInput();
     hidePalette();
     $('log').appendChild(el('div', 'row user', '▸ ' + message));
     scrollBottom(true);
@@ -675,6 +676,7 @@ async function send() {
   if (!(await ensureRpc())) return;
 
   $('input').value = '';
+  autosizeInput();
   // Rascunho da aba zera junto: senão trocar de aba e voltar ressuscita o texto enviado.
   const tab = tabs.find(t => t.key === current.key);
   const wasWorking = !!(tab && tab.working);
@@ -1122,9 +1124,20 @@ function openMission(m) {
   $('detail').classList.remove('hidden');
 }
 
-/* =============== painel: git (somente leitura) =============== */
+/* =============== painel: git (status/diff + escrita) =============== */
 let gitData = null; // último payload de git_status ({repo,branch,ahead,behind,detached,changes,totals})
 let gitError = '';
+/* Seleção da lista = intenção da ação: `commit` e `descartar` agem sobre estes
+   paths. O clique na row marca/desmarca; abrir o diff é o botão `diff` da row
+   (clique simples ambíguo: marcar ou abrir? — dois alvos explícitos). */
+let gitSel = new Set();
+let gitCwd = '';   // dono da seleção/rascunho; trocar de sessão zera os dois
+let gitNote = '';  // resultado da última ação, na linha de status do painel
+let gitNoteErr = false;
+let gitMsg = '';   // rascunho da mensagem de commit (sobrevive ao re-render)
+let gitAmend = false;
+let gitLease = false; // toggle explícito: só ele habilita --force-with-lease
+let gitBusy = false;  // ação em voo: trava duplo clique
 
 async function loadGit() {
   const cwd = current && current.cwd;
@@ -1143,6 +1156,103 @@ async function loadGit() {
   renderGit();
 }
 
+/** Executa uma ação de escrita do painel: marca "em voo", pinta o resultado na
+    linha de status (nunca `alert`) e relê o status no fim. */
+async function gitAct(label, call, opts) {
+  const cwd = String((current && current.cwd) || '');
+  if (!cwd || gitBusy) return null;
+  gitBusy = true;
+  gitNote = label + '…';
+  gitNoteErr = false;
+  renderGit();
+  try {
+    const out = String((await call(cwd)) || '').trim();
+    gitNote = label + ' ok' + (out ? ': ' + out : '');
+    gitNoteErr = false;
+    return { ok: true, out };
+  } catch (e) {
+    gitNote = label + ' falhou: ' + String(e).trim();
+    gitNoteErr = true;
+    return { ok: false, err: String(e) };
+  } finally {
+    gitBusy = false;
+    if (opts && opts.clearSel) gitSel.clear();
+    await loadGit();
+  }
+}
+
+/** `descartar`: `git restore` dos marcados. Untracked é recusado no backend (o
+    equivalente seria `git clean`), e o erro aparece na linha de status. */
+async function gitDiscardSelected() {
+  const paths = [...gitSel];
+  if (!paths.length) return;
+  const ok = confirm('descartar ' + paths.length + ' arquivo(s)?\n\n' + paths.join('\n')
+    + '\n\ngit restore -- (só rastreados; não tem desfazer)');
+  if (!ok) return;
+  await gitAct('descartar', (cwd) => inv('git_discard', { cwd, paths }), { clearSel: true });
+}
+
+function gitStash() {
+  return gitAct('stash', (cwd) => inv('git_stash', { cwd }), { clearSel: true });
+}
+
+function gitStashPop() {
+  return gitAct('stash pop', (cwd) => inv('git_stash_pop', { cwd }), { clearSel: true });
+}
+
+/** Confirma o comando literal do force (só existe atrás do toggle). */
+function gitConfirmLease(cwd) {
+  return confirm('git push --force-with-lease\n\nno repositório ' + cwd + '?');
+}
+
+/** `commit` (ou `commit & push`): estágia os marcados e commita; com push, uma
+    falha do push NÃO desfaz o commit — o stderr do git vai para a linha. */
+async function gitCommit(push) {
+  const cwd = String((current && current.cwd) || '');
+  const message = gitMsg;
+  const paths = [...gitSel];
+  if (!message.trim()) {
+    gitNote = 'mensagem vazia — nada foi commitado';
+    gitNoteErr = true;
+    renderGit();
+    return;
+  }
+  if (push && gitLease && !gitConfirmLease(cwd)) return;
+  const label = push ? 'commit & push' : 'commit';
+  await gitAct(label, async (dir) => {
+    const hash = String(await inv('git_commit', { cwd: dir, message, paths, amend: gitAmend }));
+    gitMsg = '';      // a mensagem foi consumida: o próximo commit começa limpo
+    gitAmend = false;
+    if (!push) return hash;
+    try {
+      const out = String(await inv('git_push', { cwd: dir, forceWithLease: gitLease }));
+      return hash + ' · push: ' + (out || 'ok');
+    } catch (e) {
+      throw new Error('commit ' + hash + ' feito, push falhou — ' + String(e));
+    }
+  }, { clearSel: true });
+}
+
+async function gitPush() {
+  const cwd = String((current && current.cwd) || '');
+  if (gitLease && !gitConfirmLease(cwd)) return;
+  await gitAct(gitLease ? 'push --force-with-lease' : 'push',
+    (dir) => inv('git_push', { cwd: dir, forceWithLease: gitLease }));
+}
+
+/** Checkbox com rótulo (o `<label>` faz o texto também alternar a caixa). */
+function gitCheck(text, on, title, onchange) {
+  const lab = el('label', 'git-check');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = !!on;
+  box.onchange = () => onchange(box.checked);
+  lab.appendChild(box);
+  lab.appendChild(el('span', null, text));
+  if (title) { lab.title = title; box.title = title; }
+  return lab;
+}
+
 function renderGit() {
   const host = $('git');
   if (!host) return;
@@ -1150,11 +1260,23 @@ function renderGit() {
   const list = repo && Array.isArray(gitData.changes) ? gitData.changes : [];
   const cnt = $('gitcnt');
   if (cnt) cnt.textContent = list.length ? String(list.length) : '';
+  const cwdTxt = String((current && current.cwd) || '');
+  if (cwdTxt !== gitCwd) { // outra sessão: seleção/mensagem de commit não valem
+    gitCwd = cwdTxt;
+    gitSel.clear();
+    gitMsg = '';
+    gitNote = '';
+  }
+  // Re-render (loadGit roda a cada ação/edição) não pode roubar o cursor de quem
+  // está escrevendo a mensagem: guarda foco e posição e devolve no fim.
+  const prevMsgEl = document.getElementById('gitmsg');
+  const msgFocused = !!prevMsgEl && document.activeElement === prevMsgEl;
+  const msgCaret = msgFocused ? prevMsgEl.selectionStart : 0;
+
   clear(host);
   if (gitError) { host.appendChild(el('div', 'empty', gitError)); return; }
   if (!repo) {
-    const cwd = current && current.cwd;
-    host.appendChild(el('div', 'empty', cwd ? 'sem repositório git em ' + cwd : 'nenhuma sessão aberta'));
+    host.appendChild(el('div', 'empty', cwdTxt ? 'sem repositório git em ' + cwdTxt : 'nenhuma sessão aberta'));
     return;
   }
   const t = gitData.totals || {};
@@ -1169,16 +1291,35 @@ function renderGit() {
   host.appendChild(head);
   // Caminho e estado limpo explícitos: sem isso, repo sem mudanças e "nada carregou"
   // ficam idênticos na tela (bug reportado 2026-11-16).
-  const cwdTxt = String((current && current.cwd) || '');
   if (cwdTxt) host.appendChild(el('div', 'file-dir', cwdTxt));
+
+  const bar = el('div', 'git-bar');
+  const btn = (label, title, onclick, cls) => {
+    const b = el('button', cls || 'ghost', label);
+    b.title = title;
+    b.onclick = onclick;
+    bar.appendChild(b);
+    return b;
+  };
+  btn('atualizar', 'relê o git status', () => loadGit());
+  const discardBtn = btn('descartar', 'git restore dos selecionados (só rastreados)', gitDiscardSelected);
+  discardBtn.disabled = !gitSel.size;
+  btn('stash', 'git stash push --include-untracked (tudo, com untracked)', gitStash);
+  btn('stash pop', 'git stash pop (conflito aparece na linha de status)', gitStashPop);
+  host.appendChild(bar);
+
   if (!list.length) {
     host.appendChild(el('div', 'empty', 'repositório limpo — nenhuma mudança no worktree'));
   }
   for (const c of list) {
-    const [name, dir] = splitPath(c.path);
+    const path = String(c.path || '');
+    const [name, dir] = splitPath(path);
     const row = el('div', 'file-row');
-    row.title = String(c.path || '') + ' · ' + (c.untracked ? 'não rastreado' : (c.staged ? 'no índice' : 'no worktree'))
-      + ' · clique para o diff';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = gitSel.has(path);
+    box.title = 'selecionar para commit/descartar';
+    row.appendChild(box);
     row.appendChild(el('span', 'file-name', name));
     row.appendChild(el('span', 'file-dir', dir));
     row.appendChild(el('span', 'file-count', String(c.status || '?')));
@@ -1186,8 +1327,62 @@ function renderGit() {
       row.appendChild(el('span', 'git-add', '+' + (Number(c.add) || 0)));
       row.appendChild(el('span', 'git-del', '−' + (Number(c.del) || 0)));
     }
-    row.onclick = () => openGitDiff(String(c.path || ''));
+    const diffBtn = el('button', 'ghost', 'diff');
+    diffBtn.title = 'abrir o diff deste arquivo';
+    diffBtn.onclick = (e) => { e.stopPropagation(); openGitDiff(path); };
+    row.appendChild(diffBtn);
+    row.title = path + ' · ' + (c.untracked ? 'não rastreado' : (c.staged ? 'no índice' : 'no worktree'))
+      + ' · clique na row seleciona; `diff` abre o patch';
+    row.onclick = () => {
+      if (gitSel.has(path)) gitSel.delete(path); else gitSel.add(path);
+      box.checked = gitSel.has(path);
+      discardBtn.disabled = !gitSel.size;
+    };
     host.appendChild(row);
+  }
+
+  // Linha de status da última ação: sem `alert`, dentro do painel. Só existe
+  // quando há algo a dizer (não há regra CSS genérica para `.hidden` aqui).
+  if (gitNote) {
+    const note = el('div', 'empty', gitNote);
+    note.id = 'gitnote';
+    if (gitNoteErr) note.style.color = 'var(--err)';
+    host.appendChild(note);
+  }
+
+  const comp = el('div', 'git-composer');
+  const ta = el('textarea');
+  ta.id = 'gitmsg';
+  ta.placeholder = 'mensagem do commit · Ctrl+Enter commita';
+  ta.value = gitMsg;
+  ta.oninput = () => { gitMsg = ta.value; };
+  ta.onkeydown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); gitCommit(false); }
+  };
+  comp.appendChild(ta);
+
+  const cbar = el('div', 'git-bar');
+  cbar.appendChild(gitCheck('amend', gitAmend, 'git commit --amend -m (troca a mensagem do último commit)',
+    (on) => { gitAmend = on; }));
+  cbar.appendChild(gitCheck('--force-with-lease', gitLease,
+    'só liga `git push --force-with-lease`; pede confirmação com o comando literal',
+    (on) => { gitLease = on; }));
+  const mkBtn = (label, title, onclick, cls) => {
+    const b = el('button', cls || 'ghost', label);
+    b.title = title;
+    b.onclick = onclick;
+    cbar.appendChild(b);
+    return b;
+  };
+  mkBtn('commit', 'estágia os selecionados e commita (Ctrl+Enter)', () => gitCommit(false), 'primary');
+  mkBtn('commit & push', 'commit e depois push; se o push falhar o commit fica', () => gitCommit(true));
+  mkBtn('push', 'git push (--force-with-lease se o toggle estiver ligado)', gitPush);
+  comp.appendChild(cbar);
+  host.appendChild(comp);
+
+  if (msgFocused && ta) {
+    ta.focus();
+    try { ta.setSelectionRange(msgCaret, msgCaret); } catch { /* sem seleção no tipo */ }
   }
 }
 
@@ -1981,6 +2176,7 @@ function handleResponse(rec) {
       note('fila devolvida: ' + back.length + ' mensagem(ns)');
       const last = back.at(-1);
       $('input').value = last;
+      autosizeInput();
       const t = tabs.find(x => x.key === current.key);
       if (t) t.draft = last;
       break;
@@ -2008,6 +2204,7 @@ function handleResponse(rec) {
       const ft = data.text || '';
       if (ft) {
         $('input').value = ft;
+        autosizeInput();
         const ft0 = tabs.find(x => current && x.key === current.key);
         if (ft0) ft0.draft = ft;
       }
@@ -2260,6 +2457,17 @@ async function reloadSession() {
 }
 
 /* =============== abas =============== */
+/** Altura do composer acompanha o texto (digitação e colagem), com teto de 40% da
+    viewport: colar um log enorme não pode engolir o transcript. Mesmo teto do CSS
+    (`max-height:40vh`), que fica só como rede de segurança. */
+function autosizeInput() {
+  const box = $('input');
+  if (!box) return;
+  box.style.height = 'auto';
+  const max = Math.min(Math.round(window.innerHeight * 0.40), 400);
+  box.style.height = Math.min(box.scrollHeight, max) + 'px';
+}
+
 /** O composer é da aba: guarda o rascunho (texto + imagens) antes de sair. */
 function stashDraft() {
   const t = current && tabs.find(x => x.key === current.key);
@@ -2274,6 +2482,9 @@ function stashDraft() {
 /** Restaura o rascunho da aba que entrou em foco (vazio para aba nova). */
 function restoreDraft(t) {
   $('input').value = (t && t.draft) || '';
+  // No próximo tick: a aba acabou de entrar em foco e o painel ainda está sendo
+  // medido — `scrollHeight` de um elemento recém-exibido viria 0.
+  setTimeout(autosizeInput, 0);
   pendingImages = (t && Array.isArray(t.images) ? t.images : []).slice();
   renderAttachments();
   hidePalette();
@@ -2678,6 +2889,7 @@ function applyPaletteItem(run) {
   const v = $('input').value;
   const head = v.slice(0, tok.start - 1);
   $('input').value = head + '/' + cmd.name + ' ';
+  autosizeInput();
   hidePalette();
   renderPalette(); // some com o token completo
   $('input').focus();
@@ -3418,7 +3630,7 @@ $('input').addEventListener('keydown', (e) => {
   }
 });
 
-$('input').addEventListener('input', () => renderPalette());
+$('input').addEventListener('input', () => { renderPalette(); autosizeInput(); });
 $('input').addEventListener('blur', () => setTimeout(hidePalette, 150));
 
 /* =============== anexos =============== */

@@ -1,9 +1,10 @@
-//! Aba Git (somente leitura): status do repositório do `cwd` da sessão e diff de
-//! um arquivo.
+//! Aba Git: status do repositório do `cwd` da sessão, diff de um arquivo e as
+//! escritas pedidas pela UI (commit, restore, stash/pop, push).
 //!
 //! O git roda sem shell (`std::process::Command`, nunca `sh -c`) e com timeout
 //! manual de 10 s (std não tem `wait_timeout`; nenhuma dependência nova). O
-//! status é um JSON fechado; o diff é o patch unificado cru.
+//! status é um JSON fechado; o diff é o patch unificado cru; as escritas
+//! devolvem o texto do git e falham com o stderr literal.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -195,6 +196,200 @@ fn run_git_raw(cwd: &str, args: &[&str]) -> Result<(bool, String), String> {
         Some(st) => Ok((st.success(), out)),
         None => Err("git: timeout de 10s".to_string()),
     }
+}
+
+/// Roda git de escrita: stdout E stderr capturados, exit code real. Mesmo timeout
+/// e mesmo "sem shell" do `run_git_raw`. `Err` só quando não rodou ou estourou;
+/// exit != 0 volta em `Ok` para o chamador expor o texto do git.
+fn run_git_rw(cwd: &str, args: &[&str]) -> Result<(i32, String, String), String> {
+    let mut child = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("git: {e}"))?;
+
+    // Os dois pipes são drenados em threads próprias: se um enchesse o buffer
+    // enquanto o pai espera, o git travaria até o timeout.
+    let mut stdout = child.stdout.take().ok_or("git: stdout indisponível")?;
+    let mut stderr = child.stderr.take().ok_or("git: stderr indisponível")?;
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).into_owned()
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).into_owned()
+    });
+
+    let deadline = Instant::now() + TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break Some(st),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let out = out_reader.join().unwrap_or_default();
+    let err = err_reader.join().unwrap_or_default();
+    match status {
+        Some(st) => Ok((st.code().unwrap_or(-1), out, err)),
+        None => Err("git: timeout de 10s".to_string()),
+    }
+}
+
+/// Texto de erro de uma falha do git: o stderr literal (é o que o usuário lê);
+/// stdout só quando o git saiu != 0 sem escrever nada no stderr.
+fn git_fail(err: String, out: String) -> String {
+    if err.trim().is_empty() {
+        out.trim().to_string()
+    } else {
+        err
+    }
+}
+
+/// `run_git_rw` exigindo exit 0: falha vira `Err` com o texto do git.
+fn git_rw_ok(cwd: &str, args: &[&str]) -> Result<String, String> {
+    let (code, out, err) = run_git_rw(cwd, args)?;
+    if code == 0 {
+        Ok(out)
+    } else {
+        Err(git_fail(err, out))
+    }
+}
+
+/// Os comandos de escrita vêm do webview: exigem um diretório de verdade antes
+/// de qualquer git (senão o erro seria "git: No such file or directory").
+fn require_dir(cwd: &str) -> Result<String, String> {
+    if !Path::new(cwd).is_dir() {
+        return Err(format!("cwd não é um diretório: {cwd}"));
+    }
+    Ok(cwd.to_string())
+}
+
+/// `git add` dos `paths` (vazio = nada a estágiar) e commit com a mensagem.
+/// `amend` troca a mensagem do último commit, por isso `--amend -m <message>`
+/// (e NÃO `--no-edit`, que manteria a mensagem antiga). Devolve o hash curto do
+/// HEAD novo; qualquer falha volta com o texto literal do git.
+#[tauri::command]
+pub fn git_commit(
+    cwd: String,
+    message: String,
+    paths: Vec<String>,
+    amend: bool,
+) -> Result<String, String> {
+    let cwd = require_dir(&cwd)?;
+    if message.trim().is_empty() {
+        return Err("mensagem vazia".to_string());
+    }
+    for p in &paths {
+        validate_diff_path(p)?;
+    }
+    if !paths.is_empty() {
+        let mut args = vec!["add", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        git_rw_ok(&cwd, &args)?;
+    }
+    let mut args = vec!["commit"];
+    if amend {
+        args.push("--amend");
+    }
+    args.push("-m");
+    args.push(message.as_str());
+    git_rw_ok(&cwd, &args)?;
+    let (code, out, err) = run_git_rw(&cwd, &["rev-parse", "--short", "HEAD"])?;
+    if code != 0 {
+        return Err(git_fail(err, out));
+    }
+    Ok(out.trim().to_string())
+}
+
+/// `git restore -- <paths>`: desfaz o worktree pelo índice. Untracked é recusado
+/// com erro explícito — o equivalente seria `git clean`, que apaga arquivo sem
+/// volta e está fora do escopo da aba.
+#[tauri::command]
+pub fn git_discard(cwd: String, paths: Vec<String>) -> Result<String, String> {
+    let cwd = require_dir(&cwd)?;
+    if paths.is_empty() {
+        return Err("nenhum path selecionado".to_string());
+    }
+    for p in &paths {
+        validate_diff_path(p)?;
+    }
+    for p in &paths {
+        // `--error-unmatch` sai != 0 e escreve no stderr para path fora do índice.
+        let (code, _, _) = run_git_rw(&cwd, &["ls-files", "--error-unmatch", "--", p])?;
+        if code != 0 {
+            return Err(format!(
+                "{p}: não rastreado pelo git — descartar só vale para arquivo rastreado"
+            ));
+        }
+    }
+    let mut args = vec!["restore", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    git_rw_ok(&cwd, &args)
+}
+
+/// Stash com untracked incluso e mensagem carimbada (`pi-deck: <epoch>`), para o
+/// usuário reconhecer de onde veio a entrada na lista de stashes.
+#[tauri::command]
+pub fn git_stash(cwd: String) -> Result<String, String> {
+    let cwd = require_dir(&cwd)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let msg = format!("pi-deck: {stamp}");
+    git_rw_ok(
+        &cwd,
+        &["stash", "push", "--include-untracked", "-m", msg.as_str()],
+    )
+}
+
+/// `git stash pop`: conflito sai != 0 com a lista de arquivos em conflito — vira
+/// `Err` para a UI mostrar em vez de fingir sucesso.
+#[tauri::command]
+pub fn git_stash_pop(cwd: String) -> Result<String, String> {
+    let cwd = require_dir(&cwd)?;
+    git_rw_ok(&cwd, &["stash", "pop"])
+}
+
+/// Só fast-forward: sem `--ff-only` o pull criaria um merge commit que ninguém
+/// pediu (e que o push depois recusaria).
+#[tauri::command]
+pub fn git_pull(cwd: String) -> Result<String, String> {
+    let cwd = require_dir(&cwd)?;
+    git_rw_ok(&cwd, &["pull", "--ff-only"])
+}
+
+/// `git push` (ou `--force-with-lease`, nunca `--force`). O git escreve o
+/// progresso e o erro no stderr: sucesso devolve esse texto, falha devolve `Err`
+/// com o stderr literal — non-fast-forward e "sem remote" ficam legíveis.
+#[tauri::command]
+pub fn git_push(cwd: String, force_with_lease: bool) -> Result<String, String> {
+    let cwd = require_dir(&cwd)?;
+    let args: &[&str] = if force_with_lease {
+        &["push", "--force-with-lease"]
+    } else {
+        &["push"]
+    };
+    let (code, out, err) = run_git_rw(&cwd, args)?;
+    if code != 0 {
+        return Err(git_fail(err, out));
+    }
+    Ok(if out.trim().is_empty() {
+        err.trim().to_string()
+    } else {
+        out.trim().to_string()
+    })
 }
 
 /// Decide o status exibido: 1 letra do XY, preferindo o índice quando há algo staged.
@@ -493,6 +688,155 @@ mod tests {
         assert_eq!(v["totals"]["add"], 12);
         assert_eq!(v["totals"]["del"], 3);
         assert_eq!(no_repo(), "{\"repo\":false}");
+    }
+
+    /// Roda um git de preparação (init/config/log) sem depender do config do
+    /// usuário. O commit em si é feito pelos comandos, que usam o config LOCAL do
+    /// repo — por isso a identidade é gravada no repo, não passada por `-c`.
+    fn git_setup(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .stdin(Stdio::null())
+            .output()
+            .expect("git precisa estar no PATH para este teste");
+        assert!(out.status.success(), "git {args:?} falhou: {out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// Repo descartável com identidade e sem assinatura de commit (o config global
+    /// do usuário pode ter `commit.gpgsign` e derrubar o teste sem motivo).
+    fn temp_repo(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pi-deck-rw-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git_setup(&dir, &["init", "-q"]);
+        for (k, v) in [
+            ("user.name", "pi-deck teste"),
+            ("user.email", "teste@pi-deck.local"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git_setup(&dir, &["config", k, v]);
+        }
+        dir
+    }
+
+    #[test]
+    fn git_commit_cria_commit_e_devolve_hash_curto() {
+        let dir = temp_repo("commit");
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        let hash = git_commit(cwd, "primeiro".to_string(), vec!["a.txt".to_string()], false).unwrap();
+        let log = git_setup(&dir, &["log", "--oneline", "-1"]);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(hash.len() >= 7 && hash.len() <= 12, "hash curto: {hash:?}");
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "hex: {hash:?}");
+        assert!(
+            log.starts_with(hash.as_str()) && log.contains("primeiro"),
+            "log {log:?} não casa com o hash {hash:?}"
+        );
+    }
+
+    #[test]
+    fn git_commit_recusa_mensagem_vazia() {
+        let dir = temp_repo("msgvazia");
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        let err = git_commit(cwd, "   \n  ".to_string(), vec!["a.txt".to_string()], false).unwrap_err();
+        let status = git_setup(&dir, &["status", "--porcelain", "--untracked-files=all"]);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(err, "mensagem vazia");
+        assert!(status.contains("? a.txt"), "nada deveria ter sido estágiado: {status:?}");
+    }
+
+    #[test]
+    fn git_commit_recusa_path_com_parent_dir() {
+        let dir = temp_repo("pathpai");
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        let err = git_commit(cwd, "msg".to_string(), vec!["../fora.txt".to_string()], false).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(err.contains(".."), "{err}");
+    }
+
+    #[test]
+    fn git_discard_restaura_arquivo_rastreado() {
+        let dir = temp_repo("discard");
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+        git_commit(cwd.clone(), "base".to_string(), vec!["a.txt".to_string()], false).unwrap();
+        std::fs::write(dir.join("a.txt"), "dois\n").unwrap();
+
+        git_discard(cwd, vec!["a.txt".to_string()]).unwrap();
+        let restored = std::fs::read_to_string(dir.join("a.txt")).unwrap();
+        let status = git_setup(&dir, &["status", "--porcelain"]);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(restored, "um\n");
+        assert_eq!(status.trim(), "", "worktree deveria ficar limpo: {status:?}");
+    }
+
+    #[test]
+    fn git_discard_recusa_untracked_sem_apagar() {
+        let dir = temp_repo("untracked");
+        std::fs::write(dir.join("novo.txt"), "x\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+
+        let err = git_discard(cwd, vec!["novo.txt".to_string()]).unwrap_err();
+        let kept = dir.join("novo.txt").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(err.contains("não rastreado"), "{err}");
+        assert!(kept, "descartar não pode apagar untracked (seria `git clean`)");
+    }
+
+    #[test]
+    fn git_stash_com_untracked_e_pop_devolve_o_worktree() {
+        let dir = temp_repo("stash");
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+        git_commit(cwd.clone(), "base".to_string(), vec!["a.txt".to_string()], false).unwrap();
+        std::fs::write(dir.join("a.txt"), "dois\n").unwrap();
+        std::fs::write(dir.join("novo.txt"), "x\n").unwrap();
+
+        let stashed = git_stash(cwd.clone()).unwrap();
+        let after_stash = git_setup(&dir, &["status", "--porcelain", "--untracked-files=all"]);
+        let hidden = !dir.join("novo.txt").exists()
+            && std::fs::read_to_string(dir.join("a.txt")).unwrap() == "um\n";
+
+        let popped = git_stash_pop(cwd).unwrap();
+        let restored = std::fs::read_to_string(dir.join("a.txt")).unwrap();
+        let untracked_back = dir.join("novo.txt").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(stashed.contains("pi-deck: "), "mensagem carimbada: {stashed:?}");
+        assert!(after_stash.trim().is_empty(), "worktree deveria ficar limpo: {after_stash:?}");
+        assert!(hidden, "`--include-untracked` leva o untracked junto");
+        assert!(!popped.trim().is_empty(), "pop sem saída: {popped:?}");
+        assert_eq!(restored, "dois\n");
+        assert!(untracked_back, "pop devolve o untracked");
+    }
+
+    #[test]
+    fn git_push_sem_remote_devolve_erro_do_git() {
+        let dir = temp_repo("push");
+        std::fs::write(dir.join("a.txt"), "um\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+        git_commit(cwd.clone(), "base".to_string(), vec!["a.txt".to_string()], false).unwrap();
+
+        let err = git_push(cwd, false).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Sem remote o git sai 128: o texto do git vai para a UI, sem panic.
+        assert!(!err.trim().is_empty(), "erro vazio");
+        assert!(err.contains("push"), "stderr do git esperado: {err:?}");
     }
 
     /// Prova ponta a ponta do comando em repo git de verdade (não só o parser).
