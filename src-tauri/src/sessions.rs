@@ -1403,6 +1403,12 @@ pub fn list_children(dir: String) -> Result<String, String> {
 }
 
 fn list_children_in(dir: &Path, root: &Path) -> Result<String, String> {
+    // Sessão que nunca disparou subagent não tem diretório de children: vazio, não erro.
+    // Sem isto o `canonicalize` abaixo falhava com ENOENT e o painel Subagents pintava
+    // "No such file or directory (os error 2)" em toda sessão nova.
+    if !dir.exists() {
+        return Ok("[]".to_string());
+    }
     // Sem isso, um dir vindo do webview enumera qualquer diretório legível.
     let dir = contained_in(dir, root)?;
     if !dir.is_dir() {
@@ -2303,6 +2309,16 @@ mod tests {
         assert_eq!(items[1]["file"], "/tmp/a.txt");
         assert_eq!(items[1]["src"], "sessão");
         assert!(items[1]["patch"].as_str().unwrap().contains("-a\n+b"));
+    }
+
+    #[test]
+    fn list_children_missing_dir_is_empty_not_error() {
+        let t = Tmp::new("childnone");
+        let root = t.at("sessions");
+        t.file("sessions/proj/s.jsonl", "{}\n");
+        // Sessão sem nenhum subagent: o dir dos children não existe.
+        let out = list_children_in(&t.at("sessions/proj/s"), &root).unwrap();
+        assert_eq!(out, "[]", "dir ausente não pode virar erro no painel: {out}");
     }
 
     #[test]

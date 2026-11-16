@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use tauri::{AppHandle, Emitter, State};
@@ -11,6 +11,9 @@ use crate::sessions::{escape_json, pi_bin};
 pub struct ChildHandle {
     child: Child,
     stdin: ChildStdin,
+    /// Identidade do processo dono deste slot: o leitor de stdout usa o pid para
+    /// não derrubar um filho novo da mesma sessão quando o antigo fecha o pipe.
+    pid: u32,
 }
 
 /// Mata e espera um filho que nunca chegou ao mapa (spawn ok, registro falhou).
@@ -21,7 +24,21 @@ fn drop_child(mut child: Child) {
 }
 
 #[derive(Default)]
-pub struct RpcState(Mutex<HashMap<String, ChildHandle>>);
+pub struct RpcState(Arc<Mutex<HashMap<String, ChildHandle>>>);
+
+/// Remove o slot da sessão **se** ainda for deste pid. Devolve o handle para o
+/// chamador matar/aguardar fora do lock.
+fn take_if_same(
+    map: &Arc<Mutex<HashMap<String, ChildHandle>>>,
+    session_id: &str,
+    pid: u32,
+) -> Option<ChildHandle> {
+    let mut map = map.lock().ok()?;
+    match map.get(session_id) {
+        Some(h) if h.pid == pid => map.remove(session_id),
+        _ => None,
+    }
+}
 
 impl RpcState {
     /// Encerra todos os processos `pi` filhos (usado ao fechar a janela).
@@ -97,6 +114,7 @@ pub fn start_session(
         cmd.env("PATH", path);
     }
     let mut child = cmd.spawn().map_err(|e| format!("spawn pi: {e}"))?;
+    let child_pid = child.id();
 
     let mut stdin = match child.stdin.take() {
         Some(s) => s,
@@ -136,6 +154,7 @@ pub fn start_session(
 
     let sid_out = session_id.clone();
     let app_out = app.clone();
+    let reg = state.0.clone();
     let debug = std::env::var("PWUI_DEBUG").is_ok();
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -144,6 +163,13 @@ pub fn start_session(
                 eprintln!("[rpc] {head}");
             }
             let _ = app_out.emit("rpc-line", (sid_out.clone(), line));
+        }
+        // O filho morreu sozinho (crash/saída): tira o slot do mapa. Sem isto o
+        // `start_session` seguinte achava a sessão "já iniciada", devolvia Ok sem
+        // subir processo novo e o app ficava sem conseguir mandar nada (stdin morto).
+        if let Some(mut dead) = take_if_same(&reg, &sid_out, child_pid) {
+            let _ = dead.child.kill();
+            let _ = dead.child.wait();
         }
         let _ = app_out.emit("rpc-exit", sid_out);
     });
@@ -174,7 +200,10 @@ pub fn start_session(
         drop(map);
         drop_child(child);
     } else {
-        map.insert(session_id.clone(), ChildHandle { child, stdin });
+        map.insert(
+            session_id.clone(),
+            ChildHandle { child, stdin, pid: child_pid },
+        );
     }
 
     Ok(session_id)
@@ -219,11 +248,17 @@ pub fn send_prompt(
         escape_json(&id),
         escape_json(&message)
     );
-    handle
+    let written = handle
         .stdin
         .write_all(command.as_bytes())
-        .map_err(|e| e.to_string())?;
-    handle.stdin.flush().map_err(|e| e.to_string())
+        .and_then(|_| handle.stdin.flush());
+    if let Err(e) = written {
+        // stdin morto = filho já não existe. Libera o slot para o próximo
+        // `ensureRpc` subir um processo novo em vez de falhar para sempre.
+        map.remove(&session_id);
+        return Err(format!("processo do pi encerrou ({e})"));
+    }
+    Ok(())
 }
 
 /// Quantos processos `pi` filhos estão vivos (visibilidade do custo).
@@ -243,11 +278,15 @@ pub fn rpc_command(
     let handle = map
         .get_mut(&session_id)
         .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
-    handle
+    let written = handle
         .stdin
         .write_all(format!("{payload}\n").as_bytes())
-        .map_err(|e| e.to_string())?;
-    handle.stdin.flush().map_err(|e| e.to_string())
+        .and_then(|_| handle.stdin.flush());
+    if let Err(e) = written {
+        map.remove(&session_id);
+        return Err(format!("processo do pi encerrou ({e})"));
+    }
+    Ok(())
 }
 
 #[tauri::command]
