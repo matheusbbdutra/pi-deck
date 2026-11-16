@@ -93,6 +93,11 @@ fn spawn(cwd: &str, cols: u16, rows: u16) -> Result<(PtyEntry, Box<dyn Read + Se
     let shell = user_shell();
     let mut command = CommandBuilder::new(&shell);
     command.cwd(cwd);
+    // O shell não pode herdar o TERM do processo que abriu o app: nomes como
+    // `otter-term` não existem no terminfo e o zle repinta a linha errado
+    // (digitar `ls` aparecia como `lsls`). O xterm.js é xterm-256color.
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
     let child = slave
         .spawn_command(command)
         .map_err(|e| format!("falha ao iniciar {shell}: {e}"))?;
