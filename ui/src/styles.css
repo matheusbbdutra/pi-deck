@@ -414,6 +414,13 @@
               text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:right; }
   .file-count { flex:none; font-size:9.5px; padding:1px 5px; border-radius:3px;
                 background:#1e2130; color:var(--dim); }
+  /* aba Plano: uma linha por plans/*.md + barra fina com feitos/total */
+  .plan-item { cursor:pointer; border-bottom:1px solid var(--line-soft); }
+  .plan-item .file-row { border-bottom:none; }
+  .plan-current { flex:none; max-width:46%; color:var(--mute); font-size:9.5px;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .plan-bar { height:2px; background:var(--line-soft); }
+  .plan-bar-fill { height:100%; background:var(--accent); }
   /* aba git: sinais +add/−del + barra de ações e compositor de commit */
   .git-add { flex:none; color:var(--ok); font-size:9.5px; }
   .git-del { flex:none; color:var(--err); font-size:9.5px; }

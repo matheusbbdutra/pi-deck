@@ -495,7 +495,7 @@ async function start(cwd, key, refValue, refFlag, childrenDir) {
     // Sessão nova só ganha `.jsonl` na 1ª mensagem: o get_state traz `sessionFile`,
     // sem o qual "carregar anteriores" e a aba Arquivos ficam sem caminho no disco.
     sendCommand({ type: 'get_state' });
-    loadGit(); loadEdits();
+    loadGit(); loadEdits(); loadPlans();
   } catch (e) {
     // Erro de outra sessão não aparece no transcript da atual.
     if (!current || current.key !== key) return;
@@ -571,7 +571,7 @@ async function openSession(cwd, s) {
   // Conecta já na abertura: contexto, thinking, modelo e comandos vêm do pi.
   await ensureRpc();
   checkAuth();
-  loadGit(); loadEdits();
+  loadGit(); loadEdits(); loadPlans();
 }
 
 /* Sobe o processo sob demanda, com teto de sessões vivas. */
@@ -1468,6 +1468,68 @@ function renderGit() {
   }
 }
 
+/* =============== aba Plano (plans/ do projeto) =============== */
+let plansData = null;   // último `plans_list` da sessão em foco (null = ainda não leu)
+let plansError = '';
+
+/** Relê os planos do `cwd` da sessão. Mesma geração (`viewSeq`) dos vizinhos:
+    resposta de sessão que já saiu não pinta no painel da atual. */
+async function loadPlans() {
+  const cwd = current && current.cwd;
+  const seq = viewSeq;
+  if (!cwd) { plansData = null; plansError = ''; renderPlans(); return; }
+  try {
+    const data = JSON.parse(String(await inv('plans_list', { cwd })));
+    if (seq !== viewSeq) return; // trocou de sessão durante a leitura
+    plansData = data && typeof data === 'object' ? data : null;
+    plansError = '';
+  } catch (e) {
+    if (seq !== viewSeq) return;
+    plansData = null;
+    plansError = String(e);
+  }
+  renderPlans();
+}
+
+/** Uma linha por plano (`name`, `done/total`, próximo item aberto) + barra de 2px.
+    Clique na linha abre o markdown no app padrão. */
+function renderPlans() {
+  const host = $('plans');
+  if (!host) return;
+  clear(host);
+  if (plansError) { host.appendChild(el('div', 'empty', plansError)); return; }
+  if (!plansData) { host.appendChild(el('div', 'empty', 'nenhum plano')); return; }
+  if (plansData.repo !== true) {
+    host.appendChild(el('div', 'empty', 'sem pasta plans/ neste projeto'));
+    return;
+  }
+  const list = Array.isArray(plansData.plans) ? plansData.plans : [];
+  if (!list.length) { host.appendChild(el('div', 'empty', 'nenhum plano')); return; }
+  const cwd = current && current.cwd;
+  for (const p of list) {
+    const file = String(p.file || '');
+    const done = Number(p.done) || 0;
+    const total = Number(p.total) || 0;
+    const item = el('div', 'plan-item');
+    const row = el('div', 'file-row');
+    row.appendChild(el('span', 'file-name', String(p.name || file)));
+    if (p.current) row.appendChild(el('span', 'plan-current', String(p.current)));
+    row.appendChild(el('span', 'file-count', total ? done + '/' + total : 'sem checklist'));
+    item.appendChild(row);
+    const bar = el('div', 'plan-bar');
+    const fill = el('div', 'plan-bar-fill');
+    fill.style.width = (total ? Math.min(100, Math.round((done / total) * 100)) : 0) + '%';
+    bar.appendChild(fill);
+    item.appendChild(bar);
+    item.title = file + ' · clique abre no app padrão';
+    item.onclick = async () => {
+      try { await inv('open_file', { cwd, path: file }); }
+      catch (e) { plansError = 'abrir: ' + String(e); renderPlans(); }
+    };
+    host.appendChild(item);
+  }
+}
+
 async function loadChildren(dir) {
   if (!dir) return;
   const seq = viewSeq;
@@ -1764,7 +1826,7 @@ listen('rpc-line', (ev) => {
       { const st = tabs.find(x => x.key === sessionId); if (st && st.streamText) { st.streamText = ''; saveTabs(); } }
       if (current && current.childrenDir) loadChildren(current.childrenDir);
       // Turno pode ter editado arquivos: a aba de diffs se atualiza sozinha.
-      loadGit(); loadEdits();
+      loadGit(); loadEdits(); loadPlans();
       sendCommand({ type: 'get_session_stats' });
       break;
 
@@ -2298,7 +2360,7 @@ function handleResponse(rec) {
         // Sessão criada com `+ Nova` nasce sem childrenDir: sem isto o painel de
         // subagents fica sem origem e nunca lista nada até reabrir pela sidebar.
         if (current) loadChildren(dir);
-        loadGit(); loadEdits();
+        loadGit(); loadEdits(); loadPlans();
         // Pós-fork: abre a sessão nova resultante (histórico + sidebar).
         if (pendingForkReload) {
           pendingForkReload = false;
@@ -2628,7 +2690,7 @@ async function switchTab(key) {
     sendCommand({ type: 'get_session_stats' });
   }
   if (t.childrenDir) await loadChildren(t.childrenDir);
-  loadGit(); loadEdits();
+  loadGit(); loadEdits(); loadPlans();
 }
 
 async function closeTab(key) {
@@ -4010,7 +4072,21 @@ applySubsVisibility((() => { try { return localStorage.getItem('subs-hidden') ==
 // Painel de subagents está sempre visível: clicar na tab é só um "atualizar"
 // (run de subagent aparece no disco enquanto o turno roda, sem esperar o
 // próximo agent_settled). O Git não é aba: fica fixo embaixo.
-$('panelsubs').onclick = () => { if (current && current.childrenDir) loadChildren(current.childrenDir); };
+/** Aba do topo do painel direito: Subagents | Plano. Uma pane visível por vez,
+    dentro do `.split-top` (o Git de baixo não participa). */
+function switchPanelPane(name) {
+  $('panelsubs').classList.toggle('active', name === 'subs');
+  $('panelplans').classList.toggle('active', name === 'plans');
+  $('subs').classList.toggle('hidden', name !== 'subs');
+  $('plans').classList.toggle('hidden', name !== 'plans');
+}
+
+$('panelsubs').onclick = () => {
+  switchPanelPane('subs');
+  if (current && current.childrenDir) loadChildren(current.childrenDir);
+};
+// Ativar a aba relê: o `plans/*.md` muda no disco entre turnos, sem polling próprio.
+$('panelplans').onclick = () => { switchPanelPane('plans'); loadPlans(); };
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
 initSplit();
 // Dock do terminal: cwd/home vêm da sessão ativa (o PTY não segue trocas de sessão sozinho)
