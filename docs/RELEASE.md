@@ -59,8 +59,16 @@ plugin não existir, esta seção é preparação.
 ### Chaves
 
 ```bash
-npm run tauri signer generate -w ~/.tauri/sightdeck.key
+mkdir -p ~/.tauri
+npx tauri signer generate -w ~/.tauri/sightdeck.key
 ```
+
+> **Cuidado com o `npm run`**: `npm run tauri signer generate -w ~/…` **falha**, porque o npm
+> consome o `-w` como `--workspace` (`npm error No workspaces found`). Use `npx tauri …`
+> ou separe os argumentos: `npm run tauri -- signer generate -w ~/…`.
+>
+> Para automação: `--ci` evita prompts e `-p "<senha>"` define a senha. Testado:
+> gera dois arquivos (~348 B a privada, ~152 B a pública).
 
 Gera um par **minisign**:
 - **privada**: `~/.tauri/sightdeck.key` (com senha).
