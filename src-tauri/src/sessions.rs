@@ -1,13 +1,32 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+
+/// Home do usuário: `HOME` e, no Windows (sem `HOME`), `USERPROFILE`.
+/// Decisão pura — valores vazios contam como ausentes, para testar sem `set_var` (global).
+fn pick_home(home: Option<OsString>, userprofile: Option<OsString>) -> Option<PathBuf> {
+    fn non_empty(v: Option<OsString>) -> Option<PathBuf> {
+        v.filter(|s| !s.is_empty()).map(PathBuf::from)
+    }
+    non_empty(home).or_else(|| non_empty(userprofile))
+}
+
+/// Sufixo do executável do SO: `.exe` no Windows, nada nos demais.
+fn bin_suffix(windows: bool) -> &'static str {
+    if windows {
+        ".exe"
+    } else {
+        ""
+    }
+}
 
 /// Caminho do binário `pi`.
 /// Aberto pelo lançador gráfico o app não herda o PATH do shell (os error 2),
 /// então procura nos diretórios de instalação antes de cair no PATH.
 pub fn pi_bin() -> PathBuf {
     let env_val = std::env::var("PI_DECK_PI_BIN").ok();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"));
     resolve_pi_bin(env_val.as_deref(), home.as_deref(), Path::is_file)
 }
 
@@ -17,14 +36,24 @@ fn resolve_pi_bin(
     home: Option<&Path>,
     exists: impl Fn(&Path) -> bool,
 ) -> PathBuf {
+    resolve_pi_bin_with(env_val, home, bin_suffix(cfg!(windows)), exists)
+}
+
+/// Mesma decisão com o sufixo de executável explícito — testável para os dois SOs.
+fn resolve_pi_bin_with(
+    env_val: Option<&str>,
+    home: Option<&Path>,
+    suffix: &str,
+    exists: impl Fn(&Path) -> bool,
+) -> PathBuf {
     if let Some(p) = env_val.map(str::trim).filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
     if let Some(home) = home {
         for rel in [
-            ".pi/agent/bin/pi",
-            ".local/bin/pi",
-            ".local/share/fnm/aliases/default/bin/pi",
+            format!(".pi/agent/bin/pi{suffix}"),
+            format!(".local/bin/pi{suffix}"),
+            format!(".local/share/fnm/aliases/default/bin/pi{suffix}"),
         ] {
             let cand = home.join(rel);
             if exists(&cand) {
@@ -32,13 +61,14 @@ fn resolve_pi_bin(
             }
         }
     }
-    PathBuf::from("pi")
+    PathBuf::from(format!("pi{suffix}"))
 }
 
 /// Root onde o pi guarda as sessões (`~/.pi/agent/sessions`).
 fn sessions_root() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("HOME não definido")?;
-    Ok(PathBuf::from(home).join(".pi/agent/sessions"))
+    let home = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+        .ok_or("HOME nem USERPROFILE definidos")?;
+    Ok(home.join(".pi/agent/sessions"))
 }
 
 /// Resolve `path` e exige que esteja sob `root`.
@@ -244,12 +274,25 @@ fn quote_bin(path: &str) -> String {
     }
 }
 
+/// Comando que o terminal do alvo roda: `pi auth login` e uma pausa para o usuário
+/// ler o resultado antes da janela fechar. POSIX usa `sh`; no Windows o terminal é
+/// `powershell.exe`, então a pausa é `Read-Host` (o `read -r _` do bash não existe lá).
+fn login_inner(bin_quoted: &str, provider: &str, windows: bool) -> String {
+    if windows {
+        format!("{bin_quoted} auth login {provider}; Write-Host ''; Read-Host 'enter para fechar'")
+    } else {
+        format!(
+            "{bin_quoted} auth login {provider}; echo; printf 'enter para fechar '; read -r _"
+        )
+    }
+}
+
 /// Abre um terminal já rodando `pi auth login <provider>` (login é interativo).
 #[tauri::command]
 pub fn open_terminal_login(provider: String) -> Result<String, String> {
     let p = validate_login_provider(&provider)?;
     let bin = quote_bin(&pi_bin().to_string_lossy());
-    let inner = format!("{bin} auth login {p}; echo; printf 'enter para fechar '; read -r _");
+    let inner = login_inner(&bin, p, cfg!(windows));
 
     #[cfg(target_os = "linux")]
     let candidates: Vec<(&str, Vec<String>)> = vec![
@@ -267,8 +310,12 @@ pub fn open_terminal_login(provider: String) -> Result<String, String> {
     )];
     #[cfg(target_os = "windows")]
     let candidates: Vec<(&str, Vec<String>)> = vec![(
-        "cmd",
-        vec!["/C".into(), "start".into(), inner.clone()],
+        "powershell.exe",
+        vec![
+            "-NoExit".into(),
+            "-Command".into(),
+            inner.clone(),
+        ],
     )];
 
     for (prog, args) in candidates {
@@ -2085,10 +2132,12 @@ mod tests {
     }
 
     // ---------- resolve_pi_bin: decisão pura, sem env e sem fs ----------
+    // Os testes fixam o sufixo POSIX ("") em `resolve_pi_bin_with`; o wrapper
+    // `resolve_pi_bin` aplica `bin_suffix(cfg!(windows))` e é coberto à parte.
 
     #[test]
     fn pi_bin_finds_fnm_alias_default() {
-        let got = resolve_pi_bin(None, Some(Path::new("/home/u")), |p| {
+        let got = resolve_pi_bin_with(None, Some(Path::new("/home/u")), "", |p| {
             p.ends_with(".local/share/fnm/aliases/default/bin/pi")
         });
         assert_eq!(
@@ -2099,13 +2148,15 @@ mod tests {
 
     #[test]
     fn pi_bin_env_wins_over_home() {
-        let got = resolve_pi_bin(Some("/opt/x/pi"), Some(Path::new("/home/u")), |_| true);
+        let got = resolve_pi_bin_with(Some("/opt/x/pi"), Some(Path::new("/home/u")), "", |_| {
+            true
+        });
         assert_eq!(got, PathBuf::from("/opt/x/pi"));
     }
 
     #[test]
     fn pi_bin_blank_env_falls_through() {
-        let got = resolve_pi_bin(Some("   "), Some(Path::new("/home/u")), |p| {
+        let got = resolve_pi_bin_with(Some("   "), Some(Path::new("/home/u")), "", |p| {
             p.ends_with(".pi/agent/bin/pi")
         });
         assert_eq!(got, PathBuf::from("/home/u/.pi/agent/bin/pi"));
@@ -2113,19 +2164,76 @@ mod tests {
 
     #[test]
     fn pi_bin_prefers_managed_install_then_local_bin_then_path() {
-        let managed = resolve_pi_bin(None, Some(Path::new("/home/u")), |_| true);
+        let managed = resolve_pi_bin_with(None, Some(Path::new("/home/u")), "", |_| true);
         assert_eq!(managed, PathBuf::from("/home/u/.pi/agent/bin/pi"));
 
-        let local = resolve_pi_bin(None, Some(Path::new("/home/u")), |p| {
+        let local = resolve_pi_bin_with(None, Some(Path::new("/home/u")), "", |p| {
             p.ends_with(".local/bin/pi")
         });
         assert_eq!(local, PathBuf::from("/home/u/.local/bin/pi"));
 
         assert_eq!(
-            resolve_pi_bin(None, Some(Path::new("/home/u")), |_| false),
+            resolve_pi_bin_with(None, Some(Path::new("/home/u")), "", |_| false),
             PathBuf::from("pi")
         );
-        assert_eq!(resolve_pi_bin(None, None, |_| true), PathBuf::from("pi"));
+        assert_eq!(
+            resolve_pi_bin_with(None, None, "", |_| true),
+            PathBuf::from("pi")
+        );
+    }
+
+    #[test]
+    fn bin_suffix_e_exe_so_no_windows() {
+        assert_eq!(bin_suffix(true), ".exe");
+        assert_eq!(bin_suffix(false), "");
+    }
+
+    #[test]
+    fn resolve_pi_bin_with_encontra_pi_exe_no_windows() {
+        let got = resolve_pi_bin_with(
+            None,
+            Some(Path::new(r"C:\Users\u")),
+            ".exe",
+            |p| p.ends_with(r".local\bin\pi.exe") || p.ends_with(".local/bin/pi.exe"),
+        );
+        assert_eq!(got.file_name().unwrap(), "pi.exe", "{}", got.display());
+        assert!(
+            got.ends_with(".local/bin/pi.exe"),
+            "{}",
+            got.display()
+        );
+        // nenhum candidato existe: o fallback também leva o sufixo
+        assert_eq!(
+            resolve_pi_bin_with(None, Some(Path::new(r"C:\Users\u")), ".exe", |_| false),
+            PathBuf::from("pi.exe")
+        );
+    }
+
+    #[test]
+    fn resolve_pi_bin_aplica_o_sufixo_do_so_atual() {
+        let got = resolve_pi_bin(None, None, |_| false);
+        assert_eq!(got, PathBuf::from(format!("pi{}", bin_suffix(cfg!(windows)))));
+    }
+
+    // ---------- pick_home: HOME primeiro, USERPROFILE como reserva do Windows ----------
+
+    #[test]
+    fn pick_home_prefere_home() {
+        let got = pick_home(Some("/home/u".into()), Some(r"C:\Users\u".into()));
+        assert_eq!(got, Some(PathBuf::from("/home/u")));
+    }
+
+    #[test]
+    fn pick_home_cai_para_userprofile() {
+        let esperado = Some(PathBuf::from(r"C:\Users\u"));
+        assert_eq!(pick_home(None, Some(r"C:\Users\u".into())), esperado);
+        assert_eq!(pick_home(Some("".into()), Some(r"C:\Users\u".into())), esperado);
+    }
+
+    #[test]
+    fn pick_home_none_quando_ambos_vazios() {
+        assert_eq!(pick_home(None, None), None);
+        assert_eq!(pick_home(Some("".into()), Some("".into())), None);
     }
 
     // ---------- escape_json ----------
@@ -2588,12 +2696,33 @@ mod tests {
     #[test]
     fn quote_bin_escapa_para_o_shell_do_alvo() {
         // POSIX: single quote com o idioma `'\''` — $, backtick e espaço ficam literais.
+        // Windows: double quote (cmd e PowerShell não interpretam single quote).
         let q = quote_bin("/home/u/.local/bin/pi");
-        assert_eq!(q, "'/home/u/.local/bin/pi'", "{q}");
-        if !cfg!(windows) {
+        if cfg!(windows) {
+            assert_eq!(q, "\"/home/u/.local/bin/pi\"", "{q}");
+        } else {
+            assert_eq!(q, "'/home/u/.local/bin/pi'", "{q}");
             let com_aspa = quote_bin("/tmp/a'b/pi");
             assert_eq!(com_aspa, r"'/tmp/a'\''b/pi'", "{com_aspa}");
         }
+    }
+
+    // ---------- login_inner: pausa final com o dialeto do SO ----------
+
+    #[test]
+    fn login_inner_posix_espera_enter_com_read() {
+        let s = login_inner("'/home/u/.local/bin/pi'", "openai", false);
+        assert!(s.contains("auth login openai"), "{s}");
+        assert!(s.contains("read -r _"), "{s}");
+        assert!(!s.contains("Read-Host"), "{s}");
+    }
+
+    #[test]
+    fn login_inner_windows_espera_enter_com_read_host() {
+        let s = login_inner("\"C:\\Users\\u\\pi.exe\"", "openai", true);
+        assert!(s.contains("auth login openai"), "{s}");
+        assert!(s.contains("Read-Host"), "{s}");
+        assert!(!s.contains("read -r _"), "{s}");
     }
 
     // ---------- compactação (settings.json do projeto) ----------

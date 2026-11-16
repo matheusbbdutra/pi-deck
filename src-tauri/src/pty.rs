@@ -13,12 +13,22 @@ use tauri::{AppHandle, Emitter, State};
 /// na mensagem IPC, e o loop devolve o controle entre chunks.
 const READ_CHUNK: usize = 32 * 1024;
 
-/// Shell interativo do usuário; `/bin/sh` quando `$SHELL` não está definido.
-fn user_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
+/// Shell interativo do usuário. Decisão pura: Unix usa `$SHELL` (cai em `/bin/sh`),
+/// Windows usa `%COMSPEC%` (cai em `cmd.exe`) — `$SHELL` não existe lá.
+fn choose_shell(shell: Option<String>, comspec: Option<String>, windows: bool) -> String {
+    let (candidate, fallback) = if windows {
+        (comspec, "cmd.exe")
+    } else {
+        (shell, "/bin/sh")
+    };
+    candidate
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/bin/sh".to_string())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Shell do usuário lido do ambiente — o `choose_shell` faz a escolha.
+fn user_shell() -> String {
+    choose_shell(std::env::var("SHELL").ok(), std::env::var("COMSPEC").ok(), cfg!(windows))
 }
 
 /// Payload do evento `pty-data`. Puro para testar o contrato sem GUI.
@@ -236,6 +246,44 @@ mod tests {
             exit_payload("pty-7"),
             serde_json::json!({"id": "pty-7"}),
             "payload do pty-exit não tem campo extra"
+        );
+    }
+
+    // ---------- choose_shell: $SHELL no Unix, %COMSPEC% no Windows ----------
+
+    #[test]
+    fn choose_shell_unix_usa_shell_do_ambiente() {
+        let s = choose_shell(Some("/usr/bin/zsh".into()), Some("cmd.exe".into()), false);
+        assert_eq!(s, "/usr/bin/zsh");
+    }
+
+    #[test]
+    fn choose_shell_unix_sem_shell_cai_em_bin_sh() {
+        assert_eq!(choose_shell(None, Some("cmd.exe".into()), false), "/bin/sh");
+        assert_eq!(
+            choose_shell(Some(String::new()), None, false),
+            "/bin/sh",
+            "SHELL vazio conta como ausente"
+        );
+    }
+
+    #[test]
+    fn choose_shell_windows_usa_comspec() {
+        let s = choose_shell(
+            Some("/bin/bash".into()),
+            Some(r"C:\Windows\system32\cmd.exe".into()),
+            true,
+        );
+        assert_eq!(s, r"C:\Windows\system32\cmd.exe");
+    }
+
+    #[test]
+    fn choose_shell_windows_sem_comspec_cai_em_cmd_exe() {
+        assert_eq!(choose_shell(None, None, true), "cmd.exe");
+        assert_eq!(
+            choose_shell(Some("/bin/bash".into()), Some(String::new()), true),
+            "cmd.exe",
+            "COMSPEC vazio conta como ausente; $SHELL não vale no Windows"
         );
     }
 

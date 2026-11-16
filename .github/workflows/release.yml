@@ -42,6 +42,29 @@ jobs:
       - name: Testes
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  # Separado do `build` de propósito: o job de build roda `npm ci` +
+  # `tauri build` (bundling demorado) e um teste quebrado ali aparece
+  # só no fim. Aqui o `cargo test` falha cedo e prova que o crate
+  # compila e passa no Windows (HOME/USERPROFILE, %COMSPEC%, sufixo
+  # `.exe`, PowerShell no login).
+  test-windows:
+    name: test (windows)
+    runs-on: windows-latest
+    steps:
+      # pinned: actions/checkout v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      # pinned: dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+
+      # pinned: swatinem/rust-cache v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: src-tauri
+
+      - name: Testes (Windows)
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
