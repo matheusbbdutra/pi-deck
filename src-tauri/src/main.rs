@@ -1,13 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod git;
+mod pty;
 mod rpc;
 mod sessions;
 
 fn main() {
     tauri::Builder::default()
         .manage(rpc::RpcState::default())
+        .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![
+            pty::pty_open,
+            pty::pty_write,
+            pty::pty_resize,
+            pty::pty_close,
             rpc::start_session,
             rpc::send_prompt,
             rpc::rpc_command,
@@ -64,6 +70,7 @@ fn main() {
             if let tauri::WindowEvent::Destroyed = event {
                 use tauri::Manager;
                 window.state::<rpc::RpcState>().kill_all();
+                window.state::<pty::PtyState>().kill_all();
             }
         })
         .run(tauri::generate_context!())
