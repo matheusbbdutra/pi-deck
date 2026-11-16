@@ -396,6 +396,15 @@
   .diff-del { background:#2a1519; color:#e2a0a8; }
   .diff-hunk { color:#6f7c99; padding-top:4px; }
   .diff-meta { color:#6f7c99; }
+  /* tokens do highlight (Prism em spans; sem fundo próprio — quem pinta é o diff) */
+  .token.comment { color:color-mix(in srgb, var(--mute) 60%, var(--dim)); font-style:italic; }
+  .token.string { color:var(--ok); }
+  .token.keyword, .token.tag { color:var(--accent); }
+  .token.function { color:color-mix(in srgb, var(--accent) 55%, var(--fg)); }
+  .token.number, .token.boolean { color:var(--warn); }
+  .token.operator, .token.punctuation { color:var(--dim); }
+  .token.property, .token.attr-name { color:color-mix(in srgb, var(--accent) 35%, var(--fg)); }
+  .token.class-name { color:color-mix(in srgb, var(--ok) 65%, var(--fg)); }
   /* copiar resposta/bloco de código */
   .copybtn { position:absolute; top:2px; right:2px; z-index:2; opacity:0; cursor:pointer;
              background:#12161f; border:1px solid var(--line); color:var(--mute);

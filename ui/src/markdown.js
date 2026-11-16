@@ -1,7 +1,8 @@
 import { inv } from './rpc.js';
 import { $, el, clear, stripAnsi, scrollBottom } from './shared.js';
+import { appendHighlighted, langFor } from './highlight.js';
 
-/* =============== markdown (DOM puro, sem innerHTML) =============== */
+/* =============== markdown (DOM puro, sem HTML em string) =============== */
 function inline(text) {
   const frag = document.createDocumentFragment();
   const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]]+\]\([^)\s]+\))|(https?:\/\/[^\s)]+)/g;
@@ -95,7 +96,7 @@ function codeBox(lang, code) {
   box.appendChild(btn);
   const wrap = el('div', 'scroll-x');
   const pre = el('pre');
-  pre.appendChild(el('code', null, code));
+  pre.appendChild(appendHighlighted(el('code'), code, langFor(lang)));
   wrap.appendChild(pre);
   box.appendChild(wrap);
   return box;

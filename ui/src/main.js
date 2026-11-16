@@ -4,6 +4,7 @@ import { inv, listen, PREFIX } from './rpc.js';
 import { $, el, stripAnsi, clear, setEmpty, scrollBottom, updateScrollBtn, uiSettings, caps, cards, pendingPromptRows } from './shared.js';
 import { setMarkdown, mdRow, copyText, extActivity } from './markdown.js';
 import { card, thinkBlock, outputText } from './tool-cards.js';
+import { appendHighlighted, langFor } from './highlight.js';
 
 let current = null;
 let seq = 0;
@@ -981,7 +982,7 @@ async function openWorktreeDiff(path) {
   if (seq !== viewSeq) return; // trocou de sessão durante a leitura
   clear(body);
   if (!patch.trim()) { body.appendChild(el('div', 'empty', 'sem alterações no worktree')); return; }
-  renderPatch(body, patch, null);
+  renderPatch(body, patch, null, path);
 }
 
 /** Abre o diff no mesmo painel de detalhe dos subagents. */
@@ -1018,13 +1019,18 @@ function openDiffs(g) {
   $('detail').classList.remove('hidden');
 }
 
-function renderPatch(node, patch, file) {
+/** Linhas com a coluna do diff (`+`, `-`, ` `): o código vem depois dela. */
+const hasDiffPrefix = (cls, line) =>
+  cls === 'diff-add' || cls === 'diff-del' || (cls === 'diff-ctx' && line[0] === ' ');
+
+function renderPatch(node, patch, file, langPath) {
   const text = String(patch || '');
   const lines = text.split('\n');
   if (!text.trim()) {
     node.appendChild(el('div', 'diff-line diff-meta', 'sem diff (arquivo novo ou conteúdo não registrado)'));
     return;
   }
+  const lang = langFor(langPath || file);
   const MAX = 1200;
   const truncated = text.includes('\u2026 patch truncado');
   // Separa o cabeçalho (---/+++) dos hunks (@@): um botão "desfazer" por hunk.
@@ -1047,7 +1053,16 @@ function renderPatch(node, patch, file) {
     else if (line.startsWith('@@')) cls = 'diff-hunk';
     else if (line.startsWith('+')) cls = 'diff-add';
     else if (line.startsWith('-')) cls = 'diff-del';
-    node.appendChild(el('div', 'diff-line ' + cls, line.length ? line : ' '));
+    const row = el('div', 'diff-line ' + cls);
+    if (!line.length) { row.textContent = ' '; node.appendChild(row); return; }
+    // Só add/del/ctx têm a coluna do prefixo; cabeçalho/hunk ficam texto puro.
+    if (hasDiffPrefix(cls, line)) {
+      row.appendChild(document.createTextNode(line[0]));
+      appendHighlighted(row, line.slice(1), lang);
+    } else {
+      row.appendChild(document.createTextNode(line));
+    }
+    node.appendChild(row);
   };
   for (const g of groups) {
     for (const line of g.head) paint(line);
