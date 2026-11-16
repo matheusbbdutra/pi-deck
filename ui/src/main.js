@@ -3,7 +3,7 @@ import './styles.css';
 import { inv, listen, PREFIX } from './rpc.js';
 import { $, el, stripAnsi, clear, setEmpty, scrollBottom, updateScrollBtn, uiSettings, caps, cards, pendingPromptRows } from './shared.js';
 import { setMarkdown, mdRow, copyText, extActivity } from './markdown.js';
-import { card, thinkBlock, outputText } from './tool-cards.js';
+import { card, thinkBlock, applyToolResult, setDiffRenderer } from './tool-cards.js';
 import { appendHighlighted, langFor } from './highlight.js';
 import { initTerminal, reconcileTerminal } from './terminal.js';
 
@@ -796,8 +796,7 @@ function renderMessages(data, ctx, keepNote) {
       const entry = store.get(m.toolCallId) || card(m.toolCallId, m.toolName, null, { target, store }, m.timestamp);
       entry.root.classList.add(m.isError ? 'err' : 'ok');
       entry.icon.textContent = m.isError ? '✕' : '✓';
-      const out = outputText(m);
-      if (out) entry.body.textContent = out;
+      applyToolResult(entry, m);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
       continue;
     }
@@ -1695,10 +1694,7 @@ listen('rpc-line', (ev) => {
 
     case 'tool_execution_update': {
       const entry = cards.get(rec.toolCallId);
-      if (entry) {
-        const out = outputText(rec.partialResult);
-        if (out) entry.body.textContent = out;
-      }
+      if (entry) applyToolResult(entry, rec.partialResult);
       break;
     }
 
@@ -1706,8 +1702,7 @@ listen('rpc-line', (ev) => {
       const entry = cards.get(rec.toolCallId) || card(rec.toolCallId, rec.toolName, rec.args, null, Date.now());
       entry.root.classList.add(rec.isError ? 'err' : 'ok');
       entry.icon.textContent = rec.isError ? '✕' : '✓';
-      const out = outputText(rec.result);
-      if (out) entry.body.textContent = out;
+      applyToolResult(entry, rec.result);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
       scrollBottom();
       break;
@@ -3973,6 +3968,8 @@ $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); render
 initSplit();
 // Dock do terminal: cwd/home vêm da sessão ativa (o PTY não segue trocas de sessão sozinho)
 initTerminal({ getCwd: () => (current && current.cwd) || '' });
+// Diff dos tool cards: `tool-cards.js` não pode importar `main.js` (ciclo).
+setDiffRenderer(renderPatch);
 setEmptyState(true, 'nosession');
 
 loadSettings();
