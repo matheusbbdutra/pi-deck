@@ -234,12 +234,22 @@ fn validate_login_provider(provider: &str) -> Result<&str, String> {
     Ok(p)
 }
 
+/// Cita o caminho do binário para o shell do alvo. Shell POSIX aceita single quote
+/// com o escape `'\''`; `cmd.exe` do Windows não interpreta single quote — lá é double quote.
+fn quote_bin(path: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", path.replace('"', ""))
+    } else {
+        format!("'{}'", path.replace('\'', r"'\''"))
+    }
+}
+
 /// Abre um terminal já rodando `pi auth login <provider>` (login é interativo).
 #[tauri::command]
 pub fn open_terminal_login(provider: String) -> Result<String, String> {
     let p = validate_login_provider(&provider)?;
-    let bin = pi_bin().to_string_lossy().replace('\'', r"'\''");
-    let inner = format!("'{bin}' auth login {p}; echo; printf 'enter para fechar '; read -r _");
+    let bin = quote_bin(&pi_bin().to_string_lossy());
+    let inner = format!("{bin} auth login {p}; echo; printf 'enter para fechar '; read -r _");
 
     #[cfg(target_os = "linux")]
     let candidates: Vec<(&str, Vec<String>)> = vec![
@@ -1403,17 +1413,14 @@ pub fn list_children(dir: String) -> Result<String, String> {
 }
 
 fn list_children_in(dir: &Path, root: &Path) -> Result<String, String> {
-    // Sessão que nunca disparou subagent não tem diretório de children: vazio, não erro.
-    // Sem isto o `canonicalize` abaixo falhava com ENOENT e o painel Subagents pintava
-    // "No such file or directory (os error 2)" em toda sessão nova.
-    if !dir.exists() {
+    // Sessão sem children: o diretório irmão do `.jsonl` nunca existiu e o
+    // `canonicalize` de contained_in falharia com NotFound (os error 2).
+    // Checar antes: diretório inexistente não enumera nada e não vaza path.
+    if !dir.is_dir() {
         return Ok("[]".to_string());
     }
     // Sem isso, um dir vindo do webview enumera qualquer diretório legível.
     let dir = contained_in(dir, root)?;
-    if !dir.is_dir() {
-        return Ok("[]".to_string());
-    }
 
     let mut items: Vec<(u64, String)> = Vec::new();
 
@@ -2312,16 +2319,6 @@ mod tests {
     }
 
     #[test]
-    fn list_children_missing_dir_is_empty_not_error() {
-        let t = Tmp::new("childnone");
-        let root = t.at("sessions");
-        t.file("sessions/proj/s.jsonl", "{}\n");
-        // Sessão sem nenhum subagent: o dir dos children não existe.
-        let out = list_children_in(&t.at("sessions/proj/s"), &root).unwrap();
-        assert_eq!(out, "[]", "dir ausente não pode virar erro no painel: {out}");
-    }
-
-    #[test]
     fn list_children_lists_runs_inside_root() {
         let t = Tmp::new("childok");
         let root = t.at("sessions");
@@ -2329,6 +2326,16 @@ mod tests {
         t.file("sessions/proj/child1/run-0/session.jsonl", "{}\n");
         let out = list_children_in(&t.at("sessions/proj"), &root).unwrap();
         assert!(out.contains("run-0"), "{out}");
+    }
+
+    #[test]
+    fn list_children_missing_dir_is_empty() {
+        // Sessão sem subagent: o diretório de children nunca existiu.
+        let t = Tmp::new("childnone");
+        let root = t.at("sessions");
+        t.file("sessions/proj/s.jsonl", "{}\n");
+        let out = list_children_in(&t.at("sessions/proj/s"), &root).unwrap();
+        assert_eq!(out, "[]", "{out}");
     }
 
     #[test]
@@ -2575,6 +2582,17 @@ mod tests {
                 !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
                 "{p:?} fora de [a-z0-9-]"
             );
+        }
+    }
+
+    #[test]
+    fn quote_bin_escapa_para_o_shell_do_alvo() {
+        // POSIX: single quote com o idioma `'\''` — $, backtick e espaço ficam literais.
+        let q = quote_bin("/home/u/.local/bin/pi");
+        assert_eq!(q, "'/home/u/.local/bin/pi'", "{q}");
+        if !cfg!(windows) {
+            let com_aspa = quote_bin("/tmp/a'b/pi");
+            assert_eq!(com_aspa, r"'/tmp/a'\''b/pi'", "{com_aspa}");
         }
     }
 

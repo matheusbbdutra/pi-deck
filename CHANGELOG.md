@@ -3,6 +3,20 @@
 All notable changes to pi-deck. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.1.18] — 2026-11-16
+
+### Added
+- **Aba Git (somente leitura)**: branch, `↑ahead ↓behind`, arquivos alterados com `+add`/`−del` e status por linha, atualizada ao abrir a aba. Clicar num arquivo abre o diff — patch da própria sessão (com **desfazer hunk**) quando o arquivo foi editado por ela, senão `git_file_diff` (`git diff HEAD`, `--no-index` para untracked) em modo leitura. Backend sem shell (`std::process::Command`) e com timeout de 10 s; parsers de porcelain v2 com testes, incluindo um ponta a ponta em repo real.
+
+### Changed
+- **Painel direito enxuto**: duas abas (`Git` e `Subagents`); a antiga aba Arquivos foi absorvida pelo Git e **Missões** e **Diagnóstico** saíram do painel para um overlay `Debug` no ⚙.
+- **UI deixa de ser single-file**: `ui/index.html` caiu de 4824 para 249 linhas — CSS em `ui/src/styles.css` e JS em `ui/src/main.js`, extração byte-idêntica (conferida por `diff` contra as faixas do arquivo original), com build Vite (`frontendDist` agora `../ui/dist`, `beforeBuildCommand`/`beforeDevCommand`).
+- **Módulos puros**: `ui/src/rpc.js`, `ui/src/shared.js`, `ui/src/markdown.js` e `ui/src/tool-cards.js` saem do arquivo principal sem alteração de corpo.
+
+### Fixed
+- **Painel de subagents em sessão sem children**: exibia `<stem>: Arquivo ou diretório inexistente (os error 2)` em vez de "nenhum subagent"; `list_children_in` passou a checar a existência do diretório antes do `canonicalize` (regressão coberta por `list_children_missing_dir_is_empty`).
+- **Login de provider**: usa o `pi` já resolvido (com quoting por SO) em vez de depender do PATH do terminal — absorve o PR #1 e acrescenta compatibilidade com `cmd.exe` no Windows.
+
 ## [0.1.17] — 2026-11-16
 
 ### Added

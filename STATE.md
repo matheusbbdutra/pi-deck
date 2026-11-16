@@ -10,6 +10,9 @@
 - v0.1.16 publicada (`draft=false`, 7 assets, CI verde após fixes do clippy).
 - Fork-por-mensagem em investigação: `get_fork_messages` retorna só USER messages (`{entryId,text}`); `fork(entryId)` rebinda a sessão (`rpc-mode.js:503-509`); mapear botão na resposta do modelo exige decidir se o ponto é a user msg anterior (refazer) ou posterior (incluir resposta).
 
+- v0.1.18 (local; commits `c687c17` + merge `40a6513` + `ad6936d`): UI deixa de ser single-file — `ui/index.html` 4824→249 linhas, CSS/JS em `ui/src/{styles.css,main.js,rpc.js,shared.js,markdown.js,tool-cards.js}`, build Vite (`frontendDist: ../ui/dist`, `beforeBuildCommand`). **`cargo build --release` NÃO embute a UI** (`tauri-build` marca `cfg(dev)`): só `npm run build`/`tauri build` gera binário correto. Fix: `list_children_in` checa existência do diretório antes de `contained_in` (sessão sem children mostrava `os error 2`). PR #1 mergeado (fnm + login com binário resolvido) + patch de Windows (`quote_bin`; `cmd.exe` não trata single quote). `cargo test` 35/35; `clippy` não instalado nesta toolchain.
+- Em andamento: painel **Git read-only** (item 1 do scout contra `Relrin/pi-deck`): `git status --porcelain=v2 --branch -uall --renames` + `git diff HEAD --numstat`, aba nova no painel direito.
+
 ## Onde estamos (2026-11-15)
 
 - **v0.1.14 publicada** (thinking por modelo com slider — `set_model` recarrega níveis, `xhigh`/`max`

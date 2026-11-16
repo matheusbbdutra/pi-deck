@@ -1,168 +1,197 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
+// @vitest-environment jsdom
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
-import { JSDOM, VirtualConsole } from 'jsdom';
+import path from 'node:path';
+import { JSDOM } from 'jsdom';
 
-const HTML = fs.readFileSync(new URL('../ui/index.html', import.meta.url), 'utf8');
+const ROOT = process.cwd();
+const HTML = fs.readFileSync(path.join(ROOT, 'ui/index.html'), 'utf8');
+const BODY = new JSDOM(HTML).window.document.body.innerHTML
+  .replace(/<script[\s\S]*?<\/script>/gi, '');
 
-/** Sobe a UI real no jsdom, com o IPC do Tauri stubado (nunca resolve). */
-function boot(t) {
-  const listeners = {};
-  const errors = [];
-  const vc = new VirtualConsole();
-  vc.on('jsdomError', (e) => errors.push(e));
-  const dom = new JSDOM(HTML, {
-    url: 'http://localhost/',
-    runScripts: 'dangerously',
-    pretendToBeVisual: true,
-    virtualConsole: vc,
-    beforeParse(w) {
-      w.__TAURI__ = {
-        core: { invoke: () => new Promise(() => {}) },
-        event: { listen: (name, cb) => { listeners[name] = cb; return Promise.resolve(() => {}); } },
-      };
+let mod;
+let listeners;
+let calls;
+
+beforeAll(async () => {
+  vi.useFakeTimers();
+  document.body.innerHTML = BODY;
+  listeners = {};
+  calls = [];
+  window.__TAURI__ = {
+    core: {
+      invoke: (cmd, args) => {
+        calls.push({ cmd, args });
+        return new Promise(() => {});
+      },
     },
-  });
-  t.after(() => dom.window.close());
-  return { dom, win: dom.window, doc: dom.window.document, listeners, errors };
-}
+    event: {
+      listen: (name, cb) => {
+        listeners[name] = cb;
+        return Promise.resolve(() => {});
+      },
+    },
+  };
+  mod = await import('../ui/src/main.js');
+});
 
-function key(win, opts) {
-  win.document.dispatchEvent(new win.KeyboardEvent('keydown', {
+afterAll(() => {
+  vi.useRealTimers();
+});
+
+beforeEach(() => {
+  calls.length = 0;
+  localStorage.clear();
+  mod.__test.reset();
+  mod.__test.setZoom(1);
+  document.getElementById('log').innerHTML = '';
+  for (const sel of ['.overlay', '.model-pop', '.palette', '.img-view', '.settings-pop', '.confirm-bar']) {
+    document.querySelectorAll(sel).forEach(n => n.classList.add('hidden'));
+  }
+});
+
+function key(opts) {
+  document.dispatchEvent(new window.KeyboardEvent('keydown', {
     bubbles: true, cancelable: true, ...opts,
   }));
 }
 
-test('zoom: botões, atalhos, reset e limites', (t) => {
-  const { win, doc, errors } = boot(t);
-  assert.equal(errors.length, 0, 'a UI não pode lançar erro ao carregar');
-  assert.equal(Number(doc.body.style.zoom), 1);
+function rpcCalls() {
+  return calls.filter(c => c.cmd === 'rpc_command');
+}
 
-  doc.getElementById('zoomin').click();
-  assert.equal(Number(doc.body.style.zoom), 1.1);
-  assert.equal(win.localStorage.getItem('zoom'), '1.1');
+describe('zoom', () => {
+  it('botões, atalhos, reset e limites', () => {
+    expect(Number(document.body.style.zoom)).toBe(1);
 
-  doc.getElementById('zoomout').click();
-  assert.equal(Number(doc.body.style.zoom), 1);
+    document.getElementById('zoomin').click();
+    expect(Number(document.body.style.zoom)).toBe(1.1);
+    expect(localStorage.getItem('zoom')).toBe('1.1');
 
-  key(win, { key: '=', ctrlKey: true });
-  assert.equal(Number(doc.body.style.zoom), 1.1);
-  key(win, { key: '-', ctrlKey: true });
-  assert.equal(Number(doc.body.style.zoom), 1);
-  key(win, { key: '=', ctrlKey: true });
-  key(win, { key: '0', ctrlKey: true });
-  assert.equal(Number(doc.body.style.zoom), 1);
+    document.getElementById('zoomout').click();
+    expect(Number(document.body.style.zoom)).toBe(1);
 
-  win.setZoom(99);
-  assert.equal(Number(doc.body.style.zoom), 2);
-  win.setZoom(0.01);
-  assert.equal(Number(doc.body.style.zoom), 0.6);
+    key({ key: '=', ctrlKey: true });
+    expect(Number(document.body.style.zoom)).toBe(1.1);
+    key({ key: '-', ctrlKey: true });
+    expect(Number(document.body.style.zoom)).toBe(1);
+    key({ key: '=', ctrlKey: true });
+    key({ key: '0', ctrlKey: true });
+    expect(Number(document.body.style.zoom)).toBe(1);
+
+    mod.__test.setZoom(99);
+    expect(Number(document.body.style.zoom)).toBe(2);
+    mod.__test.setZoom(0.01);
+    expect(Number(document.body.style.zoom)).toBe(0.6);
+  });
+
+  it('reflui com CSS zoom e composer quebra linha', () => {
+    const js = fs.readFileSync(path.join(ROOT, 'ui/src/main.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, 'ui/src/styles.css'), 'utf8');
+    expect(js).toContain('document.body.style.zoom');
+    expect(js).not.toContain('set_webview_zoom');
+    expect(css).toContain('grid-template-columns:min(300px,24%) 1fr min(340px,27%)');
+    expect(css).toContain('.composer-bar { display:flex; flex-wrap:wrap');
+  });
+
+  it('o detalhe do subagent fica dentro do main', () => {
+    expect(document.getElementById('detail').parentElement.tagName).toBe('MAIN');
+    const css = fs.readFileSync(path.join(ROOT, 'ui/src/styles.css'), 'utf8');
+    expect(css).toContain('.detail { position:absolute; inset:0;');
+  });
 });
 
-test('zoom: layout reflui (CSS zoom) e composer quebra linha', () => {
-  assert.match(HTML, /document\.body\.style\.zoom/);
-  assert.doesNotMatch(HTML, /set_webview_zoom/);
-  assert.match(HTML, /grid-template-columns:min\(300px,24%\) 1fr min\(340px,27%\)/);
-  assert.match(HTML, /\.composer-bar \{ display:flex; flex-wrap:wrap/);
+describe('Esc interrompe o turno', () => {
+  it('só aborta com turno ativo e sem modal aberto', () => {
+    mod.__test.setState('a', true);
+    rpcCalls().length = 0;
+
+    key({ key: 'Escape' });
+    const types = rpcCalls().map(c => JSON.parse(c.args.payload).type);
+    expect(types).toEqual(['clear_queue', 'abort']);
+
+    calls.length = 0;
+    mod.__test.setState('a', false);
+    key({ key: 'Escape' });
+    expect(rpcCalls()).toHaveLength(0);
+
+    calls.length = 0;
+    mod.__test.setState('a', true);
+    document.getElementById('modelpop').classList.remove('hidden');
+    key({ key: 'Escape' });
+    expect(rpcCalls()).toHaveLength(0);
+
+    document.getElementById('modelpop').classList.add('hidden');
+    document.getElementById('pkgs').classList.remove('hidden');
+    key({ key: 'Escape' });
+    expect(rpcCalls()).toHaveLength(0);
+  });
 });
 
-test('detalhe do subagent acompanha a coluna central (dentro do main)', (t) => {
-  const { doc, errors } = boot(t);
-  assert.equal(errors.length, 0);
-  assert.equal(doc.getElementById('detail').parentElement.tagName, 'MAIN');
-  assert.match(HTML, /\.detail \{ position:absolute; inset:0;/);
-});
-
-test('Esc: interrompe só turno ativo e sem modal aberto', (t) => {
-  const { win, doc, errors } = boot(t);
-  assert.equal(errors.length, 0);
-  win.eval('current = { key: "a" }; tabs = [{ key: "a", working: true }]');
-  let calls = 0;
-  win.abortTurn = () => { calls++; };
-
-  key(win, { key: 'Escape' });
-  assert.equal(calls, 1, 'Esc deve abortar o turno em andamento');
-
-  win.eval('tabs[0].working = false');
-  key(win, { key: 'Escape' });
-  assert.equal(calls, 1, 'sem turno rodando, Esc não dispara abort');
-
-  win.eval('tabs[0].working = true');
-  doc.getElementById('modelpop').classList.remove('hidden');
-  key(win, { key: 'Escape' });
-  assert.equal(calls, 1, 'modal aberto: Esc fecha o modal, não aborta');
-
-  doc.getElementById('modelpop').classList.add('hidden');
-  doc.getElementById('pkgs').classList.remove('hidden');
-  key(win, { key: 'Escape' });
-  assert.equal(calls, 1, 'overlay aberto: Esc não aborta');
-});
-
-test('troca de aba: stash/restore preserva thinking e tool, sem duplicar o disco', (t) => {
-  const { win, doc, errors } = boot(t);
-  assert.equal(errors.length, 0);
-  win.eval(`
-    current = { key: "a" };
-    tabs = [{ key: "a" }];
-    document.getElementById("log").innerHTML =
+describe('troca de aba', () => {
+  it('stash/restore preserva thinking e tool, sem duplicar o disco', () => {
+    mod.__test.setState('a', false);
+    document.getElementById('log').innerHTML =
       '<div class="think-block" data-live="1"><div class="think-body">pensou A</div></div>' +
       '<div class="tool-card" data-live="1" data-call-id="c1"><div class="tool-body">saída A</div></div>';
-  `);
 
-  win.stashLive();
-  assert.equal(win.eval('tabs[0].liveNodes.length'), 2);
-  assert.equal(win.eval('tabs[0].bgThink.textContent'), 'pensou A');
+    mod.__test.stashLive();
+    expect(mod.__test.tabs[0].liveNodes).toHaveLength(2);
+    expect(mod.__test.tabs[0].bgThink.textContent).toBe('pensou A');
 
-  win.eval('document.getElementById("log").innerHTML = ""; restoreLive()');
-  assert.equal(doc.querySelectorAll('#log .think-block').length, 1);
-  assert.equal(doc.querySelectorAll('#log .tool-card').length, 1);
+    document.getElementById('log').innerHTML = '';
+    mod.__test.restoreLive();
+    expect(document.querySelectorAll('#log .think-block')).toHaveLength(1);
+    expect(document.querySelectorAll('#log .tool-card')).toHaveLength(1);
 
-  // O disco já tem o tool c1: reanexar o stash duplicaria o card.
-  win.eval('document.getElementById("log").innerHTML = \'<div class="tool-card" data-call-id="c1"></div>\'; restoreLive()');
-  assert.equal(doc.querySelectorAll('#log .tool-card').length, 1);
-});
-
-test('aba em segundo plano acumula thinking e texto parcial', (t) => {
-  const { win, listeners, errors } = boot(t);
-  assert.equal(errors.length, 0);
-  win.eval('current = { key: "front" }; tabs = [{ key: "front" }, { key: "bg" }]');
-
-  const onLine = listeners['rpc-line'];
-  assert.equal(typeof onLine, 'function');
-  onLine({ payload: ['bg', JSON.stringify({
-    type: 'message_update',
-    assistantMessageEvent: { type: 'thinking_delta', delta: 'pensa' },
-  })] });
-  assert.equal(win.eval('tabs[1].liveNodes[0].querySelector(".think-body").textContent'), 'pensa');
-
-  onLine({ payload: ['bg', JSON.stringify({
-    type: 'message_update',
-    assistantMessageEvent: { type: 'thinking_delta', delta: ' mais' },
-  })] });
-  assert.equal(win.eval('tabs[1].liveNodes[0].querySelector(".think-body").textContent'), 'pensa mais');
-
-  onLine({ payload: ['bg', JSON.stringify({
-    type: 'message_update',
-    assistantMessageEvent: { type: 'text_delta', delta: 'resposta' },
-  })] });
-  assert.equal(win.eval('tabs[1].streamText'), 'resposta');
-});
-
-test('thinking expandido rola para o último token', (t) => {
-  const { win, listeners, errors } = boot(t);
-  assert.equal(errors.length, 0);
-  Object.defineProperty(win.HTMLElement.prototype, 'scrollHeight', {
-    configurable: true,
-    get() { return 123; },
+    // O disco já tem o tool c1: reanexar o stash duplicaria o card.
+    document.getElementById('log').innerHTML = '<div class="tool-card" data-call-id="c1"></div>';
+    mod.__test.restoreLive();
+    expect(document.querySelectorAll('#log .tool-card')).toHaveLength(1);
   });
-  win.eval('current = { key: "a" }; tabs = [{ key: "a", working: true }]');
 
-  listeners['rpc-line']({ payload: ['a', JSON.stringify({
-    type: 'message_update',
-    assistantMessageEvent: { type: 'thinking_delta', delta: 'token final' },
-  })] });
+  it('aba em segundo plano acumula thinking e texto parcial', () => {
+    mod.__test.setTabs(['front', 'bg'], 'front');
+    const onLine = listeners['rpc-line'];
+    expect(typeof onLine).toBe('function');
 
-  const body = win.eval('stream.thinkBody');
-  assert.equal(body.textContent, 'token final');
-  assert.equal(body.scrollTop, 123, 'o .think-body precisa acompanhar o fim');
+    onLine({ payload: ['bg', JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_delta', delta: 'pensa' },
+    })] });
+    expect(mod.__test.tabs[1].liveNodes[0].querySelector('.think-body').textContent).toBe('pensa');
+
+    onLine({ payload: ['bg', JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'thinking_delta', delta: ' mais' },
+    })] });
+    expect(mod.__test.tabs[1].liveNodes[0].querySelector('.think-body').textContent).toBe('pensa mais');
+
+    onLine({ payload: ['bg', JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'resposta' },
+    })] });
+    expect(mod.__test.tabs[1].streamText).toBe('resposta');
+  });
+});
+
+describe('thinking expandido', () => {
+  it('rola para o último token', () => {
+    const proto = window.HTMLElement.prototype;
+    const orig = Object.getOwnPropertyDescriptor(proto, 'scrollHeight');
+    Object.defineProperty(proto, 'scrollHeight', { configurable: true, get() { return 123; } });
+    try {
+      mod.__test.setState('a', true);
+      listeners['rpc-line']({ payload: ['a', JSON.stringify({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'thinking_delta', delta: 'token final' },
+      })] });
+      const body = mod.__test.stream.thinkBody;
+      expect(body.textContent).toBe('token final');
+      expect(body.scrollTop).toBe(123);
+    } finally {
+      if (orig) Object.defineProperty(proto, 'scrollHeight', orig);
+      else delete proto.scrollHeight;
+    }
+  });
 });
