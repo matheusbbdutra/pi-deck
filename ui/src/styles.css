@@ -46,6 +46,12 @@
   .dot.busy { background:var(--warn); }
   .dot.off { background:var(--dot-off); }
   header .spacer { flex:1; }
+  /* Chip de saúde do CLI (avisos de LSP/MCP). A cor é do pior tipo: mcp = --warn. */
+  .health-chip { font-family:var(--mono); font-size:10.5px; padding:1px 7px; line-height:1.5; }
+  .health-chip.mute { color:var(--mute); border-color:var(--line); }
+  .health-chip.warn { color:var(--warn); border-color:var(--warn-line); background:var(--warn-bg-2); }
+  .health-chip.warn:hover { color:var(--warn); border-color:var(--warn); }
+  .health-chip.hidden { display:none; }
 
   button { font:inherit; cursor:pointer; border-radius:5px;
            transition:background .12s, border-color .12s, color .12s; }

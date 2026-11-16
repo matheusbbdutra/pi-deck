@@ -23,6 +23,9 @@ let shouldProbeTurn;
 let clampWidth;
 let clampColumns;
 let syncStopButton;
+let classifyHealthLine;
+let noteHealth;
+let healthChipState;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -46,7 +49,8 @@ beforeAll(async () => {
     event: { listen: async () => () => {} },
   });
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn,
-     clampWidth, clampColumns, syncStopButton } = await import('../ui/src/main.js'));
+     clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
+     healthChipState } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -73,6 +77,120 @@ describe('appendCapped', () => {
 
   it('mantém acento intacto no limite', () => {
     expect(appendCapped('', 'ção', 2)).toBe('ão');
+  });
+});
+
+describe('classifyHealthLine', () => {
+  it('reconhece o aviso real de LSP inativo', () => {
+    expect(classifyHealthLine('extensão LSP inactive')).toEqual({ kind: 'lsp', id: 'extensão LSP inactive' });
+  });
+
+  it('reconhece o aviso real de MCP precisando de atenção', () => {
+    const line = 'extensão MCP servers need attention: browseros-neo: failed: fetch failed Run /mcp to fix';
+    expect(classifyHealthLine(line)).toEqual({ kind: 'mcp', id: line });
+  });
+
+  it('devolve null para linha normal do protocolo e para entrada vazia', () => {
+    expect(classifyHealthLine('{"type":"agent_settled"}')).toBe(null);
+    expect(classifyHealthLine('turno pronto')).toBe(null);
+    expect(classifyHealthLine('')).toBe(null);
+    expect(classifyHealthLine(null)).toBe(null);
+  });
+
+  it('casa com ANSI e prefixo de data/hora, que não entram no id', () => {
+    expect(classifyHealthLine('\u001b[33m2026-01-02T10:00:00Z extensão LSP inactive\u001b[0m'))
+      .toEqual({ kind: 'lsp', id: 'extensão LSP inactive' });
+    expect(classifyHealthLine('[12:00:01] extensão MCP servers need attention: x'))
+      .toEqual({ kind: 'mcp', id: 'extensão MCP servers need attention: x' });
+  });
+
+  it('id deduplica a mesma mensagem com espaçamento diferente', () => {
+    const a = classifyHealthLine('extensão LSP inactive');
+    const b = classifyHealthLine('  extensão   LSP  inactive  ');
+    expect(b.id).toBe(a.id);
+    expect(b.kind).toBe('lsp');
+  });
+
+  it('lê o aviso que chega como notify de extensão no JSON', () => {
+    const line = JSON.stringify({ type: 'extension_ui_request', id: 'e1', method: 'notify', message: 'LSP inactive' });
+    expect(classifyHealthLine(line)).toEqual({ kind: 'lsp', id: 'LSP inactive' });
+    const mcp = JSON.stringify({ type: 'extension_ui_request', method: 'notify', message: 'MCP servers need attention: browseros-neo: failed: fetch failed' });
+    expect(classifyHealthLine(mcp).kind).toBe('mcp');
+  });
+
+  it('não casa texto de aviso dentro de registro que não é notify de extensão', () => {
+    const tool = JSON.stringify({ type: 'tool_execution_end', result: { output: 'MCP servers need attention: x failed' } });
+    expect(classifyHealthLine(tool)).toBe(null);
+    const delta = JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'LSP inactive' } });
+    expect(classifyHealthLine(delta)).toBe(null);
+  });
+});
+
+describe('noteHealth / healthChipState', () => {
+  const add = (map, ...lines) => lines.forEach(l => noteHealth(map, l));
+
+  it('mapa vazio (ou sem mapa) devolve chip sem avisos', () => {
+    expect(healthChipState(new Map())).toEqual({ count: 0, kinds: [], title: '' });
+    expect(healthChipState(undefined)).toEqual({ count: 0, kinds: [], title: '' });
+  });
+
+  it('um aviso: conta 1, guarda o tipo e lista a mensagem no title', () => {
+    const map = new Map();
+    add(map, 'extensão LSP inactive');
+    const st = healthChipState(map);
+    expect(st.count).toBe(1);
+    expect(st.kinds).toEqual(['lsp']);
+    expect(st.title).toMatch(/1 aviso\(s\)/);
+    expect(st.title).toMatch(/lsp: extensão LSP inactive/);
+  });
+
+  it('três avisos (tipos misturados): kinds na ordem de chegada e 3 linhas no title', () => {
+    const map = new Map();
+    add(map,
+      'extensão LSP inactive',
+      'extensão MCP servers need attention: browseros-neo: failed: fetch failed',
+      'extensão LSP inactive (2)');
+    const st = healthChipState(map);
+    expect(st.count).toBe(3);
+    expect(st.kinds).toEqual(['lsp', 'mcp']);
+    expect(st.title.split('\n').length).toBe(4); // cabeçalho + 3 mensagens
+    expect(st.title).not.toMatch(/…/);
+  });
+
+  it('acima de 3 mensagens resume o resto com … e a contagem', () => {
+    const map = new Map();
+    add(map,
+      'extensão LSP inactive',
+      'extensão MCP servers need attention: a',
+      'extensão MCP servers need attention: b',
+      'extensão MCP servers need attention: c',
+      'extensão MCP servers need attention: d');
+    const st = healthChipState(map);
+    expect(st.count).toBe(5);
+    expect(st.title.split('\n').length).toBe(5); // cabeçalho + 3 + resumo
+    expect(st.title).toMatch(/… \+2 aviso\(s\)/);
+  });
+
+  it('deduplica mensagem repetida com espaços diferentes', () => {
+    const map = new Map();
+    add(map, 'extensão LSP inactive', '  extensão   LSP  inactive ');
+    expect(map.size).toBe(1);
+    expect(healthChipState(map).count).toBe(1);
+  });
+
+  it('limita a 20 avisos por sessão descartando o mais antigo', () => {
+    const map = new Map();
+    for (let i = 0; i < 25; i++) noteHealth(map, 'extensão LSP inactive #' + i);
+    expect(map.size).toBe(20);
+    expect(map.has('extensão LSP inactive #0')).toBe(false);
+    expect(map.has('extensão LSP inactive #24')).toBe(true);
+    expect(healthChipState(map).count).toBe(20);
+  });
+
+  it('ignora linha não reconhecida sem criar entrada', () => {
+    const map = new Map();
+    expect(noteHealth(map, 'turno pronto')).toBe(null);
+    expect(map.size).toBe(0);
   });
 });
 

@@ -246,6 +246,7 @@ function applyTurnUi() {
   const on = !!(t && t.working);
   setTyping(on, (t && t.phase) || 'pensando…');
   syncStopButton(on);
+  renderHealthChip();
   if (on) { setStatus('trabalhando'); setState('busy'); }
 }
 function setStatus(t) { $('status').textContent = stripAnsi(t); }
@@ -2049,6 +2050,105 @@ export function appendCapped(prev, delta, cap) {
   return next.slice(start);
 }
 
+/* =============== saúde das extensões (LSP/MCP) =============== */
+/* O pi avisa problema de extensão em texto no RPC (`extensão LSP inactive`,
+   `extensão MCP servers need attention: …`). Até aqui isso caía no transcript como
+   linha crua e nada virava estado; o chip do header é ADICIONAL (as linhas continuam
+   no log). O casamento é por texto porque o pi não emite evento tipado para isso e o
+   resto da frase varia com versão/idioma — só `LSP`/`MCP` são estáveis. */
+const HEALTH_MAX = 20;      // avisos guardados por sessão (descarta o mais antigo)
+const HEALTH_TITLE_MAX = 3; // mensagens listadas no tooltip
+const HEALTH_ID_MAX = 200;  // corte do `id`: linha inteira não cabe num title
+
+const HEALTH_RULES = [
+  { kind: 'lsp', re: /extensão LSP|LSP inactive|lsp.*inactive/i },
+  { kind: 'mcp', re: /MCP servers need attention|mcp.*failed|failed:.*fetch failed/i },
+];
+/* Prefixo de log (`[12:34:56] `, `2026-01-02T12:34:56Z `) não é mensagem: sai antes do
+   casamento e do `id`, senão a mesma frase repetida viraria dois avisos. */
+const HEALTH_TS = /^\s*(?:\[?\d{2}:\d{2}(?::\d{2})?\]?|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)\s+/;
+
+/** Avisos por sessão: `Map<sessionKey, Map<id, kind>>` (o interno é FIFO por inserção). */
+const healthBySession = new Map();
+
+/** Texto a classificar: a própria linha, ou a mensagem de um notify de extensão.
+ *  O aviso do pi chega das duas formas: texto no stdout e `extension_ui_request`
+ *  (`method: notify|setStatus`) — é esse JSON que pinta a linha "extensão …" no
+ *  transcript. Olhar só o JSON de extensão evita casar regex em args de tool ou em
+ *  texto do modelo. */
+function healthText(line) {
+  const text = stripAnsi(line).replace(HEALTH_TS, '').trim();
+  if (!text.startsWith('{')) return text;
+  let rec = null;
+  try { rec = JSON.parse(text); } catch { return ''; }
+  if (!rec || rec.type !== 'extension_ui_request') return '';
+  const msg = typeof rec.message === 'string' ? rec.message : rec.statusText;
+  return typeof msg === 'string' ? stripAnsi(msg).trim() : '';
+}
+
+/** Classifica uma linha de saúde do CLI: `{kind, id}` ou `null`.
+ *  `id` é o texto normalizado (sem ANSI, sem prefixo de hora, espaços colapsados) —
+ *  é a chave de deduplicação, não o texto exibido. */
+export function classifyHealthLine(line) {
+  if (typeof line !== 'string') return null;
+  const text = healthText(line);
+  if (!text) return null;
+  const rule = HEALTH_RULES.find(r => r.re.test(text));
+  if (!rule) return null;
+  return { kind: rule.kind, id: text.replace(/\s+/g, ' ').slice(0, HEALTH_ID_MAX) };
+}
+
+/** Mapa `id -> kind` da sessão, criado sob demanda. */
+function healthMapFor(sessionKey) {
+  let map = healthBySession.get(sessionKey);
+  if (!map) { map = new Map(); healthBySession.set(sessionKey, map); }
+  return map;
+}
+
+/** Registra a linha no mapa (dedup por `id`) e devolve o `kind` reconhecido, ou `null`.
+ *  Acima de `HEALTH_MAX` avisos o mais antigo sai: o chip mostra a contagem, não a lista. */
+export function noteHealth(map, line) {
+  const hit = classifyHealthLine(line);
+  if (!hit || !(map instanceof Map)) return hit ? hit.kind : null;
+  if (!map.has(hit.id)) {
+    map.set(hit.id, hit.kind);
+    while (map.size > HEALTH_MAX) map.delete(map.keys().next().value);
+  }
+  return hit.kind;
+}
+
+/** Estado do chip para um mapa de avisos: `{count, kinds, title}`.
+ *  `kinds` sai na ordem de chegada; `title` lista no máximo `HEALTH_TITLE_MAX`
+ *  mensagens e resume o resto em `… +N`. */
+export function healthChipState(map) {
+  const entries = map instanceof Map ? Array.from(map.entries()) : [];
+  const kinds = [];
+  for (const [, kind] of entries) if (!kinds.includes(kind)) kinds.push(kind);
+  if (!entries.length) return { count: 0, kinds, title: '' };
+  const lines = entries.slice(0, HEALTH_TITLE_MAX).map(([id, kind]) => kind + ': ' + id);
+  if (entries.length > HEALTH_TITLE_MAX) lines.push('… +' + (entries.length - HEALTH_TITLE_MAX) + ' aviso(s)');
+  return {
+    count: entries.length,
+    kinds,
+    title: [entries.length + ' aviso(s) de extensão · clique para abrir o Diagnóstico', ...lines].join('\n'),
+  };
+}
+
+/** Repinta o chip do header com os avisos da sessão ATUAL; sem sessão fica escondido. */
+function renderHealthChip() {
+  const chip = $('healthchip');
+  if (!chip) return null;
+  const st = healthChipState(current ? healthBySession.get(current.key) : null);
+  // mcp pesa mais: servidor de MCP quebrado derruba tool, LSP inativo só tira refino.
+  const warn = st.kinds.includes('mcp');
+  chip.classList.toggle('hidden', !st.count);
+  chip.classList.toggle('warn', !!st.count && warn);
+  chip.classList.toggle('mute', !!st.count && !warn);
+  chip.textContent = st.count ? '⚠ ' + st.count : '';
+  chip.title = st.title;
+  return st;
+}
+
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
    render do log principal, então `seen` só contém linhas vindas do disco
    (`data-local` fica de fora): quando a mensagem já foi persistida, a cópia local cai. */
@@ -2093,6 +2193,9 @@ listen('rpc-line', (ev) => {
     const fg = current && sessionId === current.key ? 'atual' : 'fundo';
     diagPush(rec.type || rec.command || line.slice(0, 120), '—', rec.command ? ((rec.success ? 'ok' : 'falhou') + ' · ' + fg) : (String(rec.type || 'evento') + ' · ' + fg));
   } catch { diagPush(line.slice(0, 160), '—', 'raw'); }
+  // Aviso de extensão vale para a aba que o emitiu, inclusive de fundo: o chip só
+  // aparece quando aquela aba está em foco (o mapa é por sessão).
+  if (noteHealth(healthMapFor(sessionId), line) && current && sessionId === current.key) renderHealthChip();
   // Resposta da sonda vale para aba em foco e de fundo: fica antes do split e nunca
   // cai no `handleResponse` (get_state da sonda não é o estado da sessão da view).
   if (line.includes('"type":"response"')) {
@@ -2115,6 +2218,7 @@ listen('rpc-line', (ev) => {
     if (line.includes('"type":"agent_settled"')) {
       maybeNotifyDone(sessionId);
       setTurn(sessionId, false);
+      renderHealthChip();
       // Turno fechou: o disco já tem thinking e texto completos.
       const bst = tabs.find(x => x.key === sessionId);
       if (bst) { bst.streamText = ''; bst.thinkText = ''; }
@@ -2234,6 +2338,7 @@ listen('rpc-line', (ev) => {
       setState('ready');
       setTurn(sessionId, false);
       // Resposta completa foi para o disco: os parciais guardados caducaram.
+      renderHealthChip();
       {
         const st = tabs.find(x => x.key === sessionId);
         if (st) { st.streamText = ''; st.thinkText = ''; }
@@ -3115,6 +3220,8 @@ async function switchTab(key) {
 async function closeTab(key) {
   try { await inv('stop_session', { sessionId: key }); } catch { /* já parado */ }
   stopLive(key);
+  // Aba fechada leva os avisos junto: reabrir a mesma key não pode herdar chip velho.
+  healthBySession.delete(key);
   // Aba fechada sai do vigia: sem isto uma sonda pendente poderia destravar a chave
   // reaberta logo depois (mesma key, outro processo).
   delete lastProbeAt[key];
@@ -3136,7 +3243,7 @@ async function closeTab(key) {
     const next = tabs[tabs.length - 1];
     renderTabs();
     if (next) await switchTab(next.key);
-    else { setStatus('desconectado'); setTyping(false); }
+    else { setStatus('desconectado'); setTyping(false); renderHealthChip(); }
     return;
   }
   renderTabs();
@@ -4506,6 +4613,8 @@ $('themereset').onclick = () => {
   $('themenote').textContent = 'tema padrão restaurado (localStorage[\'theme\'] removido)';
 };
 $('debugbtn').onclick = () => openDebug();
+// Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
+$('healthchip').onclick = () => openDebug();
 $('debugback').onclick = () => $('debug').classList.add('hidden');
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); };
 $('checkupdate').onclick = () => checkUpdate(true);
