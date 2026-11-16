@@ -491,7 +491,7 @@ async function start(cwd, key, refValue, refFlag, childrenDir) {
     // Sessão nova só ganha `.jsonl` na 1ª mensagem: o get_state traz `sessionFile`,
     // sem o qual "carregar anteriores" e a aba Arquivos ficam sem caminho no disco.
     sendCommand({ type: 'get_state' });
-    if (panelPane === 'git') { loadGit(); loadEdits(); }
+    loadGit(); loadEdits();
   } catch (e) {
     // Erro de outra sessão não aparece no transcript da atual.
     if (!current || current.key !== key) return;
@@ -567,7 +567,7 @@ async function openSession(cwd, s) {
   // Conecta já na abertura: contexto, thinking, modelo e comandos vêm do pi.
   await ensureRpc();
   checkAuth();
-  if (panelPane === 'git') { loadGit(); loadEdits(); }
+  loadGit(); loadEdits();
 }
 
 /* Sobe o processo sob demanda, com teto de sessões vivas. */
@@ -825,10 +825,9 @@ function renderChildren(list) {
 }
 
 /* =============== painel: arquivos editados + diffs =============== */
-/* Sem aba própria: `session_edits` alimenta o diff da aba Git (clique numa row
+/* Sem aba própria: `session_edits` alimenta o diff do painel Git (clique numa row
    que esteja na lista abre o patch com "desfazer hunk"). */
 let editedFiles = []; // último resultado de session_edits ({file, tool, at, src, patch})
-let panelPane = 'git';
 
 /* =============== diagnóstico: log circular das linhas RPC =============== */
 /* Buffer circular (máx 200) preenchido no listener `rpc-line` existente e no
@@ -861,24 +860,54 @@ function renderDiag() {
   }
 }
 
-/** O painel direito tem duas abas: `git` e `subs`. `files`/`missions`/`diag` eram
-    abas e hoje são o overlay Debug (⚙ → Debug) — valor legado de localStorage
-    cai em `git`, que é a aba padrão. */
-function switchPanel(name) {
-  panelPane = name === 'subs' ? 'subs' : 'git';
-  try { localStorage.setItem('panel-pane', panelPane); } catch { /* sem storage */ }
-  $('panelsubs').classList.toggle('active', panelPane === 'subs');
-  $('panelgit').classList.toggle('active', panelPane === 'git');
-  $('subs').classList.toggle('hidden', panelPane !== 'subs');
-  $('git').classList.toggle('hidden', panelPane !== 'git');
-  // Clicar na aba é também um "atualizar": run de subagent aparece no disco
-  // enquanto o turno roda, sem esperar o próximo agent_settled.
-  if (panelPane === 'subs' && current && current.childrenDir) loadChildren(current.childrenDir);
-  if (panelPane === 'git') { loadGit(); loadEdits(); }
+/* =============== painel direito: divisória arrastável =============== */
+/* Sem abas comutáveis: subagents ficam em cima e o Git fixo embaixo. `--split`
+   (no #rightpanel) é a altura da metade de baixo em % do painel; o clamp 20..80
+   garante que nenhum dos dois lados desapareça. Um valor legado em
+   localStorage['panel-pane'] é simplesmente ignorado. */
+const SPLIT_DEFAULT = 50;
+const SPLIT_MIN = 20;
+const SPLIT_MAX = 80;
+
+function setSplit(ratio, persist) {
+  const pct = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, Number(ratio) || SPLIT_DEFAULT));
+  const host = $('rightpanel');
+  if (host) host.style.setProperty('--split', pct + '%');
+  if (persist) { try { localStorage.setItem('split-ratio', String(pct)); } catch { /* sem storage */ } }
+  return pct;
 }
 
-/** Lê as edições do disco (sessão + children). Só roda com a aba Git visível:
-    é dela que sai o diff com "desfazer hunk" para o arquivo clicado. */
+function initSplit() {
+  let saved = SPLIT_DEFAULT;
+  try { saved = Number(localStorage.getItem('split-ratio')) || SPLIT_DEFAULT; } catch { /* sem storage */ }
+  setSplit(saved, false);
+  const grip = $('splitgrip');
+  if (!grip) return;
+  let dragging = false;
+  grip.addEventListener('mousedown', (e) => {
+    e.preventDefault(); // sem isto o arrasto vira seleção de texto
+    dragging = true;
+    document.body.style.cursor = 'row-resize';
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const host = $('rightpanel');
+    const box = host ? host.getBoundingClientRect() : null;
+    if (!box || !box.height) return;
+    // Altura da metade de baixo = distância da borda inferior do painel ao cursor.
+    setSplit(((box.bottom - e.clientY) / box.height) * 100, false);
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = '';
+    const host = $('rightpanel');
+    setSplit(host ? parseFloat(host.style.getPropertyValue('--split')) : SPLIT_DEFAULT, true);
+  });
+}
+
+/** Lê as edições do disco (sessão + children). Só roda com o painel Git visível:
+    é dele que sai o diff com "desfazer hunk" para o arquivo clicado. */
 async function loadEdits() {
   const file = current && current.file;
   const seq = viewSeq;
@@ -1462,7 +1491,7 @@ listen('rpc-line', (ev) => {
       { const st = tabs.find(x => x.key === sessionId); if (st && st.streamText) { st.streamText = ''; saveTabs(); } }
       if (current && current.childrenDir) loadChildren(current.childrenDir);
       // Turno pode ter editado arquivos: a aba de diffs se atualiza sozinha.
-      if (panelPane === 'git') { loadGit(); loadEdits(); }
+      loadGit(); loadEdits();
       sendCommand({ type: 'get_session_stats' });
       break;
 
@@ -2005,7 +2034,7 @@ function handleResponse(rec) {
         // Sessão criada com `+ Nova` nasce sem childrenDir: sem isto o painel de
         // subagents fica sem origem e nunca lista nada até reabrir pela sidebar.
         if (current) loadChildren(dir);
-        if (panelPane === 'git') { loadGit(); loadEdits(); }
+        loadGit(); loadEdits();
         // Pós-fork: abre a sessão nova resultante (histórico + sidebar).
         if (pendingForkReload) {
           pendingForkReload = false;
@@ -2320,7 +2349,7 @@ async function switchTab(key) {
     sendCommand({ type: 'get_session_stats' });
   }
   if (t.childrenDir) await loadChildren(t.childrenDir);
-  if (panelPane === 'git') { loadGit(); loadEdits(); }
+  loadGit(); loadEdits();
 }
 
 async function closeTab(key) {
@@ -3704,12 +3733,12 @@ window.addEventListener('pagehide', () => {
 });
 
 applySubsVisibility((() => { try { return localStorage.getItem('subs-hidden') === '1'; } catch { return false; } })());
-$('panelsubs').onclick = () => switchPanel('subs');
-$('panelgit').onclick = () => switchPanel('git');
+// Painel de subagents está sempre visível: clicar na tab é só um "atualizar"
+// (run de subagent aparece no disco enquanto o turno roda, sem esperar o
+// próximo agent_settled). O Git não é aba: fica fixo embaixo.
+$('panelsubs').onclick = () => { if (current && current.childrenDir) loadChildren(current.childrenDir); };
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
-switchPanel((() => {
-  try { return localStorage.getItem('panel-pane') || 'git'; } catch { return 'git'; }
-})());
+initSplit();
 setEmptyState(true, 'nosession');
 
 loadSettings();

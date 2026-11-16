@@ -128,15 +128,23 @@
   </div>
 </main>
 
-<section>
-  <div class="panel-tabs">
-    <button id="panelgit" class="panel-tab active" data-pane="git"
-            title="Status do repositório git (somente leitura)">Git<span id="gitcnt" class="cnt"></span></button>
-    <button id="panelsubs" class="panel-tab" data-pane="subs"
-            title="Subagents desta sessão">Subagents</button>
+<section id="rightpanel">
+  <!-- split fixo: subagents em cima, git embaixo; as tabs do topo são o lugar
+       das próximas abas, o Git não é aba -->
+  <div class="split-top">
+    <div class="panel-tabs">
+      <button id="panelsubs" class="panel-tab active" data-pane="subs"
+              title="Subagents desta sessão">Subagents</button>
+    </div>
+    <div id="subs" class="panel-pane"><div class="empty">nenhum subagent</div></div>
   </div>
-  <div id="git" class="panel-pane"><div class="empty">sem repositório git</div></div>
-  <div id="subs" class="panel-pane hidden"><div class="empty">nenhum subagent</div></div>
+  <div class="split-grip" id="splitgrip" title="arraste para redimensionar"></div>
+  <div class="split-bottom">
+    <div class="panel-tabs">
+      <span class="panel-tab active" title="Status do repositório git (somente leitura)">Git<span id="gitcnt" class="cnt"></span></span>
+    </div>
+    <div id="git" class="panel-pane"><div class="empty">sem repositório git</div></div>
+  </div>
 </section>
 
 <div id="detail" class="detail hidden">
