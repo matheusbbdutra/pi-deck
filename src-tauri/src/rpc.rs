@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use tauri::{AppHandle, Emitter, State};
@@ -11,6 +11,21 @@ use crate::sessions::{escape_json, pi_bin};
 pub struct ChildHandle {
     child: Child,
     stdin: ChildStdin,
+    /// Identidade do processo dono deste slot: o leitor de stdout usa o pid para
+    /// não derrubar um filho novo da mesma sessão quando o antigo fecha o pipe.
+    pid: u32,
+}
+
+/// Slot do mapa de processos: quem é o dono. Existe separado do `ChildHandle`
+/// para o teste de `take_if_same` rodar sem processo real.
+trait SlotOwner {
+    fn owner_pid(&self) -> u32;
+}
+
+impl SlotOwner for ChildHandle {
+    fn owner_pid(&self) -> u32 {
+        self.pid
+    }
 }
 
 /// Mata e espera um filho que nunca chegou ao mapa (spawn ok, registro falhou).
@@ -21,7 +36,21 @@ fn drop_child(mut child: Child) {
 }
 
 #[derive(Default)]
-pub struct RpcState(Mutex<HashMap<String, ChildHandle>>);
+pub struct RpcState(Arc<Mutex<HashMap<String, ChildHandle>>>);
+
+/// Remove o slot da sessão **se** ainda for deste pid. Devolve o handle para o
+/// chamador matar/aguardar fora do lock.
+fn take_if_same<T: SlotOwner>(
+    map: &Arc<Mutex<HashMap<String, T>>>,
+    session_id: &str,
+    pid: u32,
+) -> Option<T> {
+    let mut map = map.lock().ok()?;
+    match map.get(session_id) {
+        Some(h) if h.owner_pid() == pid => map.remove(session_id),
+        _ => None,
+    }
+}
 
 impl RpcState {
     /// Encerra todos os processos `pi` filhos (usado ao fechar a janela).
@@ -97,6 +126,7 @@ pub fn start_session(
         cmd.env("PATH", path);
     }
     let mut child = cmd.spawn().map_err(|e| format!("spawn pi: {e}"))?;
+    let child_pid = child.id();
 
     let mut stdin = match child.stdin.take() {
         Some(s) => s,
@@ -136,6 +166,7 @@ pub fn start_session(
 
     let sid_out = session_id.clone();
     let app_out = app.clone();
+    let reg = state.0.clone();
     let debug = std::env::var("PWUI_DEBUG").is_ok();
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -144,6 +175,12 @@ pub fn start_session(
                 eprintln!("[rpc] {head}");
             }
             let _ = app_out.emit("rpc-line", (sid_out.clone(), line));
+        }
+        // O filho morreu sozinho (crash/saída): tira o slot do mapa. Sem isto o
+        // `start_session` seguinte achava a sessão "já iniciada", devolvia Ok sem
+        // subir processo novo e o app ficava sem conseguir mandar nada (stdin morto).
+        if let Some(dead) = take_if_same(&reg, &sid_out, child_pid) {
+            drop_child(dead.child);
         }
         let _ = app_out.emit("rpc-exit", sid_out);
     });
@@ -174,7 +211,14 @@ pub fn start_session(
         drop(map);
         drop_child(child);
     } else {
-        map.insert(session_id.clone(), ChildHandle { child, stdin });
+        map.insert(
+            session_id.clone(),
+            ChildHandle {
+                child,
+                stdin,
+                pid: child_pid,
+            },
+        );
     }
 
     Ok(session_id)
@@ -190,9 +234,6 @@ pub fn send_prompt(
     images: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
-    let handle = map
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
 
     let images_json = match images.as_deref() {
         Some(list) if !list.is_empty() => {
@@ -219,11 +260,25 @@ pub fn send_prompt(
         escape_json(&id),
         escape_json(&message)
     );
-    handle
-        .stdin
-        .write_all(command.as_bytes())
-        .map_err(|e| e.to_string())?;
-    handle.stdin.flush().map_err(|e| e.to_string())
+    let written = {
+        let handle = map
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
+        handle
+            .stdin
+            .write_all(command.as_bytes())
+            .and_then(|_| handle.stdin.flush())
+    };
+    if let Err(e) = written {
+        // stdin morto = filho já não existe. Libera o slot para o próximo
+        // `ensureRpc` subir um processo novo em vez de falhar para sempre.
+        if let Some(dead) = map.remove(&session_id) {
+            drop(map);
+            drop_child(dead.child);
+        }
+        return Err(format!("processo do pi encerrou ({e})"));
+    }
+    Ok(())
 }
 
 /// Quantos processos `pi` filhos estão vivos (visibilidade do custo).
@@ -240,14 +295,24 @@ pub fn rpc_command(
     payload: String,
 ) -> Result<(), String> {
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
-    let handle = map
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
-    handle
-        .stdin
-        .write_all(format!("{payload}\n").as_bytes())
-        .map_err(|e| e.to_string())?;
-    handle.stdin.flush().map_err(|e| e.to_string())
+    let written = {
+        let handle = map
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
+        handle
+            .stdin
+            .write_all(format!("{payload}\n").as_bytes())
+            .and_then(|_| handle.stdin.flush())
+    };
+    if let Err(e) = written {
+        // Mesmo motivo do `send_prompt`: sem isto o slot fica envenenado.
+        if let Some(dead) = map.remove(&session_id) {
+            drop(map);
+            drop_child(dead.child);
+        }
+        return Err(format!("processo do pi encerrou ({e})"));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -258,4 +323,48 @@ pub fn stop_session(state: State<'_, RpcState>, session_id: String) -> Result<()
         let _ = handle.child.wait();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Slot de teste: só a identidade do dono, sem processo nenhum.
+    struct FakeSlot(u32);
+
+    impl SlotOwner for FakeSlot {
+        fn owner_pid(&self) -> u32 {
+            self.0
+        }
+    }
+
+    fn map_with(sid: &str, pid: u32) -> Arc<Mutex<HashMap<String, FakeSlot>>> {
+        let mut m = HashMap::new();
+        m.insert(sid.to_string(), FakeSlot(pid));
+        Arc::new(Mutex::new(m))
+    }
+
+    #[test]
+    fn take_if_same_remove_slot_quando_pid_bate() {
+        let map = map_with("s1", 42);
+        let taken = take_if_same(&map, "s1", 42).map(|s| s.0);
+        assert_eq!(taken, Some(42));
+        assert!(map.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn take_if_same_preserva_slot_quando_pid_difere() {
+        // Corrida real: o filho antigo fecha o stdout depois de um novo já ter
+        // registrado a mesma sessão. O slot do novo não pode ser removido.
+        let map = map_with("s1", 7);
+        assert!(take_if_same(&map, "s1", 8).is_none());
+        let guard = map.lock().unwrap();
+        assert_eq!(guard.get("s1").map(|s| s.0), Some(7));
+    }
+
+    #[test]
+    fn take_if_same_sem_chave_nao_entra_em_panico() {
+        let map: Arc<Mutex<HashMap<String, FakeSlot>>> = Arc::new(Mutex::new(HashMap::new()));
+        assert!(take_if_same(&map, "s1", 1).is_none());
+    }
 }

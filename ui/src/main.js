@@ -8,6 +8,33 @@ import { appendHighlighted, langFor } from './highlight.js';
 import { diffView, setDiffView, splitHunk } from './diffview.js';
 import { initTerminal, reconcileTerminal } from './terminal.js';
 
+/* Zoom da UI: o webview não tem zoom de página, então escala o `body`.
+   0.6–2.0, passo 0.1, persistido no localStorage. Devolve o valor aplicado. */
+let zoom = 1;
+try { zoom = +localStorage.getItem('zoom') || 1; } catch { /* sem storage */ }
+export function setZoom(z) {
+  zoom = Math.min(2, Math.max(0.6, Math.round(z * 100) / 100));
+  document.body.style.zoom = zoom;
+  try { localStorage.setItem('zoom', zoom); } catch { /* sem storage */ }
+  return zoom;
+}
+setZoom(zoom);
+$('zoomin').onclick = () => setZoom(zoom + 0.1);
+$('zoomout').onclick = () => setZoom(zoom - 0.1);
+
+/* Esc interrompe o turno da aba atual. Registrado no topo de propósito: os outros
+   handlers de Esc (paleta, model-pop, imagens) fecham overlays sem `preventDefault`
+   e rodariam depois — assim a checagem enxerga o overlay ainda aberto e um Esc de
+   "fechar" nunca aborta turno. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.settings-pop:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)')) return;
+  const tag = document.activeElement ? document.activeElement.tagName : '';
+  if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+  const t = tabs.find(x => current && x.key === current.key);
+  if (t && t.working) abortTurn();
+});
+
 let current = null;
 let seq = 0;
 let stream = null;            // { node, text }
@@ -1709,6 +1736,17 @@ export function shouldRestoreLocalRow(entry, seen) {
   return !!(entry && seen) && !seen.has(entry.text);
 }
 
+/** Acumula `delta` em `prev` mantendo no máximo os `cap` últimos caracteres.
+ *  O corte não pode começar no meio de um par substituto (emoji fora do BMP). */
+export function appendCapped(prev, delta, cap) {
+  const next = String(prev == null ? '' : prev) + String(delta == null ? '' : delta);
+  if (!(cap > 0) || next.length <= cap) return next;
+  let start = next.length - cap;
+  const code = next.charCodeAt(start);
+  if (code >= 0xdc00 && code <= 0xdfff) start += 1;
+  return next.slice(start);
+}
+
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
    render do log principal, então `seen` só contém linhas vindas do disco
    (`data-local` fica de fora): quando a mensagem já foi persistida, a cópia local cai. */
@@ -1725,6 +1763,15 @@ function restoreLocalRows() {
 }
 
 /* =============== eventos =============== */
+
+/** Delta de um `message_update` do tipo pedido, ou '' se a linha não for isso. */
+function deltaOf(line, type) {
+  try {
+    const d = JSON.parse(line).assistantMessageEvent;
+    return d && d.type === type && typeof d.delta === 'string' ? d.delta : '';
+  } catch { return ''; }
+}
+
 function scheduleStreamRender() {
   if (pendingRender) return;
   pendingRender = requestAnimationFrame(() => {
@@ -1752,9 +1799,25 @@ listen('rpc-line', (ev) => {
     }
     // Aba em segundo plano: o transcript dela volta por get_messages, mas o estado do
     // turno precisa sobreviver à troca — senão o indicador congela no rótulo antigo.
-    if (line.includes('"type":"agent_settled"')) { maybeNotifyDone(sessionId); setTurn(sessionId, false); { const bst = tabs.find(x => x.key === sessionId); if (bst && bst.streamText) { bst.streamText = ''; saveTabs(); } } }
-    else if (line.includes('thinking_delta')) setTurn(sessionId, true, 'pensando…');
-    else if (line.includes('text_delta')) setTurn(sessionId, true, 'respondendo…');
+    if (line.includes('"type":"agent_settled"')) {
+      maybeNotifyDone(sessionId);
+      setTurn(sessionId, false);
+      // Turno fechou: o disco já tem thinking e texto completos.
+      const bst = tabs.find(x => x.key === sessionId);
+      if (bst) { bst.streamText = ''; bst.thinkText = ''; }
+      saveTabs();
+    } else if (line.includes('thinking_delta')) {
+      // Aba de fundo: o parcial acumula aqui. O .jsonl só recebe a mensagem no fim
+      // do turno, então sem isto voltar para a aba não acharia nem o thinking.
+      const bt = tabs.find(x => x.key === sessionId);
+      if (bt) bt.thinkText = appendCapped(bt.thinkText, deltaOf(line, 'thinking_delta'), STREAM_CAP);
+      setTurn(sessionId, true, 'pensando…');
+    } else if (line.includes('text_delta')) {
+      const bt = tabs.find(x => x.key === sessionId);
+      if (bt) bt.streamText = appendCapped(bt.streamText, deltaOf(line, 'text_delta'), STREAM_CAP);
+      maybeSaveTabs();
+      setTurn(sessionId, true, 'respondendo…');
+    }
     return;
   }
 
@@ -1785,7 +1848,7 @@ listen('rpc-line', (ev) => {
         stream = { node: null, text: '', thinkBody: null };
         // Turno novo: o parcial guardado era do anterior (já está no disco).
         const mt = tabs.find(x => current && x.key === current.key);
-        if (mt) mt.streamText = '';
+        if (mt) { mt.streamText = ''; mt.thinkText = ''; }
       }
       break;
 
@@ -1802,6 +1865,9 @@ listen('rpc-line', (ev) => {
           $('log').appendChild(wrap);
         }
         stream.thinkBody.textContent += d.delta;
+        // Guarda por aba: trocar de aba no meio do pensamento não perde o parcial.
+        const tt = tabs.find(x => current && x.key === current.key);
+        if (tt) tt.thinkText = appendCapped(tt.thinkText, d.delta, STREAM_CAP);
         scrollBottom();
         break;
       }
@@ -1829,7 +1895,7 @@ listen('rpc-line', (ev) => {
       card(rec.toolCallId, rec.toolName, rec.args, null, Date.now());
       stream = null;
       // Trecho de texto anterior já está renderizado: não reanexa na volta.
-      { const tst = tabs.find(x => current && x.key === current.key); if (tst) tst.streamText = ''; }
+      { const tst = tabs.find(x => current && x.key === current.key); if (tst) { tst.streamText = ''; tst.thinkText = ''; } }
       if (rec.toolName === 'subagent') setStatus('subagent disparado…');
       break;
 
@@ -1854,8 +1920,12 @@ listen('rpc-line', (ev) => {
       setStatus('pronto');
       setState('ready');
       setTurn(sessionId, false);
-      // Resposta completa foi para o disco: o parcial guardado caducou.
-      { const st = tabs.find(x => x.key === sessionId); if (st && st.streamText) { st.streamText = ''; saveTabs(); } }
+      // Resposta completa foi para o disco: os parciais guardados caducaram.
+      {
+        const st = tabs.find(x => x.key === sessionId);
+        if (st) { st.streamText = ''; st.thinkText = ''; }
+        saveTabs();
+      }
       if (current && current.childrenDir) loadChildren(current.childrenDir);
       // Turno pode ter editado arquivos: a aba de diffs se atualiza sozinha.
       loadGit(); loadEdits(); loadPlans();
@@ -2798,7 +2868,7 @@ function restoreTabs() {
       key: t.key, cwd: t.cwd || null, childrenDir: t.childrenDir || null,
       refValue: t.refValue || null, refFlag: t.refFlag || '--session',
       file: t.file || null, label: t.label || '', draft: t.draft || '',
-      images: [], streamText: t.streamText || '',
+      images: [], streamText: t.streamText || '', thinkText: '',
       model: t.model || null, thinkingLevel: t.thinkingLevel || null,
       levelList: Array.isArray(t.levelList) ? t.levelList : [],
       stats: t.stats || null, queue: Array.isArray(t.queue) ? t.queue : [],
@@ -2809,19 +2879,49 @@ function restoreTabs() {
   renderTabs();
 }
 
-/** Reanexa a resposta parcial da aba ao voltar (o histórico do disco não a tem). */
+/** true se o log já mostra esse thinking: o disco trouxe e o parcial seria duplicata. */
+function logHasThinking(text) {
+  const head = String(text || '').trim().slice(0, 120);
+  if (!head) return false;
+  return Array.from($('log').querySelectorAll('.think-body'))
+    .some(n => String(n.textContent || '').trim().startsWith(head));
+}
+
+/** Reanexa o parcial da aba ao voltar (o histórico do disco não o tem). */
 function reattachStream() {
   if (stream || !current) return;
   const t = tabs.find(x => x.key === current.key);
-  if (!t || !t.streamText) return;
+  if (!t) return;
+  // Thinking do turno em voo: `renderMessages` acima só pintou o que está no disco.
+  let thinkBody = null;
+  if (t.thinkText && !logHasThinking(t.thinkText)) {
+    const wrap = thinkBlock(t.thinkText);
+    $('log').appendChild(wrap);
+    thinkBody = wrap.querySelector('.think-body');
+  }
+  if (!t.streamText) {
+    // Só thinking até agora: ancora `stream` nele para o próximo delta continuar
+    // no mesmo bloco em vez de abrir um segundo.
+    if (thinkBody) stream = { node: null, text: '', thinkBody };
+    return;
+  }
   const row = mdRow();
   setMarkdown(row.body, t.streamText);
   $('log').appendChild(row.root);
-  stream = { node: row.body, text: t.streamText, thinkBody: null };
+  stream = { node: row.body, text: t.streamText, thinkBody };
   scrollBottom(true);
 }
 
 /* =============== comandos do app (não vão para o modelo) =============== */
+
+/** Interrompe o turno atual (comando `/abort` e Esc).
+ *  Esvazia a fila antes: o `abort` do pi continua mensagens enfileiradas
+ *  (docs/rpc-commands.md §clear_queue), então sem isto o turno seguinte começaria sozinho. */
+function abortTurn() {
+  sendCommand({ type: 'clear_queue' });
+  sendCommand({ type: 'abort' });
+}
+
 const APP_COMMANDS = [
   { name: 'compact', description: 'Compactar o histórico (opcional: instruções)', app: true, needsRpc: true,
     run: (a) => sendCommand(a ? { type: 'compact', customInstructions: a } : { type: 'compact' }) },
@@ -2845,9 +2945,7 @@ const APP_COMMANDS = [
   { name: 'export', description: 'Exportar a sessão em HTML', app: true, needsRpc: true,
     run: () => sendCommand({ type: 'export_html' }) },
   { name: 'abort', description: 'Interromper o turno atual', app: true, needsRpc: true,
-    // Esvazia a fila antes: o `abort` do pi continua mensagens enfileiradas
-    // (docs/rpc-commands.md §clear_queue), então sem isto o turno seguinte começaria sozinho.
-    run: () => { sendCommand({ type: 'clear_queue' }); sendCommand({ type: 'abort' }); } },
+    run: abortTurn },
   { name: 'desfazer', description: 'Devolver a fila ao composer (sem interromper o turno)', app: true, needsRpc: true,
     run: () => desfazerFila() },
   { name: 'fork', description: 'Criar fork (nova sessão) de mensagem anterior — a original é preservada', app: true, needsRpc: true,
@@ -3896,10 +3994,11 @@ $('togglesubs').onclick = () =>
   applySubsVisibility(!document.body.classList.contains('no-subs'));
 
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
-    e.preventDefault();
-    applySubsVisibility(!document.body.classList.contains('no-subs'));
-  }
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (e.key === 'b' || e.key === 'B') { e.preventDefault(); applySubsVisibility(!document.body.classList.contains('no-subs')); }
+  else if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(zoom + 0.1); }
+  else if (e.key === '-') { e.preventDefault(); setZoom(zoom - 0.1); }
+  else if (e.key === '0') { e.preventDefault(); setZoom(1); }
 });
 
 $('newsession').onclick = async () => {

@@ -16,6 +16,8 @@ vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor:
 
 let insertRowByAt;
 let shouldRestoreLocalRow;
+let appendCapped;
+let setZoom;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -38,7 +40,34 @@ beforeAll(async () => {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow } = await import('../ui/src/main.js'));
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom } = await import('../ui/src/main.js'));
+});
+
+describe('appendCapped', () => {
+  it('acumula o delta no parcial da aba', () => {
+    expect(appendCapped('pensando', ' mais', 1000)).toBe('pensando mais');
+    expect(appendCapped('', 'a', 10)).toBe('a');
+    expect(appendCapped(undefined, 'b', 10)).toBe('b');
+  });
+
+  it('respeita o cap mantendo os últimos caracteres', () => {
+    expect(appendCapped('abc', 'def', 4)).toBe('cdef');
+    expect(appendCapped('12345', '', 3)).toBe('345');
+    expect(appendCapped('123', '', 3)).toBe('123');
+  });
+
+  it('não corta emoji ao meio quando o cap cai no par substituto', () => {
+    // O corte por unidade UTF-16 deixaria só a metade baixa do par.
+    expect(appendCapped('🙂', 'x', 2)).toBe('x');
+    const out = appendCapped('a🙂b', '🙂', 2);
+    expect(out).toBe('🙂');
+    expect(/^[\udc00-\udfff]/.test(out)).toBe(false);
+    expect(/[\ud800-\udbff]$/.test(out)).toBe(false);
+  });
+
+  it('mantém acento intacto no limite', () => {
+    expect(appendCapped('', 'ção', 2)).toBe('ão');
+  });
 });
 
 describe('insertRowByAt', () => {
@@ -72,6 +101,29 @@ describe('insertRowByAt', () => {
     const local = row(undefined, 'local');
     insertRowByAt(log, local, undefined);
     expect(texts(log)).toEqual(['sem-at', 'a', 'local']);
+  });
+});
+
+describe('setZoom', () => {
+  it('clampa no mínimo 0.6 e persiste o valor aplicado', () => {
+    expect(setZoom(0.2)).toBe(0.6);
+    expect(localStorage.getItem('zoom')).toBe('0.6');
+  });
+
+  it('clampa no máximo 2.0 e persiste o valor aplicado', () => {
+    expect(setZoom(5)).toBe(2);
+    expect(localStorage.getItem('zoom')).toBe('2');
+  });
+
+  it('arredonda o passo de 0.1 (0.6 + 0.1 = 0.7) e persiste', () => {
+    expect(setZoom(0.6 + 0.1)).toBe(0.7);
+    expect(localStorage.getItem('zoom')).toBe('0.7');
+  });
+
+  it('reset volta a 1.0', () => {
+    setZoom(1.7);
+    expect(setZoom(1)).toBe(1);
+    expect(localStorage.getItem('zoom')).toBe('1');
   });
 });
 
