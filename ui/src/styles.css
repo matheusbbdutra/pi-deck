@@ -568,6 +568,13 @@
   /* Debug (⚙) é overlay, mas o detalhe de missão (`#detail`, z-index 20) abre por
      cima dele: fica abaixo dos outros overlays para o "voltar" não o cobrir. */
   #debug { z-index:15; }
+  /* tema (JSON): textarea mono para colar o mapa de tokens */
+  .theme-json { display:block; width:100%; max-width:720px; height:10.5em; padding:10px 12px;
+                background:var(--bg-0); border:1px solid var(--line); border-radius:6px;
+                font-family:var(--mono); font-size:11px; line-height:1.5; color:var(--ink-2);
+                resize:vertical; }
+  .theme-json:focus { outline:none; border-color:var(--accent); }
+  .theme-note { margin:8px 0 0; color:var(--dim); font-family:var(--mono); font-size:11px; }
   .pkgs-pre { margin:0; padding:10px 12px; background:var(--bg-0); border:1px solid var(--line);
               border-radius:6px; font-family:var(--mono); font-size:11px; line-height:1.5;
               color:var(--ink-3); white-space:pre-wrap; max-height:38vh; overflow:auto; }

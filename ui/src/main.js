@@ -7,6 +7,10 @@ import { card, thinkBlock, applyToolResult, setDiffRenderer } from './tool-cards
 import { appendHighlighted, langFor } from './highlight.js';
 import { diffView, setDiffView, splitHunk } from './diffview.js';
 import { initTerminal, reconcileTerminal } from './terminal.js';
+import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from './theme.js';
+
+/* Tema por JSON: aplicado antes de qualquer render para o padrão não piscar na tela. */
+bootTheme();
 
 /* Zoom da UI: o webview não tem zoom de página, então escala o `body`.
    0.6–2.0, passo 0.1, persistido no localStorage. Devolve o valor aplicado. */
@@ -3829,6 +3833,25 @@ function openDebug() {
   renderDiag();
 }
 
+/* =============== tema (JSON) =============== */
+
+/** Linha de status do overlay: quantas chaves entraram, quais foram ignoradas e o erro de parse. */
+function showThemeNote(res, prefix) {
+  const applied = Object.keys(res.ok).length;
+  const parts = [];
+  if (prefix) parts.push(prefix);
+  parts.push(applied + ' aplicada(s)');
+  if (res.ignored.length) parts.push(res.ignored.length + ' ignorada(s): ' + res.ignored.join(', '));
+  if (res.error) parts.push(res.error);
+  $('themenote').textContent = parts.join(' · ');
+}
+
+function openTheme() {
+  $('settingspop').classList.add('hidden');
+  $('theme').classList.remove('hidden');
+  $('themejson').focus();
+}
+
 /* =============== auth do provider (perto da versão do pi) =============== */
 let authProvider = null;
 let authTimer = null;
@@ -4282,6 +4305,19 @@ async function runUpdate(scope) {
 $('updExt').onclick = () => runUpdate('extensions');
 $('updPi').onclick = () => runUpdate('self');
 $('pkgbtn').onclick = () => openPkgs();
+$('themebtn').onclick = () => openTheme();
+$('themeback').onclick = () => $('theme').classList.add('hidden');
+$('themeapply').onclick = () => showThemeNote(applyTheme($('themejson').value), null);
+$('themeexport').onclick = () => {
+  const current = themeFromDom();
+  $('themejson').value = JSON.stringify(current, null, 2);
+  showThemeNote(validateTheme(current), 'exportado');
+};
+$('themereset').onclick = () => {
+  resetTheme();
+  $('themejson').value = '';
+  $('themenote').textContent = 'tema padrão restaurado (localStorage[\'theme\'] removido)';
+};
 $('debugbtn').onclick = () => openDebug();
 $('debugback').onclick = () => $('debug').classList.add('hidden');
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); };

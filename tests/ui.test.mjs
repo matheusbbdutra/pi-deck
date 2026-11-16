@@ -9,7 +9,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { THEME_KEYS, applyTheme, resetTheme, validateTheme } from '../ui/src/theme.js';
 
 vi.mock('../ui/src/terminal.js', () => ({ initTerminal: () => {}, reconcileTerminal: () => {} }));
 vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor: () => null }));
@@ -170,5 +171,59 @@ describe('shouldRestoreLocalRow', () => {
     const seen = new Set(['outra mensagem']);
     expect(shouldRestoreLocalRow({ text: 'prompt novo', state: 'pending' }, seen)).toBe(true);
     expect(shouldRestoreLocalRow({ text: 'fila morreu', state: 'cancelled' }, seen)).toBe(true);
+  });
+});
+
+describe('tema por JSON', () => {
+  afterEach(() => {
+    resetTheme();
+    localStorage.clear();
+  });
+
+  it('THEME_KEYS tem os 46 tokens do :root, sem --mono', () => {
+    expect(THEME_KEYS.length).toBe(46);
+    expect(new Set(THEME_KEYS).size).toBe(46);
+    expect(THEME_KEYS).not.toContain('mono');
+  });
+
+  it('aceita chave conhecida com cor válida (com ou sem prefixo --)', () => {
+    expect(validateTheme({ bg: '#0f1115' })).toEqual({ ok: { bg: '#0f1115' }, ignored: [] });
+    expect(validateTheme({ '--accent': 'rgb(122 162 247)' }).ok).toEqual({ accent: 'rgb(122 162 247)' });
+    expect(validateTheme({ 'ink-0': 'hsla(0,0%,100%,.9)' }).ok).toEqual({ 'ink-0': 'hsla(0,0%,100%,.9)' });
+    expect(validateTheme({ ok: '#7ee78780' }).ok).toEqual({ ok: '#7ee78780' });
+  });
+
+  it('ignora chave desconhecida', () => {
+    const res = validateTheme({ 'mono': 'Comic Sans', 'bg-9': '#fff', bg: '#fff' });
+    expect(res.ok).toEqual({ bg: '#fff' });
+    expect(res.ignored).toEqual(['mono', 'bg-9']);
+  });
+
+  it('ignora valor que não é cor', () => {
+    const res = validateTheme({ bg: 'url(http://x/a.png)', panel: 123, card: '', fg: 'expression(alert(1))' });
+    expect(res.ok).toEqual({});
+    expect(res.ignored).toEqual(['bg', 'panel', 'card', 'fg']);
+  });
+
+  it('string JSON inválida não lança e devolve error', () => {
+    expect(() => validateTheme('{ nope')).not.toThrow();
+    const res = validateTheme('{ nope');
+    expect(res.ok).toEqual({});
+    expect(res.ignored).toEqual([]);
+    expect(res.error).toMatch(/JSON inválido/);
+    expect(validateTheme('').error).toBe('JSON vazio');
+    expect(validateTheme('[1,2]').error).toMatch(/objeto/);
+  });
+
+  it('applyTheme chama setProperty só para chaves conhecidas e persiste', () => {
+    const spy = vi.spyOn(document.documentElement.style, 'setProperty');
+    const res = applyTheme({ bg: '#101010', accent: 'hsl(210 80% 70%)', nope: '#fff', panel: 42 });
+    expect(spy.mock.calls.map(c => c[0])).toEqual(['--bg', '--accent']);
+    spy.mockRestore();
+    expect(res.ignored).toEqual(['nope', 'panel']);
+    expect(JSON.parse(localStorage.getItem('theme'))).toEqual({ bg: '#101010', accent: 'hsl(210 80% 70%)' });
+    resetTheme();
+    expect(localStorage.getItem('theme')).toBe(null);
+    expect(document.documentElement.style.getPropertyValue('--bg')).toBe('');
   });
 });
