@@ -1229,6 +1229,12 @@ function gitStashPop() {
   return gitAct('stash pop', (cwd) => inv('git_stash_pop', { cwd }), { clearSel: true });
 }
 
+/** `pull` só fast-forward: sem upstream ou non-fast-forward o stderr do git vai
+    para a linha de status; não há confirmação porque nada local é descartado. */
+function gitPull() {
+  return gitAct('pull', (cwd) => inv('git_pull', { cwd }));
+}
+
 /** Confirma o comando literal do force (só existe atrás do toggle). */
 function gitConfirmLease(cwd) {
   return confirm('git push --force-with-lease\n\nno repositório ' + cwd + '?');
@@ -1335,6 +1341,7 @@ function renderGit() {
   discardBtn.disabled = !gitSel.size;
   btn('stash', 'git stash push --include-untracked (tudo, com untracked)', gitStash);
   btn('stash pop', 'git stash pop (conflito aparece na linha de status)', gitStashPop);
+  btn('pull', 'git pull --ff-only (falha aparece na linha de status)', gitPull);
   host.appendChild(bar);
 
   if (!list.length) {
