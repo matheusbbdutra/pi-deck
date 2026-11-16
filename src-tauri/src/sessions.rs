@@ -234,12 +234,22 @@ fn validate_login_provider(provider: &str) -> Result<&str, String> {
     Ok(p)
 }
 
+/// Cita o caminho do binário para o shell do alvo. Shell POSIX aceita single quote
+/// com o escape `'\''`; `cmd.exe` do Windows não interpreta single quote — lá é double quote.
+fn quote_bin(path: &str) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", path.replace('"', ""))
+    } else {
+        format!("'{}'", path.replace('\'', r"'\''"))
+    }
+}
+
 /// Abre um terminal já rodando `pi auth login <provider>` (login é interativo).
 #[tauri::command]
 pub fn open_terminal_login(provider: String) -> Result<String, String> {
     let p = validate_login_provider(&provider)?;
-    let bin = pi_bin().to_string_lossy().replace('\'', r"'\''");
-    let inner = format!("'{bin}' auth login {p}; echo; printf 'enter para fechar '; read -r _");
+    let bin = quote_bin(&pi_bin().to_string_lossy());
+    let inner = format!("{bin} auth login {p}; echo; printf 'enter para fechar '; read -r _");
 
     #[cfg(target_os = "linux")]
     let candidates: Vec<(&str, Vec<String>)> = vec![
@@ -2572,6 +2582,17 @@ mod tests {
                 !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'),
                 "{p:?} fora de [a-z0-9-]"
             );
+        }
+    }
+
+    #[test]
+    fn quote_bin_escapa_para_o_shell_do_alvo() {
+        // POSIX: single quote com o idioma `'\''` — $, backtick e espaço ficam literais.
+        let q = quote_bin("/home/u/.local/bin/pi");
+        assert_eq!(q, "'/home/u/.local/bin/pi'", "{q}");
+        if !cfg!(windows) {
+            let com_aspa = quote_bin("/tmp/a'b/pi");
+            assert_eq!(com_aspa, r"'/tmp/a'\''b/pi'", "{com_aspa}");
         }
     }
 
