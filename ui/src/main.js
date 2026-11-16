@@ -31,18 +31,23 @@ $('zoomout').onclick = () => setZoom(zoom - 0.1);
    e rodariam depois — assim a checagem enxerga o overlay ainda aberto e um Esc de
    "fechar" nunca aborta turno. Vale com o foco no composer/busca (é de lá que o
    usuário vê o turno rodando); só o terminal embutido consome o Esc (ex.: vim). */
-/* Decisão pura do atalho Esc: aborta quando o turno trabalha, sem overlay aberto
-   e sem foco no terminal embutido (o foco no composer/busca não bloqueia). */
-export function shouldAbortOnEsc({ overlayOpen, inTerminal, working }) {
-  return !overlayOpen && !inTerminal && !!working;
+/* Decisão pura do atalho Esc: aborta quando o turno trabalha, sem overlay aberto,
+   sem foco no terminal embutido e sem foco em campo de busca/filtro — nesses
+   campos o Esc não deve derrubar o turno por acidente. O composer (`#input`) e o
+   próprio terminal são exceção: é de lá que se interrompe de propósito. */
+export function shouldAbortOnEsc({ overlayOpen, inTerminal, inOtherField, working }) {
+  return !overlayOpen && !inTerminal && !inOtherField && !!working;
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   const overlayOpen = !!document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.settings-pop:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)');
   const ae = document.activeElement;
   const inTerminal = !!(ae && ae.closest && ae.closest('#termdock'));
+  // Busca/filtro (INPUT) e textareas que não são o composer: Esc é do campo, não do turno.
+  const inOtherField = !!(ae && !inTerminal && (ae.tagName === 'INPUT'
+    || (ae.tagName === 'TEXTAREA' && ae.id !== 'input')));
   const t = tabs.find(x => current && x.key === current.key);
-  if (shouldAbortOnEsc({ overlayOpen, inTerminal, working: !!(t && t.working) })) abortTurn();
+  if (shouldAbortOnEsc({ overlayOpen, inTerminal, inOtherField, working: !!(t && t.working) })) abortTurn();
 });
 
 let current = null;
