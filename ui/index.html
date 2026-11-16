@@ -9,6 +9,7 @@
   <span class="brand">pi-deck</span>
   <span class="status"><span id="statedot" class="dot"></span> <span id="status">desconectado</span></span>
   <span class="status" id="procinfo" title="processos pi vivos"></span>
+  <button id="termbtn" class="ghost" title="Terminal (Ctrl+`)">&gt;_</button>
   <span class="spacer"></span>
   <button id="togglesubs" class="ghost" title="Mostrar/ocultar painel (Ctrl+B)">Painel</button>
   <button id="settingsbtn" class="ghost" title="Ajustes">⚙</button>
@@ -84,18 +85,6 @@
     <span id="typinglabel" class="tlabel">pensando…</span>
   </div>
   <div id="imgview" class="img-view hidden"><img id="imgviewimg" alt="" /></div>
-  <div id="termdock" class="term-dock hidden">
-    <div id="termgrip" class="term-grip" title="arraste para redimensionar"></div>
-    <div class="term-head">
-      <span class="term-mark">&gt;_</span>
-      <span id="termcwd" class="term-cwd">&mdash;</span>
-      <span id="termmsg" class="term-msg"></span>
-      <span class="spacer"></span>
-      <button id="termrestart" class="ghost small" title="Fecha o processo atual e abre um shell novo no diretório da sessão">reiniciar</button>
-      <button id="termclose" class="tiny" title="Fechar o terminal (Ctrl+`)">&times;</button>
-    </div>
-    <div id="termhost" class="term-host"></div>
-  </div>
   <div class="composer">
     <div id="palette" class="palette hidden">
       <div id="cmdkbar" class="cmdk-bar hidden"><input id="cmdkinput" class="model-search" placeholder="comando, /model …  ·  Esc fecha" autocomplete="off" /></div>
@@ -112,7 +101,6 @@
           <span class="chev">⌄</span>
         </button>
         <button id="thinkbtn" class="chip-btn" title="Thinking">thinking</button>
-        <button id="termbtn" class="chip-btn" title="Terminal (Ctrl+`)">&gt;_</button>
         <span class="spacer"></span>
         <button id="ctxbtn" class="chip-btn" title="Contexto">—</button>
         <button id="compactnow" class="chip-btn" title="Compactar agora (resume o histórico)">⤓</button>
@@ -139,6 +127,19 @@
         <div id="forklist" class="model-list"></div>
       </div>
     </div>
+  </div>
+  <div id="termdock" class="term-dock hidden">
+    <div id="termgrip" class="term-grip" title="arraste para redimensionar"></div>
+    <div class="term-tabs">
+      <div id="termtabs" class="term-tabs-list"></div>
+      <button id="termnew" class="term-new" title="Novo terminal">+</button>
+      <span id="termmsg" class="term-msg"></span>
+      <span class="spacer"></span>
+      <span id="termcwd" class="term-cwd">&mdash;</span>
+      <button id="termrestart" class="term-act" title="Fecha o processo da aba ativa e abre um shell novo no diretório da sessão">reiniciar</button>
+      <button id="termclose" class="term-act" title="Fechar o terminal (Ctrl+`)">&times;</button>
+    </div>
+    <div id="termhosts" class="term-hosts"></div>
   </div>
 </main>
 

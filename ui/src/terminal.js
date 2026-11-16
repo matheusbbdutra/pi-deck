@@ -4,34 +4,35 @@ import { FitAddon } from '@xterm/addon-fit';
 import { $, b64FromBytes, bytesFromB64 } from './shared.js';
 import { inv, listen } from './rpc.js';
 
-/* Terminal embutido: dock na coluna principal, entre o transcript (#log, flex:1)
-   e o composer. Como o #log mantém o próprio scroll, o dock ocupa altura fixa e
-   não mexe no comportamento de rolagem do transcript. */
+/* Terminal embutido: tool window no rodapé da coluna principal, abaixo do composer.
+   Cada aba tem o seu PTY e o seu xterm; fechar o dock (Ctrl+`) só esconde — os
+   processos continuam vivos e morrem com a janela (o backend faz kill_all). */
 
-const DEFAULT_HEIGHT = 220;
+const DEFAULT_HEIGHT = 240;
 const MIN_HEIGHT = 120;
-const MAX_RATIO = 0.7;   // 70% da viewport
+const MAX_RATIO = 0.7; // 70% da viewport
 const THEME = {
-  background: '#0d1117',
+  background: '#12161f',
   foreground: '#dfe3ec',
   cursor: '#7aa2f7',
-  selectionBackground: '#26314a',
+  cursorAccent: '#12161f',
+  selectionBackground: '#2a3346',
 };
 const FONT = '"JetBrainsMono Nerd Font","JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace';
 const enc = new TextEncoder();
 
-let term = null;
-let fitAddon = null;
-let ptyId = null;        // null = sem processo vivo (fechado ou terminou)
-let ptyCwd = '';         // cwd com que o PTY atual foi aberto (não segue a sessão)
-let unData = null;       // unlisten de 'pty-data'
-let unExit = null;       // unlisten de 'pty-exit'
-let opening = false;     // pty_open em voo
-let early = [];          // eventos que chegaram antes de conhecermos o id (o prompt inicial vem cedo)
+let terms = [];   // { id, ptyId, term, fit, cwd, alive, opening, host, tab, dead }
+let activeId = null;
+let seq = 0;
+let unData = null;   // unlisten de 'pty-data'
+let unExit = null;   // unlisten de 'pty-exit'
+let pending = [];    // eventos de um PTY ainda sem aba associada (o prompt inicial vem cedo)
 let getCwd = () => '';
 let getHome = () => '';
 
 const dock = () => $('termdock');
+const activeTerm = () => terms.find((t) => t.id === activeId) || null;
+const byPtyId = (id) => terms.find((t) => t.ptyId === id) || null;
 
 function readStore(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -72,64 +73,77 @@ function syncButton() {
 function renderCwd() {
   const n = $('termcwd');
   if (!n) return;
-  n.textContent = ptyCwd || '—';
+  const t = activeTerm();
+  const cwd = (t && t.cwd) || '';
+  n.textContent = cwd || '—';
   const sess = String(getCwd() || '');
   // A sessão trocou de pasta: não reinicia sozinho, só sinaliza e deixa o botão reiniciar.
-  const stale = Boolean(ptyCwd && sess && sess !== ptyCwd);
+  const stale = Boolean(cwd && sess && sess !== cwd);
   n.classList.toggle('stale', stale);
-  n.title = stale ? 'terminal em ' + ptyCwd + ' · sessão em ' + sess + ' — use reiniciar' : 'diretório do terminal';
+  n.title = stale ? 'terminal em ' + cwd + ' · sessão em ' + sess + ' — use reiniciar' : 'diretório do terminal ativo';
+}
+
+/* fit só no host visível: medir um host com display:none devolve tamanho zerado. */
+function fitTerm(t) {
+  if (!t || !t.fit) return;
+  const d = dock();
+  if (!d || d.classList.contains('hidden')) return;
+  if (t.host.classList.contains('hidden')) return;
+  try { t.fit.fit(); } catch { /* host ainda sem tamanho */ }
 }
 
 let fitFrame = 0;
-function fitNow() {
-  if (!term || !fitAddon) return;
-  try { fitAddon.fit(); } catch { /* host ainda sem tamanho */ }
-}
-
-// durante o arrasto/resize: no máximo um fit por frame
-function fitAndResize() {
-  if (!term || !fitAddon || !dock() || dock().classList.contains('hidden')) return;
+function fitActiveSoon() {
   if (fitFrame) return;
   fitFrame = requestAnimationFrame(() => {
     fitFrame = 0;
-    fitNow();
+    fitTerm(activeTerm());
   });
 }
 
-function writeB64(b64) {
-  if (!term) return;
-  try { term.write(bytesFromB64(b64)); } catch { /* base64 inválido: descarta */ }
+function writeB64(t, b64) {
+  if (!t || !t.term) return;
+  try { t.term.write(bytesFromB64(b64)); } catch { /* base64 inválido: descarta */ }
 }
 
-function markExited() {
-  ptyId = null;
-  if (term) term.write('\r\n[processo terminou]\r\n');
-  const d = dock();
-  if (d) d.classList.add('dead');
+function markExited(t) {
+  t.ptyId = null;
+  t.opening = false;
+  t.alive = false;
+  if (t.term) t.term.write('\r\n[processo terminou]\r\n');
+  t.tab.classList.add('dead');
+  t.dead.classList.remove('hidden');
   showMsg('processo terminou — use reiniciar');
+}
+
+function buffer(kind, p) {
+  if (!terms.some((t) => t.opening)) return; // ninguém esperando id: evento órfão
+  pending.push({ kind, p });
+  if (pending.length > 400) pending.shift();
 }
 
 function onData(p) {
   if (!p || !p.id) return;
-  if (ptyId === null && opening) { early.push({ kind: 'data', p }); return; }
-  if (p.id !== ptyId) return;
-  writeB64(p.b64);
+  const t = byPtyId(p.id);
+  if (t) { writeB64(t, p.b64); return; }
+  buffer('data', p);
 }
 
 function onExit(p) {
   if (!p || !p.id) return;
-  if (ptyId === null && opening) { early.push({ kind: 'exit', p }); return; }
-  if (p.id !== ptyId) return;
-  markExited();
+  const t = byPtyId(p.id);
+  if (t) { markExited(t); return; }
+  buffer('exit', p);
 }
 
-function flushEarly() {
-  opening = false;
-  for (const e of early.splice(0)) {
-    if (!e.p || e.p.id !== ptyId) continue;
-    if (e.kind === 'data') writeB64(e.p.b64);
-    else markExited();
+function flushPending(t) {
+  const rest = [];
+  for (const e of pending) {
+    if (e.p.id !== t.ptyId) { rest.push(e); continue; }
+    if (e.kind === 'data') writeB64(t, e.p.b64);
+    else markExited(t);
   }
+  pending = rest;
 }
 
 async function ensureListeners() {
@@ -143,67 +157,140 @@ function dropListeners() {
   if (unExit) { try { unExit(); } catch { /* já removido */ } unExit = null; }
 }
 
-async function teardownPty() {
-  const id = ptyId;
-  ptyId = null;
-  opening = false;
-  early = [];
-  dropListeners();
-  if (id) { try { await inv('pty_close', { id }); } catch { /* já morreu */ } }
-}
-
-function createTerm() {
-  term = new Terminal({
-    fontFamily: FONT,
-    fontSize: 12,
-    theme: THEME,
-    cursorBlink: true,
-    scrollback: 5000,
-  });
-  fitAddon = new FitAddon();
-  term.loadAddon(fitAddon);
-  term.open($('termhost'));
-  term.onData((d) => {
-    if (!ptyId) return;
-    inv('pty_write', { id: ptyId, b64: b64FromBytes(enc.encode(d)) })
-      .catch((err) => showMsg('falha ao escrever no terminal: ' + (err && err.message ? err.message : err)));
-  });
-  term.onResize(({ cols, rows }) => {
-    if (!ptyId) return;
-    inv('pty_resize', { id: ptyId, cols, rows }).catch(() => { /* resize é best-effort */ });
-  });
-}
-
-async function openPty() {
-  if (!term) return;
+async function openPty(t) {
   const cwd = String(getCwd() || getHome() || '/');
-  opening = true;
+  t.opening = true;
   showMsg('');
-  const d = dock();
-  if (d) d.classList.remove('dead');
   try {
-    const id = await inv('pty_open', { cwd, cols: term.cols || 80, rows: term.rows || 24 });
-    ptyId = String(id);
-    ptyCwd = cwd;
+    const id = await inv('pty_open', { cwd, cols: t.term.cols || 80, rows: t.term.rows || 24 });
+    t.ptyId = String(id);
+    t.cwd = cwd;
+    t.opening = false;
+    flushPending(t);
     renderCwd();
-    flushEarly();
   } catch (err) {
-    ptyId = null;
-    opening = false;
-    early = [];
+    t.ptyId = null;
+    t.opening = false;
+    pending = [];
     showMsg('não foi possível abrir o terminal: ' + (err && err.message ? err.message : err));
   }
 }
 
+async function closePty(t) {
+  const id = t.ptyId;
+  t.ptyId = null;
+  t.opening = false;
+  if (!id) return;
+  pending = pending.filter((e) => e.p.id !== id);
+  try { await inv('pty_close', { id }); } catch { /* já morreu */ }
+}
+
+function activate(id) {
+  const t = terms.find((x) => x.id === id);
+  if (!t) return;
+  activeId = id;
+  for (const x of terms) {
+    const on = x.id === id;
+    x.host.classList.toggle('hidden', !on);
+    x.tab.classList.toggle('active', on);
+  }
+  renderCwd();
+  requestAnimationFrame(() => {
+    fitTerm(t);
+    t.term.focus();
+  });
+}
+
+function addTab() {
+  const hosts = $('termhosts');
+  const list = $('termtabs');
+  if (!hosts || !list) return null;
+
+  seq += 1;
+  const id = 'tab' + seq;
+
+  const host = document.createElement('div');
+  host.className = 'term-host';
+  hosts.appendChild(host);
+
+  const tab = document.createElement('div');
+  tab.className = 'term-tab';
+  tab.title = 'terminal ' + seq;
+  const label = document.createElement('span');
+  label.className = 'term-label';
+  label.textContent = 'terminal ' + seq;
+  const dead = document.createElement('span');
+  dead.className = 'term-dead hidden';
+  dead.textContent = '[terminou]';
+  const x = document.createElement('button');
+  x.className = 'term-tab-x';
+  x.title = 'fechar esta aba';
+  x.textContent = '×';
+  tab.append(label, dead, x);
+  list.appendChild(tab);
+
+  const term = new Terminal({
+    fontFamily: FONT,
+    fontSize: 12,
+    lineHeight: 1.15,
+    theme: THEME,
+    cursorBlink: true,
+    scrollback: 5000,
+  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  const t = { id, ptyId: null, term, fit, cwd: '', alive: true, opening: false, host, tab, dead };
+  term.open(host);
+  term.onData((d) => {
+    if (!t.ptyId) return;
+    inv('pty_write', { id: t.ptyId, b64: b64FromBytes(enc.encode(d)) })
+      .catch((err) => showMsg('falha ao escrever no terminal: ' + (err && err.message ? err.message : err)));
+  });
+  term.onResize(({ cols, rows }) => {
+    if (!t.ptyId) return;
+    inv('pty_resize', { id: t.ptyId, cols, rows }).catch(() => { /* resize é best-effort */ });
+  });
+
+  tab.onclick = () => activate(t.id);
+  x.onclick = (e) => { e.stopPropagation(); void closeTab(t); };
+
+  terms.push(t);
+  return t;
+}
+
+async function newTab() {
+  const t = addTab();
+  if (!t) return;
+  activate(t.id);
+  // espera o layout da aba para o pty_open já sair com cols/rows certos
+  await new Promise((r) => requestAnimationFrame(r));
+  fitTerm(t);
+  await openPty(t);
+  t.term.focus();
+}
+
+async function closeTab(t) {
+  const wasActive = t.id === activeId;
+  await closePty(t);
+  try { t.term.dispose(); } catch { /* já descartado */ }
+  t.host.remove();
+  t.tab.remove();
+  terms = terms.filter((x) => x !== t);
+  if (!terms.length) { closeTerminal(); return; } // última aba: não há PTY a preservar
+  if (wasActive) activate(terms[terms.length - 1].id);
+}
+
 async function restart() {
-  const id = ptyId;
-  ptyId = null;
-  if (id) { try { await inv('pty_close', { id }); } catch { /* já morreu */ } }
-  if (term) term.reset();
-  setHeight(currentHeight(), false);
-  fitNow();
-  await openPty();
-  if (term) term.focus();
+  const t = activeTerm();
+  if (!t) return;
+  await closePty(t);
+  t.alive = true;
+  t.tab.classList.remove('dead');
+  t.dead.classList.add('hidden');
+  t.term.reset();
+  fitTerm(t);
+  await openPty(t);
+  t.term.focus();
 }
 
 export async function openTerminal() {
@@ -212,15 +299,18 @@ export async function openTerminal() {
   d.classList.remove('hidden');
   store('term-open', '1');
   syncButton();
-  if (!term) createTerm();
-  // espera o layout do dock: o pty_open já precisa de cols/rows ajustados
-  await new Promise((r) => requestAnimationFrame(r));
-  setHeight(currentHeight(), false);
-  fitNow();
   // listeners antes do pty_open: o prompt inicial pode sair antes de recebermos o id
   await ensureListeners();
-  if (!ptyId) await openPty();
-  if (term) term.focus();
+  setHeight(currentHeight(), false);
+  if (!terms.length) addTab();
+  const id = activeId && terms.some((t) => t.id === activeId) ? activeId : terms[0].id;
+  activate(id);
+  await new Promise((r) => requestAnimationFrame(r));
+  const t = activeTerm();
+  fitTerm(t);
+  // aba morta (processo terminou) mantém o output: só reinicia se o usuário pedir
+  if (t && !t.ptyId && t.alive) await openPty(t);
+  if (t) t.term.focus();
 }
 
 export function closeTerminal() {
@@ -229,7 +319,6 @@ export function closeTerminal() {
   d.classList.add('hidden');
   store('term-open', '0');
   syncButton();
-  teardownPty();
 }
 
 export function toggleTerminal() {
@@ -247,6 +336,7 @@ export function initTerminal(opts = {}) {
 
   setHeight(readStore('term-height') || DEFAULT_HEIGHT, false);
   renderCwd();
+  void ensureListeners();
 
   const grip = $('termgrip');
   if (grip) {
@@ -255,11 +345,11 @@ export function initTerminal(opts = {}) {
       const startY = e.clientY;
       const startH = d.getBoundingClientRect().height;
       grip.setPointerCapture(e.pointerId);
-      const move = (ev) => { setHeight(startH + (startY - ev.clientY), false); fitAndResize(); };
+      const move = (ev) => { setHeight(startH + (startY - ev.clientY), false); fitActiveSoon(); };
       const up = () => {
         grip.removeEventListener('pointermove', move);
         setHeight(d.getBoundingClientRect().height, true);
-        fitAndResize();
+        fitActiveSoon();
       };
       grip.addEventListener('pointermove', move);
       grip.addEventListener('pointerup', up, { once: true });
@@ -268,10 +358,12 @@ export function initTerminal(opts = {}) {
 
   const btn = $('termbtn');
   if (btn) btn.onclick = () => toggleTerminal();
+  const plus = $('termnew');
+  if (plus) plus.onclick = () => void newTab();
+  const rs = $('termrestart');
+  if (rs) rs.onclick = () => void restart();
   const close = $('termclose');
   if (close) close.onclick = () => closeTerminal();
-  const rs = $('termrestart');
-  if (rs) rs.onclick = () => restart();
 
   // capture: o xterm escuta no textarea dele e não deve receber o Ctrl+`
   document.addEventListener('keydown', (e) => {
@@ -283,11 +375,14 @@ export function initTerminal(opts = {}) {
   }, true);
 
   window.addEventListener('resize', () => {
-    if (d.classList.contains('hidden')) setHeight(currentHeight(), false); // re-clampa se a janela encolheu
-    else fitAndResize();
+    setHeight(currentHeight(), false); // re-clampa se a janela encolheu
+    if (!d.classList.contains('hidden')) fitActiveSoon();
   });
-  window.addEventListener('pagehide', () => { teardownPty(); });
+  window.addEventListener('pagehide', () => {
+    for (const t of terms) void closePty(t);
+    dropListeners();
+  });
 
   syncButton();
-  if (readStore('term-open') === '1') openTerminal();
+  if (readStore('term-open') === '1') void openTerminal();
 }
