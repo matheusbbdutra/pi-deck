@@ -42,6 +42,11 @@ jobs:
       - name: Testes
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Testes da UI
+        run: |
+          npm ci
+          npm test
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest

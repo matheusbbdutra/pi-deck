@@ -2641,7 +2641,7 @@ listen('rpc-line', (ev) => {
       if (d.type === 'thinking_delta') { setTurn(sessionId, true, 'pensando…'); bgThink(t).textContent += d.delta; }
       else if (d.type === 'text_delta') {
         setTurn(sessionId, true, 'respondendo…');
-        t.streamText = (t.streamText + d.delta).slice(-STREAM_CAP);
+        t.streamText = ((t.streamText || '') + d.delta).slice(-STREAM_CAP);
         maybeSaveTabs();
       }
       return;
