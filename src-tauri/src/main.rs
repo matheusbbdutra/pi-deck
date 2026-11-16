@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod git;
+mod plans;
 mod pty;
 mod rpc;
 mod sessions;
@@ -64,7 +65,8 @@ fn main() {
             git::git_stash,
             git::git_stash_pop,
             git::git_pull,
-            git::git_push
+            git::git_push,
+            plans::plans_list
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

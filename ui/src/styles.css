@@ -440,6 +440,13 @@
   .diff-del { background:#2a1519; color:#e2a0a8; }
   .diff-hunk { color:#6f7c99; padding-top:4px; }
   .diff-meta { color:#6f7c99; }
+  /* vista split: pares del/add em duas colunas; `pad` é o lado sem linha */
+  .diff-view-bar { display:flex; justify-content:flex-end; padding:2px 8px 4px; }
+  .diff-view-bar button.ghost { padding:1px 7px; font-size:10.5px; }
+  .diff-split { display:grid; grid-template-columns:1fr 1fr; gap:0; }
+  .diff-split .diff-split-wide { grid-column:1 / -1; }
+  .diff-split .diff-left { border-right:1px solid var(--line); }
+  .diff-split .diff-pad { background:var(--card); }
   /* tokens do highlight (Prism em spans; sem fundo próprio — quem pinta é o diff) */
   .token.comment { color:color-mix(in srgb, var(--mute) 60%, var(--dim)); font-style:italic; }
   .token.string { color:var(--ok); }

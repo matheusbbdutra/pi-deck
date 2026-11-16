@@ -5,6 +5,7 @@ import { $, el, stripAnsi, clear, setEmpty, scrollBottom, updateScrollBtn, uiSet
 import { setMarkdown, mdRow, copyText, extActivity } from './markdown.js';
 import { card, thinkBlock, applyToolResult, setDiffRenderer } from './tool-cards.js';
 import { appendHighlighted, langFor } from './highlight.js';
+import { diffView, setDiffView, splitHunk } from './diffview.js';
 import { initTerminal, reconcileTerminal } from './terminal.js';
 
 let current = null;
@@ -1024,9 +1025,22 @@ function openDiffs(g) {
 const hasDiffPrefix = (cls, line) =>
   cls === 'diff-add' || cls === 'diff-del' || (cls === 'diff-ctx' && line[0] === ' ');
 
+/* =============== vista do diff (unificada/split) =============== */
+
+/** Re-renderiza todo diff vivo ao alternar a vista: painel de edições, git diff
+    e cards de `edit`/`write` compartilham `.diff-body` + `node.diffArgs`. */
+function refreshDiffs() {
+  for (const node of document.querySelectorAll('.diff-body')) {
+    const args = node.diffArgs;
+    if (args) renderPatch(node, args.patch, args.file, args.langPath);
+  }
+}
+
 function renderPatch(node, patch, file, langPath) {
   const text = String(patch || '');
   const lines = text.split('\n');
+  clear(node);
+  node.diffArgs = { patch, file, langPath };
   if (!text.trim()) {
     node.appendChild(el('div', 'diff-line diff-meta', 'sem diff (arquivo novo ou conteúdo não registrado)'));
     return;
@@ -1034,6 +1048,18 @@ function renderPatch(node, patch, file, langPath) {
   const lang = langFor(langPath || file);
   const MAX = 1200;
   const truncated = text.includes('\u2026 patch truncado');
+  const split = diffView() === 'split';
+  const bar = el('div', 'diff-view-bar');
+  const toggle = el('button', 'ghost', split ? 'vista unificada' : 'vista dividida');
+  toggle.title = split ? 'mostrar em uma coluna' : 'mostrar lado a lado';
+  toggle.onclick = () => {
+    setDiffView(split ? 'unified' : 'split');
+    refreshDiffs();
+  };
+  bar.appendChild(toggle);
+  node.appendChild(bar);
+  const host = split ? el('div', 'diff-split') : node;
+  if (split) node.appendChild(host);
   // Separa o cabeçalho (---/+++) dos hunks (@@): um botão "desfazer" por hunk.
   // Patch sintético do `write` (só +) e patch truncado não ganham botão —
   // o backend recusaria mesmo, com erro legível.
@@ -1048,14 +1074,14 @@ function renderPatch(node, patch, file, langPath) {
     else cur.head.push(line);
   }
   groups.push(cur);
-  const paint = (line) => {
+  const paint = (hostNode, line, wide) => {
     let cls = 'diff-ctx';
     if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
     else if (line.startsWith('@@')) cls = 'diff-hunk';
     else if (line.startsWith('+')) cls = 'diff-add';
     else if (line.startsWith('-')) cls = 'diff-del';
-    const row = el('div', 'diff-line ' + cls);
-    if (!line.length) { row.textContent = ' '; node.appendChild(row); return; }
+    const row = el('div', 'diff-line ' + cls + (wide ? ' diff-split-wide' : ''));
+    if (!line.length) { row.textContent = ' '; hostNode.appendChild(row); return; }
     // Só add/del/ctx têm a coluna do prefixo; cabeçalho/hunk ficam texto puro.
     if (hasDiffPrefix(cls, line)) {
       row.appendChild(document.createTextNode(line[0]));
@@ -1063,10 +1089,23 @@ function renderPatch(node, patch, file, langPath) {
     } else {
       row.appendChild(document.createTextNode(line));
     }
-    node.appendChild(row);
+    hostNode.appendChild(row);
+  };
+  // Célula da vista split: mesma pintura/prefixo do unified, lado pela classe.
+  const paintCell = (cell, side) => {
+    const cls = cell.kind === 'pad' ? 'diff-pad' : 'diff-' + cell.kind;
+    const row = el('div', 'diff-line ' + cls + ' diff-' + side);
+    if (!cell.text.length) { row.textContent = ' '; host.appendChild(row); return; }
+    if (hasDiffPrefix(cls, cell.text)) {
+      row.appendChild(document.createTextNode(cell.text[0]));
+      appendHighlighted(row, cell.text.slice(1), lang);
+    } else {
+      row.appendChild(document.createTextNode(cell.text));
+    }
+    host.appendChild(row);
   };
   for (const g of groups) {
-    for (const line of g.head) paint(line);
+    for (const line of g.head) paint(host, line, split);
     if (!g.hunk) continue;
     const undoable = !truncated && file
       && g.hunk.some((l) => l.startsWith('-') && !l.startsWith('---'));
@@ -1074,6 +1113,7 @@ function renderPatch(node, patch, file, langPath) {
       const hunkText = g.hunk.join('\n');
       const btn = el('button', 'tiny', 'desfazer hunk');
       btn.style.cssText = 'margin:2px 0 6px;';
+      if (split) btn.classList.add('diff-split-wide');
       btn.onclick = async () => {
         if (!confirm('Desfazer este hunk em ' + file + '?')) return;
         btn.disabled = true;
@@ -1083,9 +1123,16 @@ function renderPatch(node, patch, file, langPath) {
           loadEdits();
         } catch (e) { note('reverter: ' + e); btn.disabled = false; }
       };
-      node.appendChild(btn);
+      host.appendChild(btn);
     }
-    for (const line of g.hunk) paint(line);
+    if (split) {
+      for (const pair of splitHunk(g.hunk)) {
+        if (pair.hunk !== undefined) paint(host, pair.hunk, true);
+        else { paintCell(pair.left, 'left'); paintCell(pair.right, 'right'); }
+      }
+    } else {
+      for (const line of g.hunk) paint(host, line, false);
+    }
   }
   if (lines.length > MAX) {
     node.appendChild(el('div', 'diff-line diff-meta', '… ' + (lines.length - MAX) + ' linha(s) omitida(s)'));
