@@ -74,6 +74,7 @@
     <div class="es-keys">
       <span><kbd>Enter</kbd> enviar · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> nova linha</span>
       <span><kbd>Ctrl</kbd>+<kbd>B</kbd> painel</span>
+      <span><kbd>Ctrl</kbd>+<kbd>`</kbd> terminal</span>
       <span><kbd>Esc</kbd> fechar o seletor</span>
     </div>
   </div>
@@ -83,6 +84,18 @@
     <span id="typinglabel" class="tlabel">pensando…</span>
   </div>
   <div id="imgview" class="img-view hidden"><img id="imgviewimg" alt="" /></div>
+  <div id="termdock" class="term-dock hidden">
+    <div id="termgrip" class="term-grip" title="arraste para redimensionar"></div>
+    <div class="term-head">
+      <span class="term-mark">&gt;_</span>
+      <span id="termcwd" class="term-cwd">&mdash;</span>
+      <span id="termmsg" class="term-msg"></span>
+      <span class="spacer"></span>
+      <button id="termrestart" class="ghost small" title="Fecha o processo atual e abre um shell novo no diretório da sessão">reiniciar</button>
+      <button id="termclose" class="tiny" title="Fechar o terminal (Ctrl+`)">&times;</button>
+    </div>
+    <div id="termhost" class="term-host"></div>
+  </div>
   <div class="composer">
     <div id="palette" class="palette hidden">
       <div id="cmdkbar" class="cmdk-bar hidden"><input id="cmdkinput" class="model-search" placeholder="comando, /model …  ·  Esc fecha" autocomplete="off" /></div>
@@ -99,6 +112,7 @@
           <span class="chev">⌄</span>
         </button>
         <button id="thinkbtn" class="chip-btn" title="Thinking">thinking</button>
+        <button id="termbtn" class="chip-btn" title="Terminal (Ctrl+`)">&gt;_</button>
         <span class="spacer"></span>
         <button id="ctxbtn" class="chip-btn" title="Contexto">—</button>
         <button id="compactnow" class="chip-btn" title="Compactar agora (resume o histórico)">⤓</button>

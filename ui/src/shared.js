@@ -12,6 +12,21 @@ export function el(tag, cls, text) {
   if (text !== undefined) n.textContent = text;
   return n;
 }
+/* PTY: o backend trafega bytes em base64; o xterm escreve Uint8Array. */
+export function b64FromBytes(bytes) {
+  let bin = '';
+  // fatiado: String.fromCharCode.apply estoura a pilha em blocos grandes de saída do shell
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+export function bytesFromB64(b64) {
+  const bin = atob(String(b64 == null ? '' : b64));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 /* pi manda ANSI em setStatus/notify (cores de terminal); o log é texto puro. */
 export const stripAnsi = (s) => String(s == null ? '' : s).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 export function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }

@@ -5,6 +5,7 @@ import { $, el, stripAnsi, clear, setEmpty, scrollBottom, updateScrollBtn, uiSet
 import { setMarkdown, mdRow, copyText, extActivity } from './markdown.js';
 import { card, thinkBlock, outputText } from './tool-cards.js';
 import { appendHighlighted, langFor } from './highlight.js';
+import { initTerminal } from './terminal.js';
 
 let current = null;
 let seq = 0;
@@ -3961,6 +3962,8 @@ applySubsVisibility((() => { try { return localStorage.getItem('subs-hidden') ==
 $('panelsubs').onclick = () => { if (current && current.childrenDir) loadChildren(current.childrenDir); };
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
 initSplit();
+// Dock do terminal: cwd/home vêm da sessão ativa (o PTY não segue trocas de sessão sozinho)
+initTerminal({ getCwd: () => (current && current.cwd) || '', getHome: () => homeDir || '' });
 setEmptyState(true, 'nosession');
 
 loadSettings();
