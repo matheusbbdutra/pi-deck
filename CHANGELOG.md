@@ -3,19 +3,35 @@
 All notable changes to sightdeck. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [SemVer](https://semver.org/).
 
-## [0.1.18] — 2026-11-16
+## [0.2.0] — 2026-11-16
+
+### Renamed
+- **pi-deck → sightdeck.** Repositório, `productName`, binário, pacote `.deb`, identifier do Tauri (`dev.matheus.sightdeck`) e a URL do verificador de atualização. A variável `PI_DECK_PI_BIN` continua aceita como fallback de `SIGHTDECK_PI_BIN`.
+
+  > **Migração:** o nome do pacote `.deb` mudou, então a 0.1.x **não** atualiza sozinha — instale `sightdeck_0.2.0_amd64.deb` e remova `pi-deck`. O `localStorage` do webview é por identifier, então abas/ajustes/zoom da 0.1.x não são herdados.
 
 ### Added
-- **Aba Git (somente leitura)**: branch, `↑ahead ↓behind`, arquivos alterados com `+add`/`−del` e status por linha, atualizada ao abrir a aba. Clicar num arquivo abre o diff — patch da própria sessão (com **desfazer hunk**) quando o arquivo foi editado por ela, senão `git_file_diff` (`git diff HEAD`, `--no-index` para untracked) em modo leitura. Backend sem shell (`std::process::Command`) e com timeout de 10 s; parsers de porcelain v2 com testes, incluindo um ponta a ponta em repo real.
+- **Aba Git**: leitura (branch, `↑ahead ↓behind`, arquivos com `+add`/`−del`; clique abre o diff — patch da sessão com **desfazer hunk** quando o agente editou, `git diff HEAD` caso contrário) e escrita (staging como intenção, commit/amend, discard, stash/pop, `pull --ff-only`, push e `--force-with-lease` atrás de toggle explícito).
+- **Terminal embutido**: PTY real (`portable-pty`) + xterm em dock inferior com abas, redimensionável, `TERM=xterm-256color` forçado para `zle`/`readline` repintarem certo.
+- **Aba Plano**: progresso somente-leitura de `plans/`, `docs/plans/`, `specs/`, `docs/spec/`, `docs/*.plan.md` e `PLAN.md`/`TASKS.md`/`TODO.md`/`SPEC.md` na raiz — `done/total`, passo atual e barra.
+- **Tema por JSON** com tokens CSS semânticos e validação leniente (chave/valor inválido é ignorado, nunca deixa a UI sem cor).
+- **Syntax highlight** no diff e nos blocos de código (Prism via `tokenize`, DOM puro).
+- **Diff split/unified** com preferência persistida, mantendo o desfazer hunk nos dois modos.
+- **Registry de renderer por tool card** (`edit`/`write` → diff, `bash` → comando+saída, `read`/`grep`/`find` → sumário).
+- **Controles**: zoom (`Ctrl+=/-/0`), stop do turno (`■`/`Esc`), retry de envio após stdin morto, vigia de turno fantasma, resize de colunas com `Ctrl`+arrastar, composer com `Ctrl`+roda e chip de saúde para avisos de LSP/MCP.
+- **Thinking por aba**: o raciocínio de uma aba em segundo plano deixa de se perder ao trocar de aba.
 
 ### Changed
-- **Painel direito enxuto**: duas abas (`Git` e `Subagents`); a antiga aba Arquivos foi absorvida pelo Git e **Missões** e **Diagnóstico** saíram do painel para um overlay `Debug` no ⚙.
-- **UI deixa de ser single-file**: `ui/index.html` caiu de 4824 para 249 linhas — CSS em `ui/src/styles.css` e JS em `ui/src/main.js`, extração byte-idêntica (conferida por `diff` contra as faixas do arquivo original), com build Vite (`frontendDist` agora `../ui/dist`, `beforeBuildCommand`/`beforeDevCommand`).
-- **Módulos puros**: `ui/src/rpc.js`, `ui/src/shared.js`, `ui/src/markdown.js` e `ui/src/tool-cards.js` saem do arquivo principal sem alteração de corpo.
+- **Painel direito em split fixo** (Subagents no topo, Git no rodapé); a antiga aba Arquivos foi absorvida pelo Git e **Missões**/**Diagnóstico** viraram o overlay `Debug` no ⚙.
+- **UI deixa de ser single-file**: `ui/index.html` caiu de 4824 para 249 linhas — CSS em `ui/src/styles.css` e JS modular em `ui/src/`, com build Vite (`frontendDist: ../ui/dist`).
+- **117 cores** frequentes do CSS viraram 33 tokens nomeados, com prova de equivalência.
 
 ### Fixed
-- **Painel de subagents em sessão sem children**: exibia `<stem>: Arquivo ou diretório inexistente (os error 2)` em vez de "nenhum subagent"; `list_children_in` passou a checar a existência do diretório antes do `canonicalize` (regressão coberta por `list_children_missing_dir_is_empty`).
+- **Painel de subagents em sessão sem children**: exibia `<stem>: Arquivo ou diretório inexistente (os error 2)` em vez de "nenhum subagent"; `list_children_in` passou a checar a existência do diretório antes do `canonicalize`.
+- **Linha local no transcript**: mensagem antiga reaparecia no fim e não morria quando cancelada — agora volta em ordem cronológica e não ressuscita.
 - **Login de provider**: usa o `pi` já resolvido (com quoting por SO) em vez de depender do PATH do terminal — absorve o PR #1 e acrescenta compatibilidade com `cmd.exe` no Windows.
+- **Zoom não sobrepõe mais o painel na sidebar**: colunas laterais viraram relativas com piso em vez de largura fixa.
+- **Slot de filho morto** no `rpc.rs`: libera a sessão no EOF do stdout e em falha de escrita no stdin.
 
 ## [0.1.17] — 2026-11-16
 
