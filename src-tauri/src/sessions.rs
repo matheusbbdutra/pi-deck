@@ -25,7 +25,16 @@ fn bin_suffix(windows: bool) -> &'static str {
 /// Aberto pelo lançador gráfico o app não herda o PATH do shell (os error 2),
 /// então procura nos diretórios de instalação antes de cair no PATH.
 pub fn pi_bin() -> PathBuf {
-    let env_val = std::env::var("PI_DECK_PI_BIN").ok();
+    // `SIGHTDECK_PI_BIN` é o nome atual; `PI_DECK_PI_BIN` continua aceito para
+    // não quebrar quem já tinha script apontando para o binário.
+    let env_val = std::env::var("SIGHTDECK_PI_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("PI_DECK_PI_BIN")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
     let home = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"));
     resolve_pi_bin(env_val.as_deref(), home.as_deref(), Path::is_file)
 }
@@ -90,12 +99,12 @@ fn contained_in(path: &Path, root: &Path) -> Result<PathBuf, String> {
 }
 
 /// Extensão gerada pelo app: registra hooks e escreve uma linha por invocação.
-const HOOK_EXTENSION: &str = r#"// pi-deck hook logger — gerado pelo pi-deck. Desligue em Ajustes → Instrumentar hooks.
+const HOOK_EXTENSION: &str = r#"// sightdeck hook logger — gerado pelo sightdeck. Desligue em Ajustes → Instrumentar hooks.
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const dir = join(homedir(), ".pi", "agent", "pi-deck");
+const dir = join(homedir(), ".pi", "agent", "sightdeck");
 const file = join(dir, "hooks.log");
 
 function log(hook, extra) {
@@ -432,7 +441,7 @@ pub fn paste_image() -> Result<(String, String), String> {
 
     #[cfg(target_os = "windows")]
     let raw = {
-        let tmp = std::env::temp_dir().join("pi-deck-paste.png");
+        let tmp = std::env::temp_dir().join("sightdeck-paste.png");
         let script = format!(
             "Add-Type -AssemblyName System.Windows.Forms; $i=[Windows.Forms.Clipboard]::GetImage(); if($i){{$i.Save('{}')}}",
             tmp.display()
@@ -915,7 +924,7 @@ pub fn pi_update(scope: String) -> Result<String, String> {
     Ok(format!("exit {code}\n{}", text.trim()))
 }
 
-/// `pi` filhos marcados com PI_DECK_CHILD cujo pai morreu (ppid 1) — limpa órfãos de crash.
+/// `pi` filhos marcados com SIGHTDECK_CHILD cujo pai morreu (ppid 1) — limpa órfãos de crash.
 #[tauri::command]
 pub fn kill_orphans() -> Result<usize, String> {
     let entries = fs::read_dir("/proc").map_err(|e| e.to_string())?;
@@ -930,7 +939,7 @@ pub fn kill_orphans() -> Result<usize, String> {
         let Ok(environ) = fs::read(format!("{base}/environ")) else {
             continue;
         };
-        if !String::from_utf8_lossy(&environ).contains("PI_DECK_CHILD=1") {
+        if !String::from_utf8_lossy(&environ).contains("SIGHTDECK_CHILD=1") {
             continue;
         }
 
@@ -1030,8 +1039,8 @@ pub fn session_model(path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn hooks_status() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/pi-deck-hooks.js"));
-    let log = std::path::PathBuf::from(format!("{home}/.pi/agent/pi-deck/hooks.log"));
+    let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/sightdeck-hooks.js"));
+    let log = std::path::PathBuf::from(format!("{home}/.pi/agent/sightdeck/hooks.log"));
     Ok(format!(
         "{{\"installed\":{},\"extension\":\"{}\",\"log\":\"{}\"}}",
         ext.is_file(),
@@ -1040,13 +1049,13 @@ pub fn hooks_status() -> Result<String, String> {
     ))
 }
 
-/// Instala a extensão que registra hooks em `~/.pi/agent/pi-deck/hooks.log`.
+/// Instala a extensão que registra hooks em `~/.pi/agent/sightdeck/hooks.log`.
 #[tauri::command]
 pub fn hooks_install() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let dir = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions"));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let ext = dir.join("pi-deck-hooks.js");
+    let ext = dir.join("sightdeck-hooks.js");
     fs::write(&ext, HOOK_EXTENSION).map_err(|e| format!("escrever {}: {e}", ext.display()))?;
     Ok(format!("instalado em {}", ext.display()))
 }
@@ -1054,7 +1063,7 @@ pub fn hooks_install() -> Result<String, String> {
 #[tauri::command]
 pub fn hooks_remove() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/pi-deck-hooks.js"));
+    let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/sightdeck-hooks.js"));
     if ext.is_file() {
         fs::remove_file(&ext).map_err(|e| e.to_string())?;
         return Ok("removido".to_string());
@@ -1066,7 +1075,7 @@ pub fn hooks_remove() -> Result<String, String> {
 #[tauri::command]
 pub fn hooks_tail(lines: Option<usize>) -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-    let path = format!("{home}/.pi/agent/pi-deck/hooks.log");
+    let path = format!("{home}/.pi/agent/sightdeck/hooks.log");
     let Ok(raw) = fs::read_to_string(&path) else {
         return Ok(String::new());
     };
@@ -1435,7 +1444,7 @@ fn read_session_messages_in(
 }
 
 /// "Exclui" uma sessão movendo o `.jsonl` e o diretório de children para
-/// `<projeto>/.pi-deck-trash/<stem>/`. Nunca apaga de verdade.
+/// `<projeto>/.sightdeck-trash/<stem>/`. Nunca apaga de verdade.
 #[tauri::command]
 pub fn delete_session(file: String) -> Result<String, String> {
     let root = sessions_root()?;
@@ -1447,7 +1456,7 @@ fn delete_session_in(file: &Path, root: &Path) -> Result<String, String> {
     if !file.is_file() {
         return Err(format!("sessão não encontrada: {}", file.display()));
     }
-    // Sem isso, um path vindo do webview move qualquer arquivo para .pi-deck-trash.
+    // Sem isso, um path vindo do webview move qualquer arquivo para .sightdeck-trash.
     let src = contained_in(file, root)?;
 
     let stem = src
@@ -1455,7 +1464,7 @@ fn delete_session_in(file: &Path, root: &Path) -> Result<String, String> {
         .map(|s| s.to_string_lossy().to_string())
         .ok_or("arquivo sem nome")?;
     let dir = src.parent().ok_or("sem diretório")?.to_path_buf();
-    let trash = dir.join(".pi-deck-trash").join(&stem);
+    let trash = dir.join(".sightdeck-trash").join(&stem);
     fs::create_dir_all(&trash).map_err(|e| format!("criar lixeira: {e}"))?;
 
     let file_name = src.file_name().ok_or("arquivo sem nome")?.to_owned();
@@ -2112,7 +2121,7 @@ mod tests {
     impl Tmp {
         fn new(tag: &str) -> Self {
             let n = SEQ.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!("pideck-{}-{tag}-{n}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("sightdeck-{}-{tag}-{n}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).expect("criar tmpdir");
             Tmp(dir)
@@ -2654,11 +2663,11 @@ mod tests {
             "children deveriam ter saído"
         );
         assert!(
-            t.at("sessions/proj/.pi-deck-trash/s/s.jsonl").exists(),
+            t.at("sessions/proj/.sightdeck-trash/s/s.jsonl").exists(),
             "jsonl deveria estar na lixeira"
         );
         assert!(
-            t.at("sessions/proj/.pi-deck-trash/s/s/child1/run-1/session.jsonl")
+            t.at("sessions/proj/.sightdeck-trash/s/s/child1/run-1/session.jsonl")
                 .exists(),
             "children deveriam estar na lixeira"
         );
@@ -2675,7 +2684,7 @@ mod tests {
         assert!(err.contains("fora do diretório permitido"), "{err}");
         assert!(victim.exists(), "arquivo fora do root não pode ser movido");
         assert!(
-            !t.at(".pi-deck-trash").exists(),
+            !t.at(".sightdeck-trash").exists(),
             "nada pode ser criado fora do root"
         );
     }

@@ -338,7 +338,7 @@ pub fn git_discard(cwd: String, paths: Vec<String>) -> Result<String, String> {
     git_rw_ok(&cwd, &args)
 }
 
-/// Stash com untracked incluso e mensagem carimbada (`pi-deck: <epoch>`), para o
+/// Stash com untracked incluso e mensagem carimbada (`sightdeck: <epoch>`), para o
 /// usuário reconhecer de onde veio a entrada na lista de stashes.
 #[tauri::command]
 pub fn git_stash(cwd: String) -> Result<String, String> {
@@ -347,7 +347,7 @@ pub fn git_stash(cwd: String) -> Result<String, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let msg = format!("pi-deck: {stamp}");
+    let msg = format!("sightdeck: {stamp}");
     git_rw_ok(
         &cwd,
         &["stash", "push", "--include-untracked", "-m", msg.as_str()],
@@ -709,13 +709,13 @@ mod tests {
     /// Repo descartável com identidade e sem assinatura de commit (o config global
     /// do usuário pode ter `commit.gpgsign` e derrubar o teste sem motivo).
     fn temp_repo(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pi-deck-rw-{}-{tag}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightdeck-rw-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         git_setup(&dir, &["init", "-q"]);
         for (k, v) in [
-            ("user.name", "pi-deck teste"),
-            ("user.email", "teste@pi-deck.local"),
+            ("user.name", "sightdeck teste"),
+            ("user.email", "teste@sightdeck.local"),
             ("commit.gpgsign", "false"),
         ] {
             git_setup(&dir, &["config", k, v]);
@@ -816,7 +816,7 @@ mod tests {
         let untracked_back = dir.join("novo.txt").exists();
         let _ = std::fs::remove_dir_all(&dir);
 
-        assert!(stashed.contains("pi-deck: "), "mensagem carimbada: {stashed:?}");
+        assert!(stashed.contains("sightdeck: "), "mensagem carimbada: {stashed:?}");
         assert!(after_stash.trim().is_empty(), "worktree deveria ficar limpo: {after_stash:?}");
         assert!(hidden, "`--include-untracked` leva o untracked junto");
         assert!(!popped.trim().is_empty(), "pop sem saída: {popped:?}");
@@ -843,7 +843,7 @@ mod tests {
     /// Se falhar aqui, o problema não é o `cwd` que a UI manda.
     #[test]
     fn git_status_le_repo_real_com_untracked() {
-        let dir = std::env::temp_dir().join(format!("pi-deck-git-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightdeck-git-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let ok = Command::new("git")

@@ -1,15 +1,15 @@
 <div align="center">
 
-<img src="docs/icon.png" width="112" alt="pi-deck">
+<img src="docs/icon.png" width="112" alt="sightdeck">
 
-# pi-deck
+# sightdeck
 
 **Desktop client for the [pi coding agent](https://github.com/earendil-works/pi)**
 Sessions grouped by project, live subagent runs, and a transcript that reads like documentation.
 
-[![Release](https://img.shields.io/github/v/release/matheusbbdutra/pi-deck?label=release&color=7aa2f7)](https://github.com/matheusbbdutra/pi-deck/releases/latest)
-[![License](https://img.shields.io/github/license/matheusbbdutra/pi-deck?color=7ee787)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20windows-8a93a8)](https://github.com/matheusbbdutra/pi-deck/releases/latest)
+[![Release](https://img.shields.io/github/v/release/matheusbbdutra/sightdeck?label=release&color=7aa2f7)](https://github.com/matheusbbdutra/sightdeck/releases/latest)
+[![License](https://img.shields.io/github/license/matheusbbdutra/sightdeck?color=7ee787)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20windows-8a93a8)](https://github.com/matheusbbdutra/sightdeck/releases/latest)
 
 [Install](#install) · [Features](#features) · [Shortcuts](#shortcuts) · [How it works](#how-it-works) · [Development](#development)
 
@@ -17,22 +17,22 @@ Sessions grouped by project, live subagent runs, and a transcript that reads lik
 
 ---
 
-pi-deck is a window for the `pi` you already have. It does not ship an agent, a server or a
+sightdeck is a window for the `pi` you already have. It does not ship an agent, a server or a
 copy of pi: it spawns your `pi` over the RPC/JSONL protocol (`pi --mode rpc`) and renders
 `~/.pi/agent` as a desktop application — Tauri 2 with the system webview (WebKitGTK,
 WebView2, WKWebView), no Electron.
 
 ## Install
 
-Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/releases/latest):
+Download from the [latest release](https://github.com/matheusbbdutra/sightdeck/releases/latest):
 
 | System | File | Install |
 |---|---|---|
-| Debian / Ubuntu | `pi-deck_<version>_amd64.deb` | `sudo dpkg -i pi-deck_*.deb` |
-| Fedora / RHEL | `pi-deck-<version>-1.x86_64.rpm` | `sudo rpm -i pi-deck-*.rpm` |
-| Any Linux | `pi-deck_<version>_amd64.AppImage` | `chmod +x pi-deck_*.AppImage && ./pi-deck_*.AppImage` |
-| Windows | `pi-deck_<version>_x64-setup.exe` | run the installer |
-| Windows (MSI) | `pi-deck_<version>_x64_en-US.msi` | `msiexec /i pi-deck_*.msi` |
+| Debian / Ubuntu | `sightdeck_<version>_amd64.deb` | `sudo dpkg -i sightdeck_*.deb` |
+| Fedora / RHEL | `sightdeck-<version>-1.x86_64.rpm` | `sudo rpm -i sightdeck-*.rpm` |
+| Any Linux | `sightdeck_<version>_amd64.AppImage` | `chmod +x sightdeck_*.AppImage && ./sightdeck_*.AppImage` |
+| Windows | `sightdeck_<version>_x64-setup.exe` | run the installer |
+| Windows (MSI) | `sightdeck_<version>_x64_en-US.msi` | `msiexec /i sightdeck_*.msi` |
 
 > **macOS is not supported.** There is no way to validate it here (no macOS host or VM), and
 > shipping an untested `.dmg` would be a promise we can't keep.
@@ -68,6 +68,19 @@ Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/rel
   its transcript.
 - Banner when `pi-subagents` didn't load, instead of a silently empty panel.
 
+**Git, terminal and plans** (right panel is a fixed split: Subagents on top, Git at the bottom)
+- **Git**: branch, ahead/behind, changed files with `+add`/`−del` and per-file status; clicking a
+  file opens its diff (session patch with *undo hunk* when the agent edited it, `git diff HEAD`
+  otherwise). Write actions: stage-as-intent, commit/amend, discard, stash/pop, `pull --ff-only`,
+  push (and `--force-with-lease` behind an explicit toggle). Status refreshes every 5 s and after
+  every action.
+- **Terminal**: real PTY (`portable-pty` + xterm.js) docked at the bottom, tabs, resizable,
+  `TERM=xterm-256color` forced so `zle`/`readline` redraw correctly.
+- **Plans**: read-only progress for `plans/`, `docs/plans/`, `specs/`, `docs/spec/`, `docs/*.plan.md`
+  and root `PLAN.md`/`TASKS.md`/`TODO.md`/`SPEC.md` — `done/total`, current step and a progress bar.
+- **Theme**: token-based CSS (`--bg-0..4`, `--ink-0..6`, …) with a JSON theme applied through
+  `style.setProperty`; invalid keys/values are ignored instead of breaking the UI.
+
 **Model, thinking, context**
 - Model picker with search, grouped by provider, showing context size; instant on boot from
   `pi --list-models`, refined by RPC.
@@ -102,13 +115,18 @@ Download from the [latest release](https://github.com/matheusbbdutra/pi-deck/rel
 | Key | Action |
 |---|---|
 | `Ctrl+Enter` | send message |
-| `Ctrl+B` | show/hide the subagents panel |
-| `Esc` | close the model picker |
+| `Esc` | interrupt the running turn (also closes pickers/overlays first) |
+| `Ctrl+B` | show/hide the right panel |
+| `Ctrl+\`` | show/hide the embedded terminal |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | zoom in / out / reset (0.6–2.0) |
+| `Ctrl+drag` | resize the sidebar or the right panel border |
+| `Ctrl+wheel` (over the composer) | widen/narrow the composer |
+| `Ctrl+K` | command palette |
 
 ## How it works
 
 ```
-pi-deck (Rust + WebView)                 your pi
+sightdeck (Rust + WebView)                 your pi
 ├─ reads ~/.pi/agent/sessions            ├─ pi --mode rpc (1 process per active session)
 ├─ reads <session>/<childId>/run-N/      ├─ get_messages / get_state / get_available_models
 ├─ reads ~/.pi/agent/missions            ├─ set_model / set_thinking_level / compact
@@ -133,9 +151,9 @@ Three deliberate rules:
 |---|---|
 | `~/.pi/agent/sessions/<project>/<session>.jsonl` | session transcript (pi's own file) |
 | `~/.pi/agent/sessions/<project>/<session>/<childId>/run-N/` | subagent runs |
-| `~/.pi/agent/sessions/<project>/.pi-deck-trash/` | deleted sessions (restore by moving back) |
-| `~/.pi/agent/extensions/pi-deck-hooks.js` | optional hook logger written by the app |
-| `~/.pi/agent/pi-deck/hooks.log` | hook log (only when instrumentation is on) |
+| `~/.pi/agent/sessions/<project>/.sightdeck-trash/` | deleted sessions (restore by moving back) |
+| `~/.pi/agent/extensions/sightdeck-hooks.js` | optional hook logger written by the app |
+| `~/.pi/agent/sightdeck/hooks.log` | hook log (only when instrumentation is on) |
 
 ## Settings
 

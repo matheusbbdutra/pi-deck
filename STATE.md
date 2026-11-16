@@ -1,4 +1,4 @@
-# STATE — pi-deck
+# STATE — sightdeck
 
 ## Onde estamos (2026-11-16)
 
@@ -40,7 +40,7 @@
 - 0.1.9 e anteriores ficam como histórico.
 - Workflow builda em 4 runners e publica **uma vez** (`publish` job), com job `test`
   (`cargo test`) de que o `build` depende.
-- App local em 0.1.10: `.deb` gerado em `src-tauri/target/release/bundle/deb/pi-deck_0.1.10_amd64.deb`
+- App local em 0.1.10: `.deb` gerado em `src-tauri/target/release/bundle/deb/sightdeck_0.1.10_amd64.deb`
   (instalar com `sudo dpkg -i`); a sessão em uso roda o binário de `target/debug`.
 App desktop (Tauri 2 + Rust) para sessões do `pi`, com subagents **por sessão** e workflows/schedules por projeto.
 Status: **M0 concluído e provado** · **M1 scaffold compila e abre janela**.
@@ -76,7 +76,7 @@ Status: **M0 concluído e provado** · **M1 scaffold compila e abre janela**.
   webview e exigem prefixo `~/.pi/agent/sessions` (`..` e symlink resolvidos antes de comparar) —
   antes aceitavam qualquer arquivo, então um `invoke` injetado lia ou movia qualquer coisa.
 
-- **Excluir sessão = mover para lixeira**, nunca `rm`: `<projeto>/.pi-deck-trash/<stem>/` recebe o `.jsonl`
+- **Excluir sessão = mover para lixeira**, nunca `rm`: `<projeto>/.sightdeck-trash/<stem>/` recebe o `.jsonl`
   e o diretório de children. **Ocultar projeto** é só UI (`localStorage`), não toca em disco.
 
 - **Pacotes: CLI é o único escritor.** Catálogo = `registry.npmjs.org` com `keywords:pi-package` (fetch no
@@ -112,12 +112,12 @@ Status: **M0 concluído e provado** · **M1 scaffold compila e abre janela**.
   `keepRecentTokens=20000` já mantém ~48 mensagens/3 turnos (mediana) e houve 4 compactações em 314
   sessões — o ganho de uma política própria não paga o risco (resumo de extensão não herda
   `<read-files>`/`<modified-files>` e erro do hook não tem retry interno).
-- **O papel do pi-deck é ser o launcher/supervisor.** `docs/missions.md:160`: "`schedule.run-due` lets an
+- **O papel do sightdeck é ser o launcher/supervisor.** `docs/missions.md:160`: "`schedule.run-due` lets an
   external launcher start due project work without making `pi-subagents` a daemon". O app lê
   `.pi/subagents/schedules/<id>/` + `~/.pi/agent/missions/projects/<hash>/`, calcula o que venceu e chama
   `schedule.run-due`. Isso exige uma sessão `pi` viva (o comando é tool action) — ou seja, uma sessão
   "runner" por projeto mantida pelo app.
-- Ponte determinística: extensão fina `pi-deck-bridge` expondo `/deck:schedule-*` e `/deck:mission-*`,
+- Ponte determinística: extensão fina `sightdeck-bridge` expondo `/deck:schedule-*` e `/deck:mission-*`,
   chamada pelo app via `prompt` (comando de extensão executa sem passar pelo LLM).
 
 - Stack: **Tauri 2** (Rust). Não usa Electron nem embrulha o `pi-web` (Next.js) — sem servidor embutido.
@@ -142,7 +142,7 @@ Status: **M0 concluído e provado** · **M1 scaffold compila e abre janela**.
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"   # cargo/rustc 1.99.1 fora do PATH
-cd ~/Projects/pi-deck/src-tauri && cargo run
+cd ~/Projects/sightdeck/src-tauri && cargo run
 ```
 
 ## Estado atual
@@ -184,9 +184,9 @@ cd ~/Projects/pi-deck/src-tauri && cargo run
 - **`cargo build` re-embute o frontend sozinho** (provado 2026-11-15): alterar `ui/index.html` e
   rodar `cargo build` já recompila o crate e o binário muda de hash
   (8dbb92a2 → d595117e com um comentário a mais na página; revertido, voltou). Não precisa de
-  `touch src/main.rs`, e o diretório `target/debug/build/pi-deck-*/out/tauri-codegen-assets/`
+  `touch src/main.rs`, e o diretório `target/debug/build/sightdeck-*/out/tauri-codegen-assets/`
   **não** contém o `ui/index.html` (os `.html` de lá têm 21–35 KB, a página tem 120 KB).
-  Para provar embed: `sha256sum target/debug/pi-deck` antes/depois. `strings` não serve (comprimido).
+  Para provar embed: `sha256sum target/debug/sightdeck` antes/depois. `strings` não serve (comprimido).
   **Correção da correção 2026-11-16**: o re-embed FUNCIONA (`rerun-if-changed` no dist dir —
   `tauri-build-2.7.4/src/codegen/context.rs:92-99`); o alarme foi falso, causado por verificação errada:
   os assets em `tauri-codegen-assets/*.html` são **brotli** (`tauri-codegen-2.7.4`, feature `compression`),
@@ -194,7 +194,7 @@ cd ~/Projects/pi-deck/src-tauri && cargo run
   `node -e "zlib.brotliDecompressSync(...)"` no asset + checar marcador (ex.: `tabs-v1`, `forkpop`),
   e para o binário, `python3` procurando os bytes brotli verbatim (`probe found: 1` = embutido).
   Verificado: asset de 56060 bytes com `tabs-v1/forkpop/renderSessAggregate` presente verbatim no
-  `target/debug/pi-deck` (`sha b836c874…`). A causa do bug visível ao usuário era o binário rodando
+  `target/debug/sightdeck` (`sha b836c874…`). A causa do bug visível ao usuário era o binário rodando
   (build 21:41, anterior ao fix) — basta reiniciar o app com o binário rebuildado.
 - **Indicador de turno é estado da aba**: `setTyping` era global, então o "enviado…/pensando…"
   da aba anterior continuava na aba nova vazia. Agora `setTurn(sessionId, working, phase)` grava
@@ -244,10 +244,10 @@ cd ~/Projects/pi-deck/src-tauri && cargo run
 - Crate `capture/` é a sonda de protocolo do M0; log cru em `/tmp/m0-rpc.jsonl`.
 - **App GUI não herda o PATH do shell**: o PATH do `systemd --user` não tem `~/.pi/agent/bin`
   nem `~/.local/bin`, então `Command::new("pi")` morria com `os error 2` (só no launcher; no
-  terminal funcionava). Resolver por caminho: `PI_DECK_PI_BIN` → `~/.pi/agent/bin/pi` →
+  terminal funcionava). Resolver por caminho: `SIGHTDECK_PI_BIN` → `~/.pi/agent/bin/pi` →
   `~/.local/bin/pi` → `PATH`. Vale para qualquer Tauri que invoque CLI instalado no `$HOME`.
 - **RSS somado mente** em app multi-processo: o WebKit mapeia as mesmas libs em 3 processos e o
-  monitor soma tudo. Medir PSS (`/proc/<pid>/smaps_rollup`): no pi-deck deu ~523 MB de RSS contra
+  monitor soma tudo. Medir PSS (`/proc/<pid>/smaps_rollup`): no sightdeck deu ~523 MB de RSS contra
   ~257 MB de PSS. Para VRAM, medir delta de `mem_info_vram_used` — kernels sem `drm-total-vram0`
   no `fdinfo` não dão VRAM por processo.
 
@@ -266,7 +266,7 @@ cd ~/Projects/pi-deck/src-tauri && cargo run
    não foi validado e quebraria o release no primeiro push.
 7. **Acentuação no composer (quase fechado)**: fatos verificados 2026-11-15 — layout do compositor é
    `us` + variante `intl` em runtime (`hyprctl getoption input:kb_layout`/`kb_variant`), fcitx5 é o IM
-   (`~/.config/fcitx5/profile` → `DefaultIM=keyboard-us-intl`), o processo do pi-deck carrega
+   (`~/.config/fcitx5/profile` → `DefaultIM=keyboard-us-intl`), o processo do sightdeck carrega
    `im-fcitx5.so` (`/proc/<pid>/maps`), e `wry` desliga o preedit em toda webview
    (`webkit2gtk/mod.rs:429`, workaround do tauri#5986). **Confirmado pelo usuário**: `'` + `a` → `á`
    com `GTK_IM_MODULE=gtk-im-context-simple` (`gtk-im-context-simple` é builtin na libgtk-3 3.24.52).

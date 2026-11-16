@@ -115,7 +115,7 @@ pub fn start_session(
 
     let mut cmd = Command::new(pi_bin());
     cmd.args(["--mode", "rpc", ref_flag.as_str(), ref_value.as_str()])
-        .env("PI_DECK_CHILD", "1")
+        .env("SIGHTDECK_CHILD", "1")
         .current_dir(&cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

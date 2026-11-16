@@ -1,65 +1,108 @@
-//! Aba Plano: lê os markdown de `plans/` do `cwd` da sessão e resume o
+//! Aba Plano: lê os markdown de plano/spec do `cwd` da sessão e resume o
 //! checklist de cada um (feitos/total, próximo item aberto, mtime). Só leitura:
 //! nenhum arquivo é criado ou alterado aqui.
+//!
+//! As fontes são procuradas por prioridade — `plans/`, `docs|doc/plans/`, `specs/`
+//! e variantes, arquivos soltos conhecidos na raiz (`PLAN.md`, `TASKS.md`, …) e
+//! `docs/*.plan.md` — e cada entrada diz de que pasta veio (`source`). Projeto
+//! fora desses nomes continua sem aparecer: nenhuma varredura recursiva.
 //!
 //! O parser é manual (sem crate de regex/markdown): marcador `-`/`*`, um `[ ]` ou
 //! `[x]`/`[X]` e o resto como texto. Item dentro de bloco cercado (``` / ~~~)
 //! é exemplo de documentação, não progresso, e não conta.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-/// Teto de arquivos devolvidos (os mais recentes por `mtime`).
+/// Teto de arquivos devolvidos (de todas as fontes somadas).
 const MAX_PLANS: usize = 30;
+
+/// Pastas candidatas (`cwd`-relativas) com a prioridade da fonte: a menor
+/// prioridade vem primeiro no JSON, antes do desempate por `mtime`.
+const DIR_SOURCES: &[(&str, u8)] = &[
+    ("plans", 0),
+    ("docs/plans", 1),
+    ("doc/plans", 1),
+    ("specs", 2),
+    ("spec", 2),
+    ("docs/specs", 2),
+    ("docs/spec", 2),
+];
+
+/// Arquivos soltos de nome conhecido, na prioridade 3.
+const FILE_SOURCES: &[&str] = &[
+    "PLAN.md",
+    "Plan.md",
+    "plan.md",
+    "TASKS.md",
+    "TODO.md",
+    "SPEC.md",
+    "docs/PLAN.md",
+];
+const FILE_PRIORITY: u8 = 3;
+
+/// Pasta varrida por `*.plan.md`, na prioridade 4. A candidata aqui é o arquivo,
+/// não a pasta: `docs/` sozinho não faz o projeto "ter plano".
+const GLOB_DIR: &str = "docs";
+const GLOB_SUFFIX: &str = ".plan.md";
+const GLOB_PRIORITY: u8 = 4;
+
 /// Teto do `current` em caracteres (não bytes: corte sempre em `char`).
 const CURRENT_MAX: usize = 80;
 
-/// Um `plans/*.md` já resumido pelo checklist.
+/// Um markdown de plano já resumido pelo checklist. `source` é a pasta de onde
+/// ele veio (`plans`, `docs/spec`, …) ou `raiz` quando está na raiz do projeto.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plano {
     pub file: String,
     pub name: String,
+    pub source: String,
     pub done: u32,
     pub total: u32,
     pub current: Option<String>,
     pub mtime: u64,
 }
 
-/// Planos do projeto do `cwd`. `{"repo":false}` quando não existe `plans/`;
-/// `Err` só quando o próprio `cwd` não é um diretório legível.
+/// Planos do projeto do `cwd`. `{"repo":false}` só quando nenhuma fonte existe
+/// (pasta candidata ausente e nenhum arquivo solto); pasta existente sem `.md`
+/// devolve `{"repo":true,"plans":[]}`. `Err` quando o `cwd` não é um diretório
+/// legível ou uma pasta candidata não abre.
 #[tauri::command]
 pub fn plans_list(cwd: String) -> Result<String, String> {
     let base = Path::new(&cwd);
     if !base.is_dir() {
         return Err(format!("cwd não é um diretório: {cwd}"));
     }
-    let plans_dir = base.join("plans");
-    if !plans_dir.is_dir() {
-        return Ok("{\"repo\":false}".to_string());
+    let (found, candidates) = collect_candidates(base)?;
+
+    // Dedupe por path canônico: o mesmo arquivo achado por duas fontes conta uma
+    // vez, valendo a primeira ocorrência (menor prioridade, `file` dela).
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut plans: Vec<(u8, Plano)> = Vec::new();
+    for (path, priority) in candidates {
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        if let Some(entry) = plan_entry(&path, base) {
+            plans.push((priority, entry));
+        }
     }
-    let entries = std::fs::read_dir(&plans_dir)
-        .map_err(|e| format!("não consegui ler {}: {e}", plans_dir.display()))?;
-    let mut plans: Vec<Plano> = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-        })
-        .filter_map(|path| plan_entry(&path, base))
-        .collect();
-    plans.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    plans.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.mtime.cmp(&a.1.mtime)));
     plans.truncate(MAX_PLANS);
 
+    if !found {
+        return Ok("{\"repo\":false}".to_string());
+    }
     let payload = serde_json::json!({
         "repo": true,
         "plans": plans
             .iter()
-            .map(|p| serde_json::json!({
+            .map(|(_, p)| serde_json::json!({
                 "file": p.file,
                 "name": p.name,
+                "source": p.source,
                 "done": p.done,
                 "total": p.total,
                 "current": p.current,
@@ -68,6 +111,61 @@ pub fn plans_list(cwd: String) -> Result<String, String> {
             .collect::<Vec<_>>(),
     });
     Ok(payload.to_string())
+}
+
+/// Candidatos a plano do projeto: `(alguma fonte existe?, arquivos com a
+/// prioridade da fonte)`. A ordem devolvida já é a de prioridade.
+fn collect_candidates(base: &Path) -> Result<(bool, Vec<(PathBuf, u8)>), String> {
+    let mut found = false;
+    let mut files: Vec<(PathBuf, u8)> = Vec::new();
+
+    for (dir, priority) in DIR_SOURCES {
+        let path = base.join(dir);
+        if !path.is_dir() {
+            continue;
+        }
+        found = true;
+        files.extend(dir_markdowns(&path)?.into_iter().map(|md| (md, *priority)));
+    }
+
+    for name in FILE_SOURCES {
+        let path = base.join(name);
+        if path.is_file() {
+            found = true;
+            files.push((path, FILE_PRIORITY));
+        }
+    }
+
+    let glob_dir = base.join(GLOB_DIR);
+    if glob_dir.is_dir() {
+        for md in dir_markdowns(&glob_dir)? {
+            let is_glob = md
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(GLOB_SUFFIX));
+            if is_glob {
+                found = true;
+                files.push((md, GLOB_PRIORITY));
+            }
+        }
+    }
+
+    Ok((found, files))
+}
+
+/// `.md` soltos em `dir` (não recursivo), em ordem de leitura do diretório.
+fn dir_markdowns(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("não consegui ler {}: {e}", dir.display()))?;
+    Ok(entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        })
+        .collect())
 }
 
 /// Um arquivo de plano; `None` se não dá para ler como UTF-8 (binário, permissão).
@@ -81,19 +179,26 @@ fn plan_entry(path: &Path, base: &Path) -> Option<Plano> {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let rel = path.strip_prefix(base).unwrap_or(path);
-    let file = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/");
+    let Some(source) = rel.parent().map(rel_slash) else {
+        return None;
+    };
     Some(Plano {
         name: path.file_stem()?.to_string_lossy().into_owned(),
-        file,
+        file: rel_slash(rel),
+        source: if source.is_empty() { "raiz".to_string() } else { source },
         done,
         total,
         current,
         mtime,
     })
+}
+
+/// Caminho relativo com `/` como separador (vazio para a raiz).
+fn rel_slash(rel: &Path) -> String {
+    rel.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Conta o checklist do markdown: `(feitos, total, primeiro aberto)`.
@@ -247,23 +352,27 @@ mod tests {
         assert_eq!(shorten("curto"), "curto");
     }
 
+    /// Temp dir exclusivo deste teste. Prefixo próprio porque os testes rodam em
+    /// paralelo no mesmo processo: o pid sozinho não separa os cenários.
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sightdeck-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     /// Cenário fs: `<dir>/plans/{a.md,b.md}` + um `.txt` que não deve entrar.
-    /// `PI_DECK_PLANS_DIR` aponta o cenário para um diretório fixo (prova manual);
+    /// `SIGHTDECK_PLANS_DIR` aponta o cenário para um diretório fixo (prova manual);
     /// sem a variável, o teste cria e apaga um temp dir próprio.
     #[test]
     fn plans_list_ordena_por_mtime_e_conta_os_itens() {
-        let fixed = std::env::var("PI_DECK_PLANS_DIR").ok().map(PathBuf::from);
+        let fixed = std::env::var("SIGHTDECK_PLANS_DIR").ok().map(PathBuf::from);
         let dir = match &fixed {
             Some(dir) => dir.clone(),
-            None => {
-                let dir = std::env::temp_dir()
-                    .join(format!("pi-deck-plans-{}", std::process::id()));
-                let _ = std::fs::remove_dir_all(&dir);
-                std::fs::create_dir_all(dir.join("plans")).unwrap();
-                dir
-            }
+            None => temp_dir("plans"),
         };
         if fixed.is_none() {
+            std::fs::create_dir_all(dir.join("plans")).unwrap();
             std::fs::write(dir.join("plans/a.md"), A_MD).unwrap();
             // mtime com resolução de ms no mínimo: 20 ms separam a.md de b.md.
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -284,6 +393,7 @@ mod tests {
 
         assert_eq!(plans[0]["file"], "plans/b.md");
         assert_eq!(plans[0]["name"], "b");
+        assert_eq!(plans[0]["source"], "plans");
         assert_eq!(plans[0]["done"], 2);
         assert_eq!(plans[0]["total"], 2);
         assert!(plans[0]["current"].is_null());
@@ -291,6 +401,7 @@ mod tests {
 
         assert_eq!(plans[1]["file"], "plans/a.md");
         assert_eq!(plans[1]["name"], "a");
+        assert_eq!(plans[1]["source"], "plans");
         assert_eq!(plans[1]["done"], 2);
         assert_eq!(plans[1]["total"], 5);
         assert_eq!(plans[1]["current"], "Implementar watcher");
@@ -298,10 +409,133 @@ mod tests {
     }
 
     #[test]
-    fn plans_list_sem_diretorio_plans_devolve_repo_false() {
-        let dir = std::env::temp_dir().join(format!("pi-deck-noplans-{}", std::process::id()));
+    fn plans_list_le_spec_fora_de_plans_com_a_pasta_como_source() {
+        let dir = temp_dir("docs-spec");
+        std::fs::create_dir_all(dir.join("docs/spec")).unwrap();
+        std::fs::write(dir.join("docs/spec/x.md"), A_MD).unwrap();
+
+        let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json válido");
+
+        assert_eq!(v["repo"], true);
+        let plans = v["plans"].as_array().expect("array");
+        assert_eq!(plans.len(), 1, "{payload}");
+        assert_eq!(plans[0]["file"], "docs/spec/x.md");
+        assert_eq!(plans[0]["source"], "docs/spec");
+        assert_eq!(plans[0]["name"], "x");
+        assert_eq!(plans[0]["done"], 2);
+        assert_eq!(plans[0]["total"], 5);
+    }
+
+    /// Mesmo arquivo em duas fontes (symlink): conta uma vez, com o `file` e o
+    /// `source` da fonte de maior prioridade.
+    #[cfg(unix)]
+    #[test]
+    fn plans_list_nao_duplica_o_mesmo_arquivo_em_duas_fontes() {
+        let dir = temp_dir("dedupe");
+        std::fs::create_dir_all(dir.join("plans")).unwrap();
+        std::fs::create_dir_all(dir.join("docs/plans")).unwrap();
+        std::fs::write(dir.join("plans/a.md"), A_MD).unwrap();
+        std::os::unix::fs::symlink(dir.join("plans/a.md"), dir.join("docs/plans/a.md")).unwrap();
+
+        let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json válido");
+
+        let plans = v["plans"].as_array().expect("array");
+        assert_eq!(plans.len(), 1, "mesmo arquivo conta uma vez: {payload}");
+        assert_eq!(plans[0]["file"], "plans/a.md");
+        assert_eq!(plans[0]["source"], "plans");
+    }
+
+    #[test]
+    fn plans_list_le_arquivo_solto_da_raiz_como_source_raiz() {
+        let dir = temp_dir("raiz");
+        std::fs::write(dir.join("PLAN.md"), B_MD).unwrap();
+
+        let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json válido");
+
+        assert_eq!(v["repo"], true);
+        let plans = v["plans"].as_array().expect("array");
+        assert_eq!(plans.len(), 1, "{payload}");
+        assert_eq!(plans[0]["file"], "PLAN.md");
+        assert_eq!(plans[0]["source"], "raiz");
+        assert_eq!(plans[0]["name"], "PLAN");
+        assert_eq!(plans[0]["done"], 2);
+        assert_eq!(plans[0]["total"], 2);
+    }
+
+    #[test]
+    fn plans_list_le_plan_md_solto_em_docs() {
+        let dir = temp_dir("docs-glob");
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/entrega.plan.md"), B_MD).unwrap();
+
+        let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json válido");
+
+        let plans = v["plans"].as_array().expect("array");
+        assert_eq!(plans.len(), 1, "{payload}");
+        assert_eq!(plans[0]["file"], "docs/entrega.plan.md");
+        assert_eq!(plans[0]["source"], "docs");
+        assert_eq!(plans[0]["name"], "entrega.plan");
+    }
+
+    /// `source` de maior prioridade vence mesmo com `mtime` menor. Três fontes com
+    /// mtime crescente: `plans/` (mais velho) antes de `docs/spec/` antes da raiz.
+    /// Imprime o payload: `cargo test prioriza_a_fonte -- --nocapture`.
+    #[test]
+    fn plans_list_prioriza_a_fonte_antes_do_mtime() {
+        let dir = temp_dir("prioridade");
+        std::fs::create_dir_all(dir.join("plans")).unwrap();
+        std::fs::create_dir_all(dir.join("docs/spec")).unwrap();
+        std::fs::write(dir.join("plans/a.md"), A_MD).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join("docs/spec/mais-novo.md"), B_MD).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join("PLAN.md"), B_MD).unwrap();
+
+        let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
+        eprintln!("{payload}");
+        let _ = std::fs::remove_dir_all(&dir);
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json válido");
+
+        let plans = v["plans"].as_array().expect("array");
+        assert_eq!(plans.len(), 3, "{payload}");
+        assert_eq!(plans[0]["file"], "plans/a.md");
+        assert_eq!(plans[0]["source"], "plans");
+        assert_eq!(plans[1]["file"], "docs/spec/mais-novo.md");
+        assert_eq!(plans[1]["source"], "docs/spec");
+        assert_eq!(plans[2]["file"], "PLAN.md");
+        assert_eq!(plans[2]["source"], "raiz");
+        assert!(
+            plans[0]["mtime"].as_u64().unwrap() < plans[1]["mtime"].as_u64().unwrap()
+                && plans[1]["mtime"].as_u64().unwrap() < plans[2]["mtime"].as_u64().unwrap(),
+            "prioridade vence mtime: {payload}"
+        );
+    }
+
+    #[test]
+    fn plans_list_pasta_sem_md_devolve_repo_true_e_lista_vazia() {
+        let dir = temp_dir("vazia");
+        std::fs::create_dir_all(dir.join("specs")).unwrap();
+        std::fs::write(dir.join("specs/notas.txt"), "- [x] não é plano\n").unwrap();
+
+        let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let v: serde_json::Value = serde_json::from_str(&payload).expect("json válido");
+
+        assert_eq!(v["repo"], true, "{payload}");
+        assert_eq!(v["plans"].as_array().map(|a| a.len()), Some(0), "{payload}");
+    }
+
+    #[test]
+    fn plans_list_sem_candidato_devolve_repo_false() {
+        let dir = temp_dir("noplans");
         let payload = plans_list(dir.to_string_lossy().into_owned()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(payload, "{\"repo\":false}");
@@ -309,12 +543,12 @@ mod tests {
 
     #[test]
     fn plans_list_recusa_cwd_invalido() {
-        let missing = std::env::temp_dir().join(format!("pi-deck-ausente-{}", std::process::id()));
+        let missing = std::env::temp_dir().join(format!("sightdeck-ausente-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
         let err = plans_list(missing.to_string_lossy().into_owned()).unwrap_err();
         assert!(err.contains("não é um diretório"), "{err}");
 
-        let file = std::env::temp_dir().join(format!("pi-deck-arquivo-{}", std::process::id()));
+        let file = std::env::temp_dir().join(format!("sightdeck-arquivo-{}", std::process::id()));
         std::fs::write(&file, "x").unwrap();
         let err = plans_list(file.to_string_lossy().into_owned()).unwrap_err();
         let _ = std::fs::remove_file(&file);

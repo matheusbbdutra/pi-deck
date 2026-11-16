@@ -100,6 +100,18 @@ function setTyping(on, label) {
   if (label) $('typinglabel').textContent = label;
 }
 
+/** Botão de parar do composer: aparece só com turno rodando.
+    O `#send` fica SEMPRE habilitado de propósito — com turno rodando ele enfileira
+    (`streamingBehavior: steer`) e a fila é recurso pedido (`#unque` devolve as
+    mensagens ao composer); só o `title` muda para dizer que é enfileiramento. */
+export function syncStopButton(working) {
+  const stop = $('stopbtn');
+  if (stop) stop.classList.toggle('hidden', !working);
+  const send = $('send');
+  if (send) send.title = working ? 'Enfileirar mensagem (turno rodando)' : 'Enviar (Enter)';
+  return !!working;
+}
+
 /**
  * Turno em andamento é estado da ABA, não da janela: sem isso o "enviado…/pensando…"
  * da aba anterior continuava na tela depois de trocar (inclusive em sessão nova vazia).
@@ -118,6 +130,8 @@ function setTurn(sessionId, working, phase) {
   }
   if (current && current.key === sessionId) {
     setTyping(working, (t && t.phase) || phase || 'pensando…');
+    // Mesmo caminho do indicador: o botão de parar segue o turno da aba em foco.
+    syncStopButton(!!working);
     if (working) { setStatus('trabalhando'); setState('busy'); }
   }
 }
@@ -228,7 +242,7 @@ function maybeNotifyDone(sessionId) {
   lastNotifyAt[sessionId] = now;
   if (uiSettings.notifySound) beep();
   if (uiSettings.notifyDesktop && window.Notification && Notification.permission === 'granted') {
-    try { new Notification('pi-deck: turno pronto', { body: t.label || sessionId }); } catch { /* negado */ }
+    try { new Notification('sightdeck: turno pronto', { body: t.label || sessionId }); } catch { /* negado */ }
   }
 }
 
@@ -237,6 +251,8 @@ function applyTurnUi() {
   const t = current ? tabs.find(x => x.key === current.key) : null;
   const on = !!(t && t.working);
   setTyping(on, (t && t.phase) || 'pensando…');
+  syncStopButton(on);
+  renderHealthChip();
   if (on) { setStatus('trabalhando'); setState('busy'); }
 }
 function setStatus(t) { $('status').textContent = stripAnsi(t); }
@@ -305,7 +321,7 @@ function saveTreeState() {
   } catch { /* sem storage */ }
 }
 
-/* Excluir sessão = mover para <projeto>/.pi-deck-trash/ (nunca apaga). */
+/* Excluir sessão = mover para <projeto>/.sightdeck-trash/ (nunca apaga). */
 function askDeleteSession(s) {
   confirmRun('mover para lixeira: ' + s.file, async () => {
     if (current && current.key === s.id) { try { await closeTab(s.id); } catch { /* já fechada */ } }
@@ -1072,6 +1088,176 @@ function initSplit() {
   });
 }
 
+/* =============== colunas laterais e largura do composer =============== */
+/* Os dois grips verticais (`.col-grip`, dentro da `aside` e do `#rightpanel`) só
+   capturam o ponteiro com Ctrl pressionado: `body.ctrl-held` liga o
+   `pointer-events` deles no keydown. Sem Ctrl o clique atravessa para o conteúdo,
+   então arrastar a borda não rouba clique de lista nem seleção de texto.
+   As larguras ficam em px (não em %) para escalarem junto com o `zoom` do body;
+   `usableWidth()` desconta o zoom ao comparar com a janela. */
+const ASIDE_MIN = 180, ASIDE_MAX = 520;
+const PANEL_MIN = 240, PANEL_MAX = 720;
+const CENTER_MIN = 320;        // piso do composer/transcript entre as duas colunas
+const COMPOSER_MIN = 520, COMPOSER_MAX = 1600, COMPOSER_DEFAULT = 820;
+const COMPOSER_STEP = 40;      // px por passo de Ctrl+wheel sobre o composer
+/* Partida do arrasto quando não há layout medido (primeira pintura, jsdom). */
+const ASIDE_DEFAULT = 320, PANEL_DEFAULT = 340;
+
+/** Clampa um número em [min, max]; valor não numérico cai no mínimo. */
+export function clampWidth(v, min, max) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Colunas laterais sem espremer o centro: o excedente sobre `total - 320` sai das
+    duas na proporção da folga de cada uma (quem está no teto não cede), e nenhuma
+    desce do próprio piso. Se nem os pisos couberem, devolve os pisos. */
+export function clampColumns(asidePx, panelPx, totalPx) {
+  const aside = clampWidth(asidePx, ASIDE_MIN, ASIDE_MAX);
+  const panel = clampWidth(panelPx, PANEL_MIN, PANEL_MAX);
+  const total = Number(totalPx);
+  if (!Number.isFinite(total) || total <= 0) return { aside, panel };
+  const over = aside + panel + CENTER_MIN - total;
+  if (over <= 0) return { aside, panel };
+  const slackAside = aside - ASIDE_MIN;
+  const slackPanel = panel - PANEL_MIN;
+  const slack = slackAside + slackPanel;
+  if (over >= slack) return { aside: ASIDE_MIN, panel: PANEL_MIN };
+  return {
+    aside: Math.floor(aside - over * (slackAside / slack)),
+    panel: Math.floor(panel - over * (slackPanel / slack)),
+  };
+}
+
+/** Fator do `zoom` aplicado no body (1 quando ausente/inválido). */
+function zoomFactor() {
+  const z = parseFloat(document.body.style.zoom);
+  return Number.isFinite(z) && z > 0 ? z : 1;
+}
+
+/** Largura útil do layout em px de CSS (o zoom divide a janela). */
+function usableWidth() {
+  const vw = Number(window.innerWidth) || 0;
+  return vw ? vw / zoomFactor() : 0;
+}
+
+/** Largura renderizada de uma coluna em px de CSS, já sem o zoom. */
+function columnPx(id) {
+  const node = $(id);
+  const rect = node && node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+  const w = rect ? rect.width : 0;
+  return w > 0 ? w / zoomFactor() : 0;
+}
+
+let colWanted = null;   // px de CSS pedidos pelo usuário (null = % padrão do CSS)
+let composerWidth = 0;  // 0 = max-width padrão do CSS
+
+function applyColumns(persist) {
+  if (!colWanted) {
+    colWanted = { aside: columnPx('sidebar') || ASIDE_DEFAULT, panel: columnPx('rightpanel') || PANEL_DEFAULT };
+  }
+  const fit = clampColumns(colWanted.aside, colWanted.panel, usableWidth());
+  document.body.style.setProperty('--w-aside', Math.round(fit.aside) + 'px');
+  document.body.style.setProperty('--w-panel', Math.round(fit.panel) + 'px');
+  if (persist) {
+    try {
+      localStorage.setItem('w-aside', String(Math.round(fit.aside)));
+      localStorage.setItem('w-panel', String(Math.round(fit.panel)));
+    } catch { /* sem storage */ }
+  }
+  return fit;
+}
+
+function setComposerWidth(px, persist) {
+  composerWidth = clampWidth(px, COMPOSER_MIN, COMPOSER_MAX);
+  document.body.style.setProperty('--composer-w', Math.round(composerWidth) + 'px');
+  if (persist) {
+    try { localStorage.setItem('composer-w', String(Math.round(composerWidth))); } catch { /* sem storage */ }
+  }
+  return composerWidth;
+}
+
+/** Base do primeiro wheel: largura atual do card, ou o padrão do CSS se o jsdom
+    (sem layout) não a resolve. */
+function composerBasePx(card) {
+  if (composerWidth) return composerWidth;
+  const w = card && window.getComputedStyle ? parseFloat(window.getComputedStyle(card).maxWidth) : NaN;
+  return Number.isFinite(w) && w > 0 ? w : COMPOSER_DEFAULT;
+}
+
+function readSavedPx(key) {
+  try { return Number(localStorage.getItem(key)) || 0; } catch { return 0; }
+}
+
+/** Arrasto de uma borda. `side` diz qual var o movimento alimenta: a da esquerda
+    cresce com o cursor (`x`), a da direita cresce ao contrário. */
+function dragGrip(grip, side) {
+  if (!grip) return;
+  let drag = null;
+  grip.addEventListener('pointerdown', (e) => {
+    if (!e.ctrlKey || (e.button !== undefined && e.button !== 0)) return;
+    e.preventDefault();
+    if (grip.setPointerCapture) grip.setPointerCapture(e.pointerId);
+    const base = colWanted || {
+      aside: columnPx('sidebar') || ASIDE_DEFAULT,
+      panel: columnPx('rightpanel') || PANEL_DEFAULT,
+    };
+    drag = { x: e.clientX, z: zoomFactor(), base: { aside: base.aside, panel: base.panel } };
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const delta = (e.clientX - drag.x) / drag.z; // px de CSS: o body é escalado pelo zoom
+    colWanted = side === 'aside'
+      ? { aside: drag.base.aside + delta, panel: drag.base.panel }
+      : { aside: drag.base.aside, panel: drag.base.panel - delta };
+    applyColumns(false);
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    applyColumns(true);
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+}
+
+function initColumnResize() {
+  // Boot: reaplica o salvo antes do primeiro render (sem salvar de novo).
+  const aside = readSavedPx('w-aside');
+  const panel = readSavedPx('w-panel');
+  if (aside || panel) {
+    colWanted = { aside: aside || ASIDE_DEFAULT, panel: panel || PANEL_DEFAULT };
+    applyColumns(false);
+  }
+  const composer = readSavedPx('composer-w');
+  if (composer) setComposerWidth(composer, false);
+
+  dragGrip($('colgripaside'), 'aside');
+  dragGrip($('colgrippanel'), 'panel');
+
+  // Ctrl libera o `pointer-events` dos grips (CSS não lê modificador).
+  const syncCtrl = (e) => document.body.classList.toggle('ctrl-held', !!e.ctrlKey);
+  document.addEventListener('keydown', syncCtrl);
+  document.addEventListener('keyup', syncCtrl);
+  window.addEventListener('blur', () => document.body.classList.remove('ctrl-held'));
+
+  // Ctrl+wheel sobre o composer muda a largura máxima do card; fora dele o wheel
+  // é do conteúdo (transcript) e não é interceptado.
+  const card = document.querySelector('.composer-card');
+  if (card) {
+    card.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const step = e.deltaY < 0 ? COMPOSER_STEP : -COMPOSER_STEP;
+      setComposerWidth(composerBasePx(card) + step, true);
+    }, { passive: false });
+  }
+
+  // Janela menor (ou zoom maior) pode espremer o centro: re-clampa o que foi fixado.
+  window.addEventListener('resize', () => { if (colWanted) applyColumns(false); });
+}
+
 /** Lê as edições do disco (sessão + children). Só roda com o painel Git visível:
     é dele que sai o diff com "desfazer hunk" para o arquivo clicado. */
 async function loadEdits() {
@@ -1661,7 +1847,7 @@ function renderPlans() {
   if (plansError) { host.appendChild(el('div', 'empty', plansError)); return; }
   if (!plansData) { host.appendChild(el('div', 'empty', 'nenhum plano')); return; }
   if (plansData.repo !== true) {
-    host.appendChild(el('div', 'empty', 'sem pasta plans/ neste projeto'));
+    host.appendChild(el('div', 'empty', 'nenhum plano encontrado (plans/, docs/spec, PLAN.md…)'));
     return;
   }
   const list = Array.isArray(plansData.plans) ? plansData.plans : [];
@@ -1674,6 +1860,7 @@ function renderPlans() {
     const item = el('div', 'plan-item');
     const row = el('div', 'file-row');
     row.appendChild(el('span', 'file-name', String(p.name || file)));
+    if (p.source) row.appendChild(el('span', 'plan-source', String(p.source)));
     if (p.current) row.appendChild(el('span', 'plan-current', String(p.current)));
     row.appendChild(el('span', 'file-count', total ? done + '/' + total : 'sem checklist'));
     item.appendChild(row);
@@ -1872,6 +2059,105 @@ export function appendCapped(prev, delta, cap) {
   return next.slice(start);
 }
 
+/* =============== saúde das extensões (LSP/MCP) =============== */
+/* O pi avisa problema de extensão em texto no RPC (`extensão LSP inactive`,
+   `extensão MCP servers need attention: …`). Até aqui isso caía no transcript como
+   linha crua e nada virava estado; o chip do header é ADICIONAL (as linhas continuam
+   no log). O casamento é por texto porque o pi não emite evento tipado para isso e o
+   resto da frase varia com versão/idioma — só `LSP`/`MCP` são estáveis. */
+const HEALTH_MAX = 20;      // avisos guardados por sessão (descarta o mais antigo)
+const HEALTH_TITLE_MAX = 3; // mensagens listadas no tooltip
+const HEALTH_ID_MAX = 200;  // corte do `id`: linha inteira não cabe num title
+
+const HEALTH_RULES = [
+  { kind: 'lsp', re: /extensão LSP|LSP inactive|lsp.*inactive/i },
+  { kind: 'mcp', re: /MCP servers need attention|mcp.*failed|failed:.*fetch failed/i },
+];
+/* Prefixo de log (`[12:34:56] `, `2026-01-02T12:34:56Z `) não é mensagem: sai antes do
+   casamento e do `id`, senão a mesma frase repetida viraria dois avisos. */
+const HEALTH_TS = /^\s*(?:\[?\d{2}:\d{2}(?::\d{2})?\]?|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)\s+/;
+
+/** Avisos por sessão: `Map<sessionKey, Map<id, kind>>` (o interno é FIFO por inserção). */
+const healthBySession = new Map();
+
+/** Texto a classificar: a própria linha, ou a mensagem de um notify de extensão.
+ *  O aviso do pi chega das duas formas: texto no stdout e `extension_ui_request`
+ *  (`method: notify|setStatus`) — é esse JSON que pinta a linha "extensão …" no
+ *  transcript. Olhar só o JSON de extensão evita casar regex em args de tool ou em
+ *  texto do modelo. */
+function healthText(line) {
+  const text = stripAnsi(line).replace(HEALTH_TS, '').trim();
+  if (!text.startsWith('{')) return text;
+  let rec = null;
+  try { rec = JSON.parse(text); } catch { return ''; }
+  if (!rec || rec.type !== 'extension_ui_request') return '';
+  const msg = typeof rec.message === 'string' ? rec.message : rec.statusText;
+  return typeof msg === 'string' ? stripAnsi(msg).trim() : '';
+}
+
+/** Classifica uma linha de saúde do CLI: `{kind, id}` ou `null`.
+ *  `id` é o texto normalizado (sem ANSI, sem prefixo de hora, espaços colapsados) —
+ *  é a chave de deduplicação, não o texto exibido. */
+export function classifyHealthLine(line) {
+  if (typeof line !== 'string') return null;
+  const text = healthText(line);
+  if (!text) return null;
+  const rule = HEALTH_RULES.find(r => r.re.test(text));
+  if (!rule) return null;
+  return { kind: rule.kind, id: text.replace(/\s+/g, ' ').slice(0, HEALTH_ID_MAX) };
+}
+
+/** Mapa `id -> kind` da sessão, criado sob demanda. */
+function healthMapFor(sessionKey) {
+  let map = healthBySession.get(sessionKey);
+  if (!map) { map = new Map(); healthBySession.set(sessionKey, map); }
+  return map;
+}
+
+/** Registra a linha no mapa (dedup por `id`) e devolve o `kind` reconhecido, ou `null`.
+ *  Acima de `HEALTH_MAX` avisos o mais antigo sai: o chip mostra a contagem, não a lista. */
+export function noteHealth(map, line) {
+  const hit = classifyHealthLine(line);
+  if (!hit || !(map instanceof Map)) return hit ? hit.kind : null;
+  if (!map.has(hit.id)) {
+    map.set(hit.id, hit.kind);
+    while (map.size > HEALTH_MAX) map.delete(map.keys().next().value);
+  }
+  return hit.kind;
+}
+
+/** Estado do chip para um mapa de avisos: `{count, kinds, title}`.
+ *  `kinds` sai na ordem de chegada; `title` lista no máximo `HEALTH_TITLE_MAX`
+ *  mensagens e resume o resto em `… +N`. */
+export function healthChipState(map) {
+  const entries = map instanceof Map ? Array.from(map.entries()) : [];
+  const kinds = [];
+  for (const [, kind] of entries) if (!kinds.includes(kind)) kinds.push(kind);
+  if (!entries.length) return { count: 0, kinds, title: '' };
+  const lines = entries.slice(0, HEALTH_TITLE_MAX).map(([id, kind]) => kind + ': ' + id);
+  if (entries.length > HEALTH_TITLE_MAX) lines.push('… +' + (entries.length - HEALTH_TITLE_MAX) + ' aviso(s)');
+  return {
+    count: entries.length,
+    kinds,
+    title: [entries.length + ' aviso(s) de extensão · clique para abrir o Diagnóstico', ...lines].join('\n'),
+  };
+}
+
+/** Repinta o chip do header com os avisos da sessão ATUAL; sem sessão fica escondido. */
+function renderHealthChip() {
+  const chip = $('healthchip');
+  if (!chip) return null;
+  const st = healthChipState(current ? healthBySession.get(current.key) : null);
+  // mcp pesa mais: servidor de MCP quebrado derruba tool, LSP inativo só tira refino.
+  const warn = st.kinds.includes('mcp');
+  chip.classList.toggle('hidden', !st.count);
+  chip.classList.toggle('warn', !!st.count && warn);
+  chip.classList.toggle('mute', !!st.count && !warn);
+  chip.textContent = st.count ? '⚠ ' + st.count : '';
+  chip.title = st.title;
+  return st;
+}
+
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
    render do log principal, então `seen` só contém linhas vindas do disco
    (`data-local` fica de fora): quando a mensagem já foi persistida, a cópia local cai. */
@@ -1916,6 +2202,9 @@ listen('rpc-line', (ev) => {
     const fg = current && sessionId === current.key ? 'atual' : 'fundo';
     diagPush(rec.type || rec.command || line.slice(0, 120), '—', rec.command ? ((rec.success ? 'ok' : 'falhou') + ' · ' + fg) : (String(rec.type || 'evento') + ' · ' + fg));
   } catch { diagPush(line.slice(0, 160), '—', 'raw'); }
+  // Aviso de extensão vale para a aba que o emitiu, inclusive de fundo: o chip só
+  // aparece quando aquela aba está em foco (o mapa é por sessão).
+  if (noteHealth(healthMapFor(sessionId), line) && current && sessionId === current.key) renderHealthChip();
   // Resposta da sonda vale para aba em foco e de fundo: fica antes do split e nunca
   // cai no `handleResponse` (get_state da sonda não é o estado da sessão da view).
   if (line.includes('"type":"response"')) {
@@ -1938,6 +2227,7 @@ listen('rpc-line', (ev) => {
     if (line.includes('"type":"agent_settled"')) {
       maybeNotifyDone(sessionId);
       setTurn(sessionId, false);
+      renderHealthChip();
       // Turno fechou: o disco já tem thinking e texto completos.
       const bst = tabs.find(x => x.key === sessionId);
       if (bst) { bst.streamText = ''; bst.thinkText = ''; }
@@ -2057,6 +2347,7 @@ listen('rpc-line', (ev) => {
       setState('ready');
       setTurn(sessionId, false);
       // Resposta completa foi para o disco: os parciais guardados caducaram.
+      renderHealthChip();
       {
         const st = tabs.find(x => x.key === sessionId);
         if (st) { st.streamText = ''; st.thinkText = ''; }
@@ -2938,6 +3229,8 @@ async function switchTab(key) {
 async function closeTab(key) {
   try { await inv('stop_session', { sessionId: key }); } catch { /* já parado */ }
   stopLive(key);
+  // Aba fechada leva os avisos junto: reabrir a mesma key não pode herdar chip velho.
+  healthBySession.delete(key);
   // Aba fechada sai do vigia: sem isto uma sonda pendente poderia destravar a chave
   // reaberta logo depois (mesma key, outro processo).
   delete lastProbeAt[key];
@@ -2959,7 +3252,7 @@ async function closeTab(key) {
     const next = tabs[tabs.length - 1];
     renderTabs();
     if (next) await switchTab(next.key);
-    else { setStatus('desconectado'); setTyping(false); }
+    else { setStatus('desconectado'); setTyping(false); renderHealthChip(); }
     return;
   }
   renderTabs();
@@ -3797,7 +4090,7 @@ async function refreshHooksStatus() {
 }
 
 function setHooksEnabled(on) {
-  const cmd = on ? 'escrever ~/.pi/agent/extensions/pi-deck-hooks.js' : 'remover ~/.pi/agent/extensions/pi-deck-hooks.js';
+  const cmd = on ? 'escrever ~/.pi/agent/extensions/sightdeck-hooks.js' : 'remover ~/.pi/agent/extensions/sightdeck-hooks.js';
   confirmRun(cmd, async () => {
     try {
       const out = await inv(on ? 'hooks_install' : 'hooks_remove');
@@ -3988,7 +4281,7 @@ async function checkUpdate(manual) {
       return;
     }
 
-    const res = await fetch('https://api.github.com/repos/matheusbbdutra/pi-deck/releases/latest', {
+    const res = await fetch('https://api.github.com/repos/matheusbbdutra/sightdeck/releases/latest', {
       headers: { Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -4007,6 +4300,7 @@ async function checkUpdate(manual) {
 
 /* =============== wiring =============== */
 $('send').onclick = send;
+$('stopbtn').onclick = () => abortTurn();
 $('loadmorebtn').onclick = loadEarlier;
 $('scrollbottom').onclick = () => {
   const l = $('log');
@@ -4328,6 +4622,8 @@ $('themereset').onclick = () => {
   $('themenote').textContent = 'tema padrão restaurado (localStorage[\'theme\'] removido)';
 };
 $('debugbtn').onclick = () => openDebug();
+// Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
+$('healthchip').onclick = () => openDebug();
 $('debugback').onclick = () => $('debug').classList.add('hidden');
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); };
 $('checkupdate').onclick = () => checkUpdate(true);
@@ -4395,6 +4691,7 @@ $('panelsubs').onclick = () => {
 $('panelplans').onclick = () => { switchPanelPane('plans'); loadPlans(); };
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
 initSplit();
+initColumnResize();
 // Dock do terminal: cwd/home vêm da sessão ativa (o PTY não segue trocas de sessão sozinho)
 initTerminal({ getCwd: () => (current && current.cwd) || '' });
 // Diff dos tool cards: `tool-cards.js` não pode importar `main.js` (ciclo).

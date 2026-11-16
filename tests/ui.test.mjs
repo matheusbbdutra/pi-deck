@@ -21,6 +21,12 @@ let appendCapped;
 let setZoom;
 let shouldProbeTurn;
 let shouldAbortOnEsc;
+let clampWidth;
+let clampColumns;
+let syncStopButton;
+let classifyHealthLine;
+let noteHealth;
+let healthChipState;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -43,7 +49,9 @@ beforeAll(async () => {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc } = await import('../ui/src/main.js'));
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc,
+     clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
+     healthChipState } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -70,6 +78,120 @@ describe('appendCapped', () => {
 
   it('mantém acento intacto no limite', () => {
     expect(appendCapped('', 'ção', 2)).toBe('ão');
+  });
+});
+
+describe('classifyHealthLine', () => {
+  it('reconhece o aviso real de LSP inativo', () => {
+    expect(classifyHealthLine('extensão LSP inactive')).toEqual({ kind: 'lsp', id: 'extensão LSP inactive' });
+  });
+
+  it('reconhece o aviso real de MCP precisando de atenção', () => {
+    const line = 'extensão MCP servers need attention: browseros-neo: failed: fetch failed Run /mcp to fix';
+    expect(classifyHealthLine(line)).toEqual({ kind: 'mcp', id: line });
+  });
+
+  it('devolve null para linha normal do protocolo e para entrada vazia', () => {
+    expect(classifyHealthLine('{"type":"agent_settled"}')).toBe(null);
+    expect(classifyHealthLine('turno pronto')).toBe(null);
+    expect(classifyHealthLine('')).toBe(null);
+    expect(classifyHealthLine(null)).toBe(null);
+  });
+
+  it('casa com ANSI e prefixo de data/hora, que não entram no id', () => {
+    expect(classifyHealthLine('\u001b[33m2026-01-02T10:00:00Z extensão LSP inactive\u001b[0m'))
+      .toEqual({ kind: 'lsp', id: 'extensão LSP inactive' });
+    expect(classifyHealthLine('[12:00:01] extensão MCP servers need attention: x'))
+      .toEqual({ kind: 'mcp', id: 'extensão MCP servers need attention: x' });
+  });
+
+  it('id deduplica a mesma mensagem com espaçamento diferente', () => {
+    const a = classifyHealthLine('extensão LSP inactive');
+    const b = classifyHealthLine('  extensão   LSP  inactive  ');
+    expect(b.id).toBe(a.id);
+    expect(b.kind).toBe('lsp');
+  });
+
+  it('lê o aviso que chega como notify de extensão no JSON', () => {
+    const line = JSON.stringify({ type: 'extension_ui_request', id: 'e1', method: 'notify', message: 'LSP inactive' });
+    expect(classifyHealthLine(line)).toEqual({ kind: 'lsp', id: 'LSP inactive' });
+    const mcp = JSON.stringify({ type: 'extension_ui_request', method: 'notify', message: 'MCP servers need attention: browseros-neo: failed: fetch failed' });
+    expect(classifyHealthLine(mcp).kind).toBe('mcp');
+  });
+
+  it('não casa texto de aviso dentro de registro que não é notify de extensão', () => {
+    const tool = JSON.stringify({ type: 'tool_execution_end', result: { output: 'MCP servers need attention: x failed' } });
+    expect(classifyHealthLine(tool)).toBe(null);
+    const delta = JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'LSP inactive' } });
+    expect(classifyHealthLine(delta)).toBe(null);
+  });
+});
+
+describe('noteHealth / healthChipState', () => {
+  const add = (map, ...lines) => lines.forEach(l => noteHealth(map, l));
+
+  it('mapa vazio (ou sem mapa) devolve chip sem avisos', () => {
+    expect(healthChipState(new Map())).toEqual({ count: 0, kinds: [], title: '' });
+    expect(healthChipState(undefined)).toEqual({ count: 0, kinds: [], title: '' });
+  });
+
+  it('um aviso: conta 1, guarda o tipo e lista a mensagem no title', () => {
+    const map = new Map();
+    add(map, 'extensão LSP inactive');
+    const st = healthChipState(map);
+    expect(st.count).toBe(1);
+    expect(st.kinds).toEqual(['lsp']);
+    expect(st.title).toMatch(/1 aviso\(s\)/);
+    expect(st.title).toMatch(/lsp: extensão LSP inactive/);
+  });
+
+  it('três avisos (tipos misturados): kinds na ordem de chegada e 3 linhas no title', () => {
+    const map = new Map();
+    add(map,
+      'extensão LSP inactive',
+      'extensão MCP servers need attention: browseros-neo: failed: fetch failed',
+      'extensão LSP inactive (2)');
+    const st = healthChipState(map);
+    expect(st.count).toBe(3);
+    expect(st.kinds).toEqual(['lsp', 'mcp']);
+    expect(st.title.split('\n').length).toBe(4); // cabeçalho + 3 mensagens
+    expect(st.title).not.toMatch(/…/);
+  });
+
+  it('acima de 3 mensagens resume o resto com … e a contagem', () => {
+    const map = new Map();
+    add(map,
+      'extensão LSP inactive',
+      'extensão MCP servers need attention: a',
+      'extensão MCP servers need attention: b',
+      'extensão MCP servers need attention: c',
+      'extensão MCP servers need attention: d');
+    const st = healthChipState(map);
+    expect(st.count).toBe(5);
+    expect(st.title.split('\n').length).toBe(5); // cabeçalho + 3 + resumo
+    expect(st.title).toMatch(/… \+2 aviso\(s\)/);
+  });
+
+  it('deduplica mensagem repetida com espaços diferentes', () => {
+    const map = new Map();
+    add(map, 'extensão LSP inactive', '  extensão   LSP  inactive ');
+    expect(map.size).toBe(1);
+    expect(healthChipState(map).count).toBe(1);
+  });
+
+  it('limita a 20 avisos por sessão descartando o mais antigo', () => {
+    const map = new Map();
+    for (let i = 0; i < 25; i++) noteHealth(map, 'extensão LSP inactive #' + i);
+    expect(map.size).toBe(20);
+    expect(map.has('extensão LSP inactive #0')).toBe(false);
+    expect(map.has('extensão LSP inactive #24')).toBe(true);
+    expect(healthChipState(map).count).toBe(20);
+  });
+
+  it('ignora linha não reconhecida sem criar entrada', () => {
+    const map = new Map();
+    expect(noteHealth(map, 'turno pronto')).toBe(null);
+    expect(map.size).toBe(0);
   });
 });
 
@@ -130,8 +252,141 @@ describe('setZoom', () => {
   });
 });
 
-describe('shouldProbeTurn', () => {
-  const base = { silenceMs: 45000, probeIntervalMs: 30000 };
+describe('clampWidth', () => {
+  it('sobe para o mínimo', () => {
+    expect(clampWidth(100, 180, 520)).toBe(180);
+  });
+
+  it('desce para o máximo', () => {
+    expect(clampWidth(900, 180, 520)).toBe(520);
+  });
+
+  it('mantém valor dentro da faixa e trata lixo como mínimo', () => {
+    expect(clampWidth(300, 180, 520)).toBe(300);
+    expect(clampWidth('310', 180, 520)).toBe(310);
+    expect(clampWidth(NaN, 180, 520)).toBe(180);
+    expect(clampWidth(undefined, 240, 720)).toBe(240);
+  });
+});
+
+describe('clampColumns', () => {
+  it('não mexe quando o centro cabe', () => {
+    expect(clampColumns(300, 340, 1400)).toEqual({ aside: 300, panel: 340 });
+  });
+
+  it('reduz as colunas para preservar 320px de centro', () => {
+    const fit = clampColumns(520, 720, 1000);
+    expect(fit.aside + fit.panel).toBeLessThanOrEqual(1000 - 320);
+    expect(fit.aside).toBeGreaterThanOrEqual(180);
+    expect(fit.panel).toBeGreaterThanOrEqual(240);
+  });
+
+  it('reduz mais a coluna que estourou (a outra fica no piso)', () => {
+    const fit = clampColumns(180, 720, 1000);
+    expect(fit.aside).toBe(180);
+    expect(fit.panel).toBe(1000 - 320 - 180);
+  });
+
+  it('não desce abaixo dos pisos quando nem os pisos cabem', () => {
+    expect(clampColumns(520, 720, 640)).toEqual({ aside: 180, panel: 240 });
+  });
+});
+
+describe('grip do composer: Ctrl+wheel', () => {
+  const card = () => document.querySelector('.composer-card');
+  const wheel = (init) => new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init });
+  const varPx = () => parseFloat(document.body.style.getPropertyValue('--composer-w'));
+
+  it('sem Ctrl não intercepta nem persiste', () => {
+    const ev = wheel({ deltaY: -1 });
+    card().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(Number.isNaN(varPx())).toBe(true);
+    expect(localStorage.getItem('composer-w')).toBe(null);
+  });
+
+  it('com Ctrl alarga 40px por passo e persiste', () => {
+    card().dispatchEvent(wheel({ ctrlKey: true, deltaY: -1 }));
+    expect(varPx()).toBe(860);
+    expect(localStorage.getItem('composer-w')).toBe('860');
+    const ev = wheel({ ctrlKey: true, deltaY: -1 });
+    card().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(varPx()).toBe(900);
+  });
+
+  it('com Ctrl encolhe 40px por passo até o piso de 520', () => {
+    for (let i = 0; i < 40; i++) card().dispatchEvent(wheel({ ctrlKey: true, deltaY: 1 }));
+    expect(varPx()).toBe(520);
+    expect(localStorage.getItem('composer-w')).toBe('520');
+  });
+
+  it('com Ctrl alarga até o teto de 1600', () => {
+    for (let i = 0; i < 40; i++) card().dispatchEvent(wheel({ ctrlKey: true, deltaY: -1 }));
+    expect(varPx()).toBe(1600);
+    expect(localStorage.getItem('composer-w')).toBe('1600');
+  });
+});
+
+describe('colunas laterais: Ctrl + arrastar', () => {
+  const gripAside = () => document.getElementById('colgripaside');
+  const pointer = (type, init) => gripAside().dispatchEvent(
+    new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, ...init }));
+  const varPx = (name) => parseFloat(document.body.style.getPropertyValue(name));
+
+  it('sem Ctrl o grip não captura e não mexe na largura', () => {
+    pointer('pointerdown', { clientX: 100 });
+    pointer('pointermove', { clientX: 200 });
+    expect(Number.isNaN(varPx('--w-aside'))).toBe(true);
+    expect(localStorage.getItem('w-aside')).toBe(null);
+  });
+
+  it('com Ctrl arrasta em px, preserva o centro e só persiste ao soltar', () => {
+    pointer('pointerdown', { clientX: 100, ctrlKey: true });
+    pointer('pointermove', { clientX: 200, ctrlKey: true });
+    // 320 (partida sem layout medido) + 100 pedidos; o clamp devolve o que cabe
+    // na janela de 1024px com 320px de centro: 380 + 323.
+    expect(varPx('--w-aside')).toBe(380);
+    expect(varPx('--w-panel')).toBe(323);
+    expect(localStorage.getItem('w-aside')).toBe(null);
+    pointer('pointerup', { clientX: 200, ctrlKey: true });
+    expect(localStorage.getItem('w-aside')).toBe('380');
+    expect(localStorage.getItem('w-panel')).toBe('323');
+  });
+
+  it('com zoom 2.0 o resize reaplica os pisos (sem largura fixa estourando)', () => {
+    setZoom(2);
+    window.dispatchEvent(new Event('resize'));
+    // 1024/2 = 512px úteis: nem os pisos cabem com 320px de centro, então as
+    // colunas ficam no piso e o `minmax(220px,…)` do CSS continua mandando.
+    expect(varPx('--w-aside')).toBe(180);
+    expect(varPx('--w-panel')).toBe(240);
+    setZoom(1);
+    window.dispatchEvent(new Event('resize'));
+    expect(varPx('--w-aside')).toBe(380);
+  });
+});
+
+describe('syncStopButton', () => {
+  const stop = () => document.getElementById('stopbtn');
+  const send = () => document.getElementById('send');
+
+  it('turno rodando mostra o parar e mantém o envio clicável (fila)', () => {
+    syncStopButton(true);
+    expect(stop().classList.contains('hidden')).toBe(false);
+    expect(send().disabled).toBe(false);
+    expect(send().title).toBe('Enfileirar mensagem (turno rodando)');
+  });
+
+  it('turno parado esconde o parar e volta o título de envio', () => {
+    syncStopButton(false);
+    expect(stop().classList.contains('hidden')).toBe(true);
+    expect(send().disabled).toBe(false);
+    expect(send().title).toBe('Enviar (Enter)');
+  });
+});
+
+describe('shouldProbeTurn', () => {  const base = { silenceMs: 45000, probeIntervalMs: 30000 };
 
   it('não sonda antes do silêncio', () => {
     // 44s de silêncio: ainda dentro da janela, o turno pode estar só demorando.
@@ -248,17 +503,36 @@ describe('Esc interrompe o turno', () => {
 });
 
 describe('layout com zoom', () => {
-  it('colunas laterais cedem (minmax) em vez de espremer o centro', () => {
+  it('colunas laterais relativas em vez de espremer o centro', () => {
     const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
     // Regressão: `300px 1fr 340px` fixos — com zoom a viewport CSS encolhe e o
-    // centro sumia (painel direito engolia tudo). minmax deixa as laterais ceder.
-    expect(css).toMatch(/grid-template-columns:\s*clamp\(150px,\s*23%,\s*320px\)\s+minmax\(0,\s*1fr\)\s+clamp\(170px,\s*27%,\s*360px\)/);
-    expect(css).toMatch(/body\.no-subs\s*\{\s*grid-template-columns:\s*clamp\(150px,\s*23%,\s*320px\)\s+minmax\(0,\s*1fr\)/);
+    // centro sumia (painel direito engolia tudo). Relativas (%/vars) escalam juntas.
+    expect(css).toMatch(/--w-aside:\s*24%;\s*--w-panel:\s*27%/);
+    expect(css).toMatch(/grid-template-columns:\s*minmax\(220px,\s*var\(--w-aside\)\)\s+minmax\(0,\s*1fr\)\s+minmax\(240px,\s*var\(--w-panel\)\)/);
+    expect(css).toMatch(/body\.no-subs\s*\{\s*grid-template-columns:\s*minmax\(220px,\s*var\(--w-aside\)\)\s+minmax\(0,\s*1fr\)/);
+    // O painel fechado some de verdade: `#rightpanel` (1,0,0) vence `section` (0,1,2).
+    expect(css).toMatch(/body\.no-subs\s+#rightpanel\s*\{\s*display:\s*none/);
   });
 
   it('detalhe do subagent ocupa a célula do centro, sem offsets fixos', () => {
     const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
     expect(css).not.toMatch(/\.detail\s*\{[^}]*left:\s*300px/);
     expect(css).toMatch(/\.detail\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*3/);
+  });
+});
+
+describe('detalhe do subagent não estoura', () => {
+  it('ocupa a célula do centro e contém o conteúdo', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    // Regressão: `position:fixed; left:300px; right:340px` quebrava com zoom ou
+    // colunas redimensionadas — o painel saía da célula e o transcript cortava.
+    expect(css).toMatch(/\.detail\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*3[^}]*overflow:\s*hidden/);
+    // Título longo (worker id) não pode empurrar o painel: flex com piso zero.
+    expect(css).toMatch(/\.detail-title\s*\{[^}]*flex:\s*1[^}]*min-width:\s*0/);
+  });
+
+  it('bloco de código rola em vez de cortar linha longa', () => {
+    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    expect(css).toMatch(/\.md-code-box pre\s*\{[^}]*overflow-x:\s*auto/);
   });
 });

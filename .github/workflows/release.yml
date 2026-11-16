@@ -10,7 +10,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -231,7 +231,7 @@ jobs:
 
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-                 --draft --title "pi-deck $TAG" --notes-file notes.md
+                 --draft --title "sightdeck $TAG" --notes-file notes.md
 
           find dist -type f -print0 \
             | xargs -0 gh release upload "$TAG" \
