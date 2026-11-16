@@ -236,7 +236,7 @@ function maybeNotifyDone(sessionId) {
   lastNotifyAt[sessionId] = now;
   if (uiSettings.notifySound) beep();
   if (uiSettings.notifyDesktop && window.Notification && Notification.permission === 'granted') {
-    try { new Notification('pi-deck: turno pronto', { body: t.label || sessionId }); } catch { /* negado */ }
+    try { new Notification('sightdeck: turno pronto', { body: t.label || sessionId }); } catch { /* negado */ }
   }
 }
 
@@ -315,7 +315,7 @@ function saveTreeState() {
   } catch { /* sem storage */ }
 }
 
-/* Excluir sessão = mover para <projeto>/.pi-deck-trash/ (nunca apaga). */
+/* Excluir sessão = mover para <projeto>/.sightdeck-trash/ (nunca apaga). */
 function askDeleteSession(s) {
   confirmRun('mover para lixeira: ' + s.file, async () => {
     if (current && current.key === s.id) { try { await closeTab(s.id); } catch { /* já fechada */ } }
@@ -4081,7 +4081,7 @@ async function refreshHooksStatus() {
 }
 
 function setHooksEnabled(on) {
-  const cmd = on ? 'escrever ~/.pi/agent/extensions/pi-deck-hooks.js' : 'remover ~/.pi/agent/extensions/pi-deck-hooks.js';
+  const cmd = on ? 'escrever ~/.pi/agent/extensions/sightdeck-hooks.js' : 'remover ~/.pi/agent/extensions/sightdeck-hooks.js';
   confirmRun(cmd, async () => {
     try {
       const out = await inv(on ? 'hooks_install' : 'hooks_remove');
@@ -4272,7 +4272,7 @@ async function checkUpdate(manual) {
       return;
     }
 
-    const res = await fetch('https://api.github.com/repos/matheusbbdutra/pi-deck/releases/latest', {
+    const res = await fetch('https://api.github.com/repos/matheusbbdutra/sightdeck/releases/latest', {
       headers: { Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);

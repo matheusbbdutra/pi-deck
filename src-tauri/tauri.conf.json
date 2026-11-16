@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pi-deck",
-  "version": "0.1.18",
-  "identifier": "dev.matheus.pideck",
+  "productName": "sightdeck",
+  "version": "0.2.0",
+  "identifier": "dev.matheus.sightdeck",
   "build": {
     "beforeDevCommand": "npm run dev:ui",
     "beforeBuildCommand": "npm run build:ui",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "pi-deck",
+        "title": "sightdeck",
         "width": 1280,
         "height": 820,
         "url": "index.html"
@@ -37,6 +37,6 @@
     "publisher": "Matheus Dutra",
     "copyright": "© 2026 Matheus Dutra (MIT)",
     "shortDescription": "Desktop client for the pi coding agent",
-    "longDescription": "pi-deck is a desktop client for the pi coding agent: sessions grouped by project, live subagent runs, markdown transcripts with tool cards, model and thinking controls."
+    "longDescription": "sightdeck is a desktop client for the pi coding agent: sessions grouped by project, live subagent runs, markdown transcripts with tool cards, model and thinking controls."
   }
 }

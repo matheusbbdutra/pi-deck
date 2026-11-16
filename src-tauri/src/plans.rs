@@ -355,18 +355,18 @@ mod tests {
     /// Temp dir exclusivo deste teste. Prefixo próprio porque os testes rodam em
     /// paralelo no mesmo processo: o pid sozinho não separa os cenários.
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("pi-deck-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sightdeck-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     /// Cenário fs: `<dir>/plans/{a.md,b.md}` + um `.txt` que não deve entrar.
-    /// `PI_DECK_PLANS_DIR` aponta o cenário para um diretório fixo (prova manual);
+    /// `SIGHTDECK_PLANS_DIR` aponta o cenário para um diretório fixo (prova manual);
     /// sem a variável, o teste cria e apaga um temp dir próprio.
     #[test]
     fn plans_list_ordena_por_mtime_e_conta_os_itens() {
-        let fixed = std::env::var("PI_DECK_PLANS_DIR").ok().map(PathBuf::from);
+        let fixed = std::env::var("SIGHTDECK_PLANS_DIR").ok().map(PathBuf::from);
         let dir = match &fixed {
             Some(dir) => dir.clone(),
             None => temp_dir("plans"),
@@ -543,12 +543,12 @@ mod tests {
 
     #[test]
     fn plans_list_recusa_cwd_invalido() {
-        let missing = std::env::temp_dir().join(format!("pi-deck-ausente-{}", std::process::id()));
+        let missing = std::env::temp_dir().join(format!("sightdeck-ausente-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
         let err = plans_list(missing.to_string_lossy().into_owned()).unwrap_err();
         assert!(err.contains("não é um diretório"), "{err}");
 
-        let file = std::env::temp_dir().join(format!("pi-deck-arquivo-{}", std::process::id()));
+        let file = std::env::temp_dir().join(format!("sightdeck-arquivo-{}", std::process::id()));
         std::fs::write(&file, "x").unwrap();
         let err = plans_list(file.to_string_lossy().into_owned()).unwrap_err();
         let _ = std::fs::remove_file(&file);

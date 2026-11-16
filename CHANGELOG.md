@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to pi-deck. Format follows [Keep a Changelog](https://keepachangelog.com/),
+All notable changes to sightdeck. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [SemVer](https://semver.org/).
 
 ## [0.1.18] — 2026-11-16
@@ -200,7 +200,7 @@ versioning follows [SemVer](https://semver.org/).
 - **Opening the app from the desktop launcher failed with `spawn pi: No such file or directory`**:
   a GUI-launched process inherits the graphical session `PATH`, which does not include
   `~/.pi/agent/bin` or `~/.local/bin`. The `pi` binary is now resolved by path
-  (`PI_DECK_PI_BIN` → `~/.pi/agent/bin/pi` → `~/.local/bin/pi` → `PATH`) instead of relying on
+  (`SIGHTDECK_PI_BIN` → `~/.pi/agent/bin/pi` → `~/.local/bin/pi` → `PATH`) instead of relying on
   `PATH` alone, so the app works the same from the launcher and from a shell.
 - `delete_session` and `read_session_messages` accepted any path handed over by the webview.
   Both now require the path to resolve inside `~/.pi/agent/sessions`, with `..` and symlinks
@@ -274,8 +274,8 @@ versioning follows [SemVer](https://semver.org/).
   last used model, so the picker is populated before any session is opened.
 - Floating `↓` button to return to the end of the transcript, without dragging you down
   while you read history.
-- Hook instrumentation: `⚙ → Instrumentar hooks` writes `~/.pi/agent/extensions/pi-deck-hooks.js`,
-  which logs every hook invocation to `~/.pi/agent/pi-deck/hooks.log`; a **Hooks** tab shows it live.
+- Hook instrumentation: `⚙ → Instrumentar hooks` writes `~/.pi/agent/extensions/sightdeck-hooks.js`,
+  which logs every hook invocation to `~/.pi/agent/sightdeck/hooks.log`; a **Hooks** tab shows it live.
 - Extension activity feed in the transcript (`setStatus`, `notify`, `role: custom` messages).
 - Per-project `+` to start a session bound to that folder.
 
@@ -284,7 +284,7 @@ versioning follows [SemVer](https://semver.org/).
   change the model. Live processes are capped at 3 (oldest stopped) and killed on window close.
 - History is paginated (250 messages / 1 MB, 64 KB per line) with a `carregar anteriores` bar.
 - Sidebar is a collapsible tree; hidden projects and collapse state persist.
-- Deleting a session moves it to `<project>/.pi-deck-trash/` instead of removing the file.
+- Deleting a session moves it to `<project>/.sightdeck-trash/` instead of removing the file.
 - Back button in the subagent detail is a pill; delete buttons have visible contrast.
 
 ### Fixed
@@ -307,8 +307,8 @@ First public build.
 - Multi-platform release pipeline: `.deb`, `.rpm`, `.AppImage`, `.msi`, `.exe`, `.dmg`
   (arm64 and Intel).
 
-[0.1.7]: https://github.com/matheusbbdutra/pi-deck/releases/tag/v0.1.7
-[0.1.6]: https://github.com/matheusbbdutra/pi-deck/releases/tag/v0.1.6
-[0.1.5]: https://github.com/matheusbbdutra/pi-deck/releases/tag/v0.1.5
-[0.1.4]: https://github.com/matheusbbdutra/pi-deck/releases/tag/v0.1.4
-[0.1.1]: https://github.com/matheusbbdutra/pi-deck/releases/tag/v0.1.1
+[0.1.7]: https://github.com/matheusbbdutra/sightdeck/releases/tag/v0.1.7
+[0.1.6]: https://github.com/matheusbbdutra/sightdeck/releases/tag/v0.1.6
+[0.1.5]: https://github.com/matheusbbdutra/sightdeck/releases/tag/v0.1.5
+[0.1.4]: https://github.com/matheusbbdutra/sightdeck/releases/tag/v0.1.4
+[0.1.1]: https://github.com/matheusbbdutra/sightdeck/releases/tag/v0.1.1
