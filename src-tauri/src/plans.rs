@@ -179,9 +179,7 @@ fn plan_entry(path: &Path, base: &Path) -> Option<Plano> {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let rel = path.strip_prefix(base).unwrap_or(path);
-    let Some(source) = rel.parent().map(rel_slash) else {
-        return None;
-    };
+    let source = rel.parent().map(rel_slash)?;
     Some(Plano {
         name: path.file_stem()?.to_string_lossy().into_owned(),
         file: rel_slash(rel),
