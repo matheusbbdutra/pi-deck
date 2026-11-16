@@ -42,6 +42,17 @@ jobs:
       - name: Testes
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # O `cargo test` não vê `ui/`: os testes de UI (vitest + jsdom)
+      # rodam aqui. Mesmo pin/versão de Node do job build.
+      # pinned: actions/setup-node v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Testes de UI
+        run: npm ci && npm run build:ui && npm run test:ui
+
   # Separado do `build` de propósito: o job de build roda `npm ci` +
   # `tauri build` (bundling demorado) e um teste quebrado ali aparece
   # só no fim. Aqui o `cargo test` falha cedo e prova que o crate

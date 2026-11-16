@@ -76,6 +76,8 @@
               text-overflow:ellipsis; white-space:nowrap; }
   .tab.active .tab-proj { color:var(--accent); }
   .row.user.queued { opacity:.7; }
+  /* Cancelada e reinserida pelo render: precisa se distinguir de mensagem enviada. */
+  .row.user.cancelled { opacity:.6; border-left:2px solid var(--err); padding-left:8px; }
   .queue-tag { margin-left:6px; color:var(--warn); font-size:10.5px; }
   .queue-tag.delivered { color:var(--ok); }
   .queue-tag.cancelled { color:var(--err); }

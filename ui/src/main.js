@@ -694,11 +694,18 @@ async function send() {
   const key = current.key;
   const urow = el('div', 'row user', '▸ ' + message);
   urow.dataset.text = message;
+  // Posição cronológica da linha local: o log é reconstruído do disco a cada render,
+  // então a reinserção devolve a linha ao lugar que ela ocupava (insertRowByAt).
+  // `data-local` a exclui do `seen` do restore: sem isso ela se auto-invalidaria na
+  // restauração seguinte (o próprio texto já estaria no log).
+  const at = Date.now();
+  urow.dataset.at = String(at);
+  urow.dataset.local = '1';
   sentImages.forEach(img => urow.appendChild(thumb(img.dataUrl)));
   $('log').appendChild(urow);
   // A linha fica na aba (não só no Map global): trocar de aba não pode apagá-la
   // antes de o pi persistir a mensagem no .jsonl.
-  const entry = { key, text: message, row: urow, state: 'pending' };
+  const entry = { key, text: message, row: urow, state: 'pending', at };
   pendingPromptRows.set(id, entry);
   localRows(tab).push(entry);
   scrollBottom();
@@ -765,6 +772,8 @@ function renderMessages(data, ctx, keepNote) {
       if (!text.trim() && !imgs.length) { userIdx--; userTexts.pop(); continue; }
       const urow = el('div', 'row user', '▸ ' + text.trim());
       urow.dataset.text = text.trim();
+      // Âncora do restore: uma linha local só volta antes da 1ª mensagem mais nova.
+      if (Number.isFinite(m.timestamp)) urow.dataset.at = String(m.timestamp);
       userTexts[userIdx] = text.trim();
       // Só no log principal: no transcript de child o fork valeria para outra sessão.
       if (!ctx) urow.appendChild(forkRowBtn({ uindex: userIdx, utext: text.trim() }, 'fork a partir desta mensagem (nova sessão, original preservada)'));
@@ -1660,6 +1669,9 @@ function queueTag(row, text, cls) {
 function markRow(entry, state) {
   entry.state = state;
   entry.row.classList.toggle('queued', state === 'queued');
+  // Cancelada também no nível da row: quando o render a reinsere no meio do
+  // transcript, ela não pode se confundir com mensagem de fato enviada.
+  entry.row.classList.toggle('cancelled', state === 'cancelled');
   if (state === 'queued') queueTag(entry.row, '· na fila');
   else if (state === 'delivered') queueTag(entry.row, '· entregue', 'delivered');
   else if (state === 'cancelled') queueTag(entry.row, '· cancelada', 'cancelled');
@@ -1678,16 +1690,36 @@ function syncQueue(key, texts) {
   }
 }
 
-/* Reanexa linhas locais que o histórico do disco ainda não tem. Roda a cada render
-   do log principal: quando a mensagem já foi persistida, a cópia local cai. */
+/* Posição cronológica dentro do log. Insere antes da 1ª row mais nova que `at`;
+   sem âncora (transcript inteiro mais antigo, ou `at` desconhecido) vai para o fim. */
+export function insertRowByAt(log, row, at) {
+  const cut = Number(at);
+  for (const child of Array.from(log.children)) {
+    const raw = child.dataset ? child.dataset.at : undefined;
+    const childAt = raw === undefined || raw === '' ? NaN : Number(raw);
+    if (Number.isFinite(childAt) && childAt > cut) { log.insertBefore(row, child); return; }
+  }
+  log.appendChild(row);
+}
+
+/* Regra do restore: o que conta é o texto, não o estado. Linha cancelada cujo texto
+   já está no transcript era a mesma mensagem — reinseri-la a prendia no fim do log
+   para sempre (bug: mensagem antiga reaparecendo no fim do transcript). */
+export function shouldRestoreLocalRow(entry, seen) {
+  return !!(entry && seen) && !seen.has(entry.text);
+}
+
+/* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
+   render do log principal, então `seen` só contém linhas vindas do disco
+   (`data-local` fica de fora): quando a mensagem já foi persistida, a cópia local cai. */
 function restoreLocalRows() {
   const t = tabs.find(x => current && x.key === current.key);
   if (!t || !t.localRows || !t.localRows.length) return;
   const log = $('log');
-  const seen = new Set(Array.from(log.querySelectorAll('.row.user')).map(n => n.dataset.text));
+  const seen = new Set(Array.from(log.querySelectorAll('.row.user:not([data-local])')).map(n => n.dataset.text));
   t.localRows = t.localRows.filter((entry) => {
-    if (entry.state !== 'cancelled' && seen.has(entry.text)) return false;
-    if (!entry.row.isConnected) log.appendChild(entry.row);
+    if (!shouldRestoreLocalRow(entry, seen)) return false;
+    if (!entry.row.isConnected) insertRowByAt(log, entry.row, entry.at);
     return true;
   });
 }
@@ -2674,7 +2706,10 @@ async function switchTab(key) {
   // Chip de contexto é por sessão: repinta do cache e o get_session_stats abaixo atualiza.
   if (t.stats) { sessionState = { ...(sessionState || {}), stats: t.stats }; updateStats(t.stats); }
   clear($('log'));
-  restoreLocalRows();
+  // O restore NÃO roda aqui: com o log recém-limpo o `seen` está vazio e tudo
+  // voltaria para o fim. `renderMessages` já o chama depois de pintar (o caminho do
+  // disco e o do `get_messages` passam por lá); a chamada abaixo cobre a aba sem
+  // histórico, e é inofensiva se um render chegar depois — ele limpa e repinta.
   renderTabs();
   setStatus(t.connected ? 'conectado · ' + prettyId(t.key) : 'somente leitura');
   setState(t.connected ? 'ready' : 'off');
@@ -2682,6 +2717,7 @@ async function switchTab(key) {
   restoreDraft(t);
 
   if (t.file) await loadHistoryFromDisk(t.file);
+  restoreLocalRows();
   // Sempre confirma o processo antes de falar com ele (a flag `connected` pode estar
   // velha após exit/evicção). ensureRpc devolve true na hora se já está vivo.
   if (await ensureRpc()) {
