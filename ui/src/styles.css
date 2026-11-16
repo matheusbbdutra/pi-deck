@@ -23,10 +23,14 @@
   }
   * { box-sizing:border-box; }
   html, body { height:100%; }
-  body { margin:0; display:grid; grid-template-columns:300px 1fr 340px;
+  body { margin:0; display:grid;
+         /* Colunas relativas com piso: `300px 1fr 340px` estourava com `zoom` alto
+            (a 2.0 numa janela de 1280px sobram 640px de layout e as laterais
+            fixas tomavam tudo, jogando o painel por cima da sidebar). */
+         grid-template-columns:minmax(220px,24%) minmax(0,1fr) minmax(240px,27%);
          grid-template-rows:34px 30px 1fr; background:var(--bg); color:var(--fg);
          font:12.5px/1.6 var(--mono); overflow:hidden; }
-  body.no-subs { grid-template-columns:300px 1fr; }
+  body.no-subs { grid-template-columns:minmax(220px,24%) minmax(0,1fr); }
   body.no-subs section { display:none; }
 
   header { grid-column:1/-1; display:flex; align-items:center; gap:10px; padding:0 12px;
@@ -53,10 +57,10 @@
   button.icon:hover { color:var(--accent); border-color:var(--accent); }
   button.on { color:var(--accent); border-color:var(--accent); }
 
-  aside, main { overflow-y:auto; overflow-x:hidden; }
+  aside, main { overflow-y:auto; overflow-x:hidden; min-width:0; }
   aside { border-right:1px solid var(--line); background:var(--panel);
           display:flex; flex-direction:column; overflow:hidden; }
-  section { border-left:1px solid var(--line); background:var(--panel); }
+  section { border-left:1px solid var(--line); background:var(--panel); min-width:0; }
   .side-foot { flex:none; padding:5px 10px; border-top:1px solid var(--line);
                font-family:var(--mono); font-size:10.5px; color:var(--mute); }
   .auth-chip { margin-left:8px; font-size:9.5px; padding:1px 6px; border-radius:3px;
