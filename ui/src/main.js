@@ -5,7 +5,7 @@ import { $, el, stripAnsi, clear, setEmpty, scrollBottom, updateScrollBtn, uiSet
 import { setMarkdown, mdRow, copyText, extActivity } from './markdown.js';
 import { card, thinkBlock, outputText } from './tool-cards.js';
 import { appendHighlighted, langFor } from './highlight.js';
-import { initTerminal } from './terminal.js';
+import { initTerminal, reconcileTerminal } from './terminal.js';
 
 let current = null;
 let seq = 0;
@@ -443,6 +443,7 @@ async function start(cwd, key, refValue, refFlag, childrenDir) {
   stashDraft();
   viewSeq++;
   current = { key, cwd, childrenDir, refValue, refFlag: refFlag || '--session' };
+  reconcileTerminal();  // terminal aberto herda a pasta da sessão
   cards.clear();
   pendingPromptRows.clear();
   lastSnap = null;
@@ -2544,6 +2545,7 @@ async function switchTab(key) {
   viewSeq++;
   resetPaged();
   current = { key: t.key, cwd: t.cwd, childrenDir: t.childrenDir, refValue: t.refValue, refFlag: t.refFlag, file: t.file, connected: !!t.connected };
+  reconcileTerminal();
   activeTab = t;
   cards.clear();
   // pendingPromptRows NÃO é limpo aqui: a resposta do prompt pode chegar depois da
@@ -3963,7 +3965,7 @@ $('panelsubs').onclick = () => { if (current && current.childrenDir) loadChildre
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
 initSplit();
 // Dock do terminal: cwd/home vêm da sessão ativa (o PTY não segue trocas de sessão sozinho)
-initTerminal({ getCwd: () => (current && current.cwd) || '', getHome: () => homeDir || '' });
+initTerminal({ getCwd: () => (current && current.cwd) || '' });
 setEmptyState(true, 'nosession');
 
 loadSettings();

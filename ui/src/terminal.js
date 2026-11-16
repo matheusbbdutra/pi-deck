@@ -28,7 +28,6 @@ let unData = null;   // unlisten de 'pty-data'
 let unExit = null;   // unlisten de 'pty-exit'
 let pending = [];    // eventos de um PTY ainda sem aba associada (o prompt inicial vem cedo)
 let getCwd = () => '';
-let getHome = () => '';
 
 const dock = () => $('termdock');
 const activeTerm = () => terms.find((t) => t.id === activeId) || null;
@@ -122,14 +121,16 @@ function buffer(kind, p) {
   if (pending.length > 400) pending.shift();
 }
 
-function onData(p) {
+function onData(ev) {
+  const p = ev && ev.payload ? ev.payload : ev;  // Tauri entrega {event, payload, id}
   if (!p || !p.id) return;
   const t = byPtyId(p.id);
   if (t) { writeB64(t, p.b64); return; }
   buffer('data', p);
 }
 
-function onExit(p) {
+function onExit(ev) {
+  const p = ev && ev.payload ? ev.payload : ev;  // envelope do Tauri
   if (!p || !p.id) return;
   const t = byPtyId(p.id);
   if (t) { markExited(t); return; }
@@ -146,10 +147,16 @@ function flushPending(t) {
   pending = rest;
 }
 
+let listenersPromise = null;
+// Memoizado: initTerminal e openTerminal chamam quase juntos, e sem isso o
+// segundo registro duplicava os listeners (cada evento entregue duas vezes).
 async function ensureListeners() {
-  if (unData || unExit) return;
-  unData = await listen('pty-data', onData);
-  unExit = await listen('pty-exit', onExit);
+  if (listenersPromise) return listenersPromise;
+  listenersPromise = (async () => {
+    unData = await listen('pty-data', onData);
+    unExit = await listen('pty-exit', onExit);
+  })();
+  try { await listenersPromise; } catch (e) { listenersPromise = null; throw e; }
 }
 
 function dropListeners() {
@@ -158,7 +165,14 @@ function dropListeners() {
 }
 
 async function openPty(t) {
-  const cwd = String(getCwd() || getHome() || '/');
+  // Sem sessão o cwd vem vazio: abrir em `/` era o bug — o shell tem que nascer
+  // na pasta da sessão, então espera a sessão (reconcileTerminal retoma depois).
+  const cwd = String(getCwd() || '');
+  if (!cwd) {
+    t.ptyId = null;
+    showMsg('abra uma sessão para o terminal herdar a pasta');
+    return;
+  }
   t.opening = true;
   showMsg('');
   try {
@@ -242,6 +256,7 @@ function addTab() {
   const t = { id, ptyId: null, term, fit, cwd: '', alive: true, opening: false, host, tab, dead };
   term.open(host);
   term.onData((d) => {
+    t.touched = true;
     if (!t.ptyId) return;
     inv('pty_write', { id: t.ptyId, b64: b64FromBytes(enc.encode(d)) })
       .catch((err) => showMsg('falha ao escrever no terminal: ' + (err && err.message ? err.message : err)));
@@ -293,6 +308,29 @@ async function restart() {
   t.term.focus();
 }
 
+async function restartTab(t) {
+  await closePty(t);
+  t.alive = true;
+  t.tab.classList.remove('dead');
+  t.dead.classList.add('hidden');
+  t.term.reset();
+  fitTerm(t);
+  await openPty(t);
+}
+
+/* Chamado quando a sessão em foco muda: terminal ainda sem PTY herda o cwd, e um
+   terminal que ninguém digitou ainda muda de pasta sozinho. Terminal em uso nunca
+   é morto — nesse caso só marca "stale" e espera o reiniciar. */
+export function reconcileTerminal() {
+  const d = dock();
+  if (!d || d.classList.contains('hidden')) return;
+  const t = activeTerm();
+  if (!t) return;
+  const sess = String(getCwd() || '');
+  if (!t.ptyId && t.alive) { if (sess) void openPty(t); return; }
+  if (sess && t.cwd && sess !== t.cwd && !t.touched) void restartTab(t);
+}
+
 export async function openTerminal() {
   const d = dock();
   if (!d) return;
@@ -330,7 +368,6 @@ export function toggleTerminal() {
 
 export function initTerminal(opts = {}) {
   getCwd = typeof opts.getCwd === 'function' ? opts.getCwd : () => '';
-  getHome = typeof opts.getHome === 'function' ? opts.getHome : () => '';
   const d = dock();
   if (!d) return;
 
