@@ -6,7 +6,7 @@
 //! `[x]`/`[X]` e o resto como texto. Item dentro de bloco cercado (``` / ~~~)
 //! é exemplo de documentação, não progresso, e não conta.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 /// Teto de arquivos devolvidos (os mais recentes por `mtime`).
@@ -162,6 +162,7 @@ fn shorten(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     /// Markdown do `a.md` do cenário: aberto/fechado, `[X]`, `*`, indentado,
     /// linha sem checkbox e um checklist dentro de bloco cercado (não conta).
@@ -219,15 +220,12 @@ mod tests {
             "texto\n",
             "-[ ] sem espaço\n",
             "- [z] letra inválida\n",
-            "- [ ]\u{0}?", // marcador válido: só confirma que não panica
+            "```\n", // cerca sem par não vira item
         ] {
-            let (done, total, current) = parse_checklist(md);
-            assert!(done <= total, "{md:?}");
+            assert_eq!(parse_checklist(md), (0, 0, None), "{md:?}");
         }
-        assert_eq!(parse_checklist("- item comum\n").1, 0);
-        assert_eq!(parse_checklist("texto\n").1, 0);
-        assert_eq!(parse_checklist("-[ ] sem espaço\n").1, 0);
-        assert_eq!(parse_checklist("- [z] letra inválida\n").1, 0);
+        // Item sem texto conta: `[ ]` sozinho é progresso, não exemplo.
+        assert_eq!(parse_checklist("- [ ]\n"), (0, 1, Some(String::new())));
     }
 
     #[test]
