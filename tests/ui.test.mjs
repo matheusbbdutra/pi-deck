@@ -514,20 +514,18 @@ describe('layout com zoom', () => {
     expect(css).toMatch(/body\.no-subs\s+#rightpanel\s*\{\s*display:\s*none/);
   });
 
-  it('detalhe do subagent ocupa a célula do centro, sem offsets fixos', () => {
+  it('abre como caixinha modal no meio, fora do grid', () => {
     const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
+    const html = readFileSync(resolve(process.cwd(), 'ui/index.html'), 'utf8');
+    // Regressão: célula do grid ou offsets fixos quebravam com zoom/colunas
+    // redimensionadas (virava terceira coluna ou cortava o transcript). Agora é
+    // scrim fixo + caixa central, imune ao layout das colunas.
+    expect(css).not.toMatch(/\.detail\s*\{[^}]*grid-column/);
     expect(css).not.toMatch(/\.detail\s*\{[^}]*left:\s*300px/);
-    expect(css).toMatch(/\.detail\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*3/);
-  });
-});
-
-describe('detalhe do subagent não estoura', () => {
-  it('ocupa a célula do centro e contém o conteúdo', () => {
-    const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
-    // Regressão: `position:fixed; left:300px; right:340px` quebrava com zoom ou
-    // colunas redimensionadas — o painel saía da célula e o transcript cortava.
-    expect(css).toMatch(/\.detail\s*\{[^}]*grid-column:\s*2[^}]*grid-row:\s*3[^}]*overflow:\s*hidden/);
-    // Título longo (worker id) não pode empurrar o painel: flex com piso zero.
+    expect(css).toMatch(/\.detail\s*\{[^}]*position:\s*fixed[^}]*align-items:\s*center[^}]*justify-content:\s*center/);
+    expect(css).toMatch(/\.detail-box\s*\{/);
+    expect(html).toContain('class="detail-box"');
+    // Título longo (worker id) não pode empurrar a caixa: flex com piso zero.
     expect(css).toMatch(/\.detail-title\s*\{[^}]*flex:\s*1[^}]*min-width:\s*0/);
   });
 

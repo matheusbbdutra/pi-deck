@@ -4475,6 +4475,8 @@ $('forkbtn').onclick = async (e) => {
   sendCommand({ type: 'get_fork_messages' });
 };
 $('detailback').onclick = closeDetail;
+// Clique fora da caixinha (no scrim) também volta — padrão dos overlays do projeto.
+$('detail').addEventListener('mousedown', (e) => { if (e.target === $('detail')) closeDetail(); });
 
 $('modeltoggle').onclick = (e) => {
   e.stopPropagation();
