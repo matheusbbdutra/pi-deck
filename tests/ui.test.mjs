@@ -18,6 +18,7 @@ let insertRowByAt;
 let shouldRestoreLocalRow;
 let appendCapped;
 let setZoom;
+let shouldProbeTurn;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -40,7 +41,7 @@ beforeAll(async () => {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom } = await import('../ui/src/main.js'));
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -124,6 +125,33 @@ describe('setZoom', () => {
     setZoom(1.7);
     expect(setZoom(1)).toBe(1);
     expect(localStorage.getItem('zoom')).toBe('1');
+  });
+});
+
+describe('shouldProbeTurn', () => {
+  const base = { silenceMs: 45000, probeIntervalMs: 30000 };
+
+  it('não sonda antes do silêncio', () => {
+    // 44s de silêncio: ainda dentro da janela, o turno pode estar só demorando.
+    expect(shouldProbeTurn({ ...base, working: true, lastEventAt: 1000, now: 45000 })).toBe(false);
+  });
+
+  it('sonda depois do silêncio', () => {
+    expect(shouldProbeTurn({ ...base, working: true, lastEventAt: 1000, now: 46001 })).toBe(true);
+  });
+
+  it('não sonda de novo antes do intervalo mínimo entre sondas', () => {
+    const silenceOver = { ...base, working: true, lastEventAt: 0, now: 60000 };
+    expect(shouldProbeTurn({ ...silenceOver, lastProbeAt: 40000 })).toBe(false);
+    expect(shouldProbeTurn({ ...silenceOver, lastProbeAt: 30000 })).toBe(true);
+  });
+
+  it('não sonda aba que não está trabalhando', () => {
+    expect(shouldProbeTurn({ ...base, working: false, lastEventAt: 0, now: 600000 })).toBe(false);
+  });
+
+  it('aba sem evento registrado conta como silenciosa desde sempre', () => {
+    expect(shouldProbeTurn({ ...base, working: true, lastEventAt: undefined, now: 46000 })).toBe(true);
   });
 });
 

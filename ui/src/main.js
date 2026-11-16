@@ -100,6 +100,9 @@ function setTurn(sessionId, working, phase) {
     const changed = !!t.working !== !!working;
     t.working = working;
     t.phase = working ? (phase || t.phase || 'pensando…') : '';
+    // Turno que começa zera o silêncio: o vigia conta a partir daqui, não do último
+    // evento antigo da sessão (senão sondaria o turno recém-enviado).
+    if (changed && working) t.lastEventAt = Date.now();
     // Só redesenha na transição: text_delta chega a cada token.
     if (changed) renderTabs();
   }
@@ -108,6 +111,75 @@ function setTurn(sessionId, working, phase) {
     if (working) { setStatus('trabalhando'); setState('busy'); }
   }
 }
+
+/* =============== vigia do turno fantasma =============== */
+/* `agent_settled` é o único sinal de fim de turno. Quando ele se perde (processo morto
+   sem exit, filho trocado, sessão aberta em duas instâncias) a aba fica "trabalhando"
+   para sempre: spinner girando e Esc sem efeito. O vigia pergunta o estado real ao pi
+   e destrava a aba quando ele confirma que já não há turno rodando. */
+const TURN_SILENCE_MS = 45000; // silêncio por aba que dispara a sonda
+const TURN_PROBE_MS = 30000;   // intervalo mínimo entre sondas da mesma aba
+const PROBE_PREFIX = 'probe:';
+/* Última sonda por aba (transiente: não vai para o saveTabs). */
+const lastProbeAt = {};
+
+/** Predicado puro do vigia: só sonda aba trabalhando, silenciosa e fora do intervalo. */
+export function shouldProbeTurn({ working, lastEventAt, now, silenceMs, lastProbeAt: probeAt, probeIntervalMs }) {
+  if (!working) return false;
+  if (now - (lastEventAt || 0) <= silenceMs) return false;
+  return now - (probeAt || 0) >= probeIntervalMs;
+}
+
+/** Turno fantasma: zera o indicador, descarta o parcial e realinha com o disco. */
+function settleGhostTurn(key, why) {
+  const t = tabs.find(x => x.key === key);
+  setTurn(key, false);
+  delete lastProbeAt[key];
+  if (t) { t.streamText = ''; t.thinkText = ''; t.queue = []; saveTabs(); }
+  renderTabs();
+  if (!current || current.key !== key) return;
+  stream = null;
+  setTyping(false);
+  setStatus(why);
+  setState('ready');
+  // O parcial do turno morto nunca foi para o disco: repinta o que o pi persistiu.
+  if (t && t.file) loadHistoryFromDisk(t.file);
+  else sendCommand({ type: 'get_messages' });
+  loadGit(); loadEdits();
+  note(why);
+}
+
+/** Resposta da sonda: só destrava quando o pi confirma que não há turno rodando. */
+function reconcileTurn(key, rec) {
+  const t = tabs.find(x => x.key === key);
+  // Turno já encerrou por outro caminho (agent_settled/exit) ou a aba sumiu.
+  if (!t || !t.working) return;
+  const d = (rec && rec.data) || {};
+  // Ainda rodando: nada a fazer. A própria linha da sonda já renovou o silêncio.
+  if (rec && rec.success && (d.isStreaming || d.isCompacting || d.pendingMessageCount)) return;
+  settleGhostTurn(key, rec && rec.success
+    ? 'turno encerrado sem aviso do pi — indicador destravado'
+    : 'o pi não respondeu ao estado do turno — indicador destravado');
+}
+
+function turnWatchdog() {
+  const now = Date.now();
+  for (const t of tabs) {
+    // Aba sem processo vivo não tem turno para reconciliar (e some de `tabs` ao fechar).
+    if (!t.connected) continue;
+    const probe = shouldProbeTurn({
+      working: !!t.working, lastEventAt: t.lastEventAt, now,
+      silenceMs: TURN_SILENCE_MS, lastProbeAt: lastProbeAt[t.key], probeIntervalMs: TURN_PROBE_MS,
+    });
+    if (!probe) continue;
+    lastProbeAt[t.key] = now;
+    // `probe:<key>` não colide com id de RPC normal e identifica a aba na resposta.
+    inv('rpc_command', { sessionId: t.key, payload: JSON.stringify({ id: PROBE_PREFIX + t.key, type: 'get_state' }) })
+      // Sonda recusada = slot do processo morreu; também não há turno rodando.
+      .catch(() => reconcileTurn(t.key, null));
+  }
+}
+setInterval(turnWatchdog, 5000);
 
 /** Último aviso por sessão: turnos curtos em sequência não podem empilhar som/popup. */
 const lastNotifyAt = {};
@@ -675,6 +747,26 @@ function stopLive(key) {
   updateProcCount();
 }
 
+/* =============== envio =============== */
+
+/** `send_prompt`, com uma reconexão: o stdin do filho pode ter morrido entre o
+ *  connect e este envio (o pi morreu, o Rust liberou o slot). Como o write falhou,
+ *  a mensagem não saiu: sobe um processo novo e reenvia uma única vez. */
+async function sendPromptWithRetry(key, payload) {
+  try {
+    await inv('send_prompt', payload);
+  } catch (e) {
+    if (!/processo do pi encerrou|nao iniciada/.test(String(e))) throw e;
+    const t = tabs.find(x => x.key === key);
+    if (t) t.connected = false;
+    const isCurrent = () => !!current && current.key === key;
+    if (isCurrent()) current.connected = false;
+    // `ensureRpc` sobe o processo da view atual: só serve se ainda é esta aba.
+    if (!isCurrent() || !(await ensureRpc())) throw e;
+    await inv('send_prompt', payload);
+  }
+}
+
 async function send() {
   const typed = $('input').value.trim();
   const hasImages = pendingImages.length > 0;
@@ -739,7 +831,8 @@ async function send() {
   try {
     // O Rust manda `streamingBehavior: "steer"`: com turno rodando o pi enfileira
     // (disposition "queued"), parado é ignorado e o turno começa.
-    await inv('send_prompt', { sessionId: key, message, id, images });
+    const payload = { sessionId: key, message, id, images };
+    await sendPromptWithRetry(key, payload);
     // Resposta pode chegar depois de trocar de aba: o estado do turno é da chave
     // que enviou, nunca da sessão que está em foco agora.
     const isCurrent = () => !!current && current.key === key;
@@ -756,7 +849,26 @@ async function send() {
     }
   } catch (e) {
     pendingPromptRows.delete(id);
-    if (current && current.key === key) $('log').appendChild(el('div', 'row note', String(e)));
+    // Envio não chegou ao pi: a linha local sai do log (não foi mensagem) e o texto
+    // volta ao composer da aba, senão o que foi digitado se perde.
+    const list = localRows(tab);
+    const li = list.indexOf(entry);
+    if (li >= 0) list.splice(li, 1);
+    urow.remove();
+    if (tab) {
+      tab.draft = tab.draft ? message + '\n' + tab.draft : message;
+      tab.images = sentImages.concat(Array.isArray(tab.images) ? tab.images : []);
+      saveTabs();
+    }
+    if (current && current.key === key) {
+      const box = $('input');
+      box.value = box.value.trim() ? message + '\n' + box.value : message;
+      autosizeInput();
+      pendingImages = sentImages.concat(pendingImages);
+      renderAttachments();
+      $('log').appendChild(el('div', 'row note', String(e)));
+      scrollBottom(true);
+    }
   }
 }
 
@@ -1782,12 +1894,23 @@ function scheduleStreamRender() {
 
 listen('rpc-line', (ev) => {
   const [sessionId, line] = ev.payload;
+  // Vigia do turno: toda linha da sessão é sinal de vida, inclusive de aba de fundo.
+  const liveTab = tabs.find(x => x.key === sessionId);
+  if (liveTab) liveTab.lastEventAt = Date.now();
   // Diagnóstico: só registra no buffer circular; o roteamento abaixo não muda.
   try {
     const rec = JSON.parse(line);
     const fg = current && sessionId === current.key ? 'atual' : 'fundo';
     diagPush(rec.type || rec.command || line.slice(0, 120), '—', rec.command ? ((rec.success ? 'ok' : 'falhou') + ' · ' + fg) : (String(rec.type || 'evento') + ' · ' + fg));
   } catch { diagPush(line.slice(0, 160), '—', 'raw'); }
+  // Resposta da sonda vale para aba em foco e de fundo: fica antes do split e nunca
+  // cai no `handleResponse` (get_state da sonda não é o estado da sessão da view).
+  if (line.includes('"type":"response"')) {
+    let probe = null;
+    try { probe = JSON.parse(line); } catch { /* linha crua */ }
+    const pid = probe ? String(probe.id || '') : '';
+    if (pid.startsWith(PROBE_PREFIX)) { reconcileTurn(pid.slice(PROBE_PREFIX.length), probe); return; }
+  }
   if (!current || sessionId !== current.key) {
     // A fila muda também em aba de segundo plano: sem isto o estado nunca sairia de
     // "na fila" ao voltar para a aba.
@@ -2802,6 +2925,9 @@ async function switchTab(key) {
 async function closeTab(key) {
   try { await inv('stop_session', { sessionId: key }); } catch { /* já parado */ }
   stopLive(key);
+  // Aba fechada sai do vigia: sem isto uma sonda pendente poderia destravar a chave
+  // reaberta logo depois (mesma key, outro processo).
+  delete lastProbeAt[key];
   const wasActive = current && current.key === key;
   tabs = tabs.filter(t => t.key !== key);
 
