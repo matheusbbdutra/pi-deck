@@ -21,7 +21,11 @@ fn resolve_pi_bin(
         return PathBuf::from(p);
     }
     if let Some(home) = home {
-        for rel in [".pi/agent/bin/pi", ".local/bin/pi"] {
+        for rel in [
+            ".pi/agent/bin/pi",
+            ".local/bin/pi",
+            ".local/share/fnm/aliases/default/bin/pi",
+        ] {
             let cand = home.join(rel);
             if exists(&cand) {
                 return cand;
@@ -234,7 +238,8 @@ fn validate_login_provider(provider: &str) -> Result<&str, String> {
 #[tauri::command]
 pub fn open_terminal_login(provider: String) -> Result<String, String> {
     let p = validate_login_provider(&provider)?;
-    let inner = format!("pi auth login {p}; echo; printf 'enter para fechar '; read -r _");
+    let bin = pi_bin().to_string_lossy().replace('\'', r"'\''");
+    let inner = format!("'{bin}' auth login {p}; echo; printf 'enter para fechar '; read -r _");
 
     #[cfg(target_os = "linux")]
     let candidates: Vec<(&str, Vec<String>)> = vec![
@@ -2070,6 +2075,17 @@ mod tests {
     }
 
     // ---------- resolve_pi_bin: decisão pura, sem env e sem fs ----------
+
+    #[test]
+    fn pi_bin_finds_fnm_alias_default() {
+        let got = resolve_pi_bin(None, Some(Path::new("/home/u")), |p| {
+            p.ends_with(".local/share/fnm/aliases/default/bin/pi")
+        });
+        assert_eq!(
+            got,
+            PathBuf::from("/home/u/.local/share/fnm/aliases/default/bin/pi")
+        );
+    }
 
     #[test]
     fn pi_bin_env_wins_over_home() {
