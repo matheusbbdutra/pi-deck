@@ -1,14 +1,17 @@
 {
   "name": "pi-deck",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Desktop client for the pi coding agent",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "build:ui": "vite build --config ui/vite.config.mjs",
+    "dev:ui": "vite --config ui/vite.config.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4"
+    "@tauri-apps/cli": "^2.12.4",
+    "vite": "^8.3.8"
   }
 }

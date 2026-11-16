@@ -3,6 +3,15 @@
 All notable changes to pi-deck. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.1.18] — 2026-11-16
+
+### Changed
+- **UI deixa de ser single-file**: `ui/index.html` caiu de 4824 para 249 linhas — CSS em `ui/src/styles.css` e JS em `ui/src/main.js`, extração byte-idêntica (conferida por `diff` contra as faixas do arquivo original), com build Vite (`frontendDist` agora `../ui/dist`, `beforeBuildCommand`/`beforeDevCommand`).
+- **Módulos puros**: `ui/src/rpc.js`, `ui/src/shared.js`, `ui/src/markdown.js` e `ui/src/tool-cards.js` saem do arquivo principal sem alteração de corpo.
+
+### Fixed
+- **Painel de subagents em sessão sem children**: exibia `<stem>: Arquivo ou diretório inexistente (os error 2)` em vez de "nenhum subagent"; `list_children_in` passou a checar a existência do diretório antes do `canonicalize` (regressão coberta por `list_children_missing_dir_is_empty`).
+
 ## [0.1.17] — 2026-11-16
 
 ### Added

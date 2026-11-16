@@ -1398,11 +1398,14 @@ pub fn list_children(dir: String) -> Result<String, String> {
 }
 
 fn list_children_in(dir: &Path, root: &Path) -> Result<String, String> {
-    // Sem isso, um dir vindo do webview enumera qualquer diretório legível.
-    let dir = contained_in(dir, root)?;
+    // Sessão sem children: o diretório irmão do `.jsonl` nunca existiu e o
+    // `canonicalize` de contained_in falharia com NotFound (os error 2).
+    // Checar antes: diretório inexistente não enumera nada e não vaza path.
     if !dir.is_dir() {
         return Ok("[]".to_string());
     }
+    // Sem isso, um dir vindo do webview enumera qualquer diretório legível.
+    let dir = contained_in(dir, root)?;
 
     let mut items: Vec<(u64, String)> = Vec::new();
 
@@ -2297,6 +2300,16 @@ mod tests {
         t.file("sessions/proj/child1/run-0/session.jsonl", "{}\n");
         let out = list_children_in(&t.at("sessions/proj"), &root).unwrap();
         assert!(out.contains("run-0"), "{out}");
+    }
+
+    #[test]
+    fn list_children_missing_dir_is_empty() {
+        // Sessão sem subagent: o diretório de children nunca existiu.
+        let t = Tmp::new("childnone");
+        let root = t.at("sessions");
+        t.file("sessions/proj/s.jsonl", "{}\n");
+        let out = list_children_in(&t.at("sessions/proj/s"), &root).unwrap();
+        assert_eq!(out, "[]", "{out}");
     }
 
     #[test]
