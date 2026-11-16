@@ -360,6 +360,9 @@
               text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:right; }
   .file-count { flex:none; font-size:9.5px; padding:1px 5px; border-radius:3px;
                 background:#1e2130; color:var(--dim); }
+  /* aba git: sinais +add/−del (sem classe nova fora destas duas) */
+  .git-add { flex:none; color:var(--ok); font-size:9.5px; }
+  .git-del { flex:none; color:var(--err); font-size:9.5px; }
   /* diff de arquivo editado */
   .diff { margin:0 0 14px; border:1px solid #1e2431; border-radius:6px; background:#0c0f16;
           overflow:hidden; }
@@ -458,6 +461,9 @@
   .overlay-body h4 { margin:18px 0 8px; font-size:10px; color:var(--mute); font-weight:600;
                      letter-spacing:.06em; text-transform:uppercase; }
   .overlay-body h4:first-child { margin-top:0; }
+  /* Debug (⚙) é overlay, mas o detalhe de missão (`#detail`, z-index 20) abre por
+     cima dele: fica abaixo dos outros overlays para o "voltar" não o cobrir. */
+  #debug { z-index:15; }
   .pkgs-pre { margin:0; padding:10px 12px; background:#0c0f16; border:1px solid var(--line);
               border-radius:6px; font-family:var(--mono); font-size:11px; line-height:1.5;
               color:#b9c0d0; white-space:pre-wrap; max-height:38vh; overflow:auto; }

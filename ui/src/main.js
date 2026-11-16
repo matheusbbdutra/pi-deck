@@ -491,7 +491,7 @@ async function start(cwd, key, refValue, refFlag, childrenDir) {
     // Sessão nova só ganha `.jsonl` na 1ª mensagem: o get_state traz `sessionFile`,
     // sem o qual "carregar anteriores" e a aba Arquivos ficam sem caminho no disco.
     sendCommand({ type: 'get_state' });
-    if (panelPane === 'files') loadEdits();
+    if (panelPane === 'git') { loadGit(); loadEdits(); }
   } catch (e) {
     // Erro de outra sessão não aparece no transcript da atual.
     if (!current || current.key !== key) return;
@@ -567,7 +567,7 @@ async function openSession(cwd, s) {
   // Conecta já na abertura: contexto, thinking, modelo e comandos vêm do pi.
   await ensureRpc();
   checkAuth();
-  if (panelPane === 'files') loadEdits();
+  if (panelPane === 'git') { loadGit(); loadEdits(); }
 }
 
 /* Sobe o processo sob demanda, com teto de sessões vivas. */
@@ -825,9 +825,10 @@ function renderChildren(list) {
 }
 
 /* =============== painel: arquivos editados + diffs =============== */
+/* Sem aba própria: `session_edits` alimenta o diff da aba Git (clique numa row
+   que esteja na lista abre o patch com "desfazer hunk"). */
 let editedFiles = []; // último resultado de session_edits ({file, tool, at, src, patch})
-let editsError = '';
-let panelPane = 'subs';
+let panelPane = 'git';
 
 /* =============== diagnóstico: log circular das linhas RPC =============== */
 /* Buffer circular (máx 200) preenchido no listener `rpc-line` existente e no
@@ -840,7 +841,7 @@ const diagPending = new Map(); // rpc id -> Date.now() do envio (para a latênci
 function diagPush(cmd, lat, res) {
   diagBuf.push({ t: Date.now(), cmd: String(cmd == null ? '' : cmd).slice(0, 220), lat: lat || '—', res: res || '' });
   if (diagBuf.length > DIAG_MAX) diagBuf.splice(0, diagBuf.length - DIAG_MAX);
-  if (panelPane === 'diag') renderDiag();
+  if (!$('debug').classList.contains('hidden')) renderDiag();
 }
 
 function renderDiag() {
@@ -860,41 +861,36 @@ function renderDiag() {
   }
 }
 
+/** O painel direito tem duas abas: `git` e `subs`. `files`/`missions`/`diag` eram
+    abas e hoje são o overlay Debug (⚙ → Debug) — valor legado de localStorage
+    cai em `git`, que é a aba padrão. */
 function switchPanel(name) {
-  panelPane = name === 'diag' ? 'diag' : (name === 'missions' ? 'missions' : (name === 'files' ? 'files' : 'subs'));
+  panelPane = name === 'subs' ? 'subs' : 'git';
   try { localStorage.setItem('panel-pane', panelPane); } catch { /* sem storage */ }
   $('panelsubs').classList.toggle('active', panelPane === 'subs');
-  $('panelfiles').classList.toggle('active', panelPane === 'files');
-  $('panelmissions').classList.toggle('active', panelPane === 'missions');
-  $('paneldiag').classList.toggle('active', panelPane === 'diag');
+  $('panelgit').classList.toggle('active', panelPane === 'git');
   $('subs').classList.toggle('hidden', panelPane !== 'subs');
-  $('files').classList.toggle('hidden', panelPane !== 'files');
-  $('missions').classList.toggle('hidden', panelPane !== 'missions');
-  $('diag').classList.toggle('hidden', panelPane !== 'diag');
+  $('git').classList.toggle('hidden', panelPane !== 'git');
   // Clicar na aba é também um "atualizar": run de subagent aparece no disco
   // enquanto o turno roda, sem esperar o próximo agent_settled.
   if (panelPane === 'subs' && current && current.childrenDir) loadChildren(current.childrenDir);
-  if (panelPane === 'files') loadEdits();
-  if (panelPane === 'missions') loadMissions();
-  if (panelPane === 'diag') renderDiag();
+  if (panelPane === 'git') { loadGit(); loadEdits(); }
 }
 
-/** Lê as edições do disco (sessão + children). Barato, mas só roda com a aba visível. */
+/** Lê as edições do disco (sessão + children). Só roda com a aba Git visível:
+    é dela que sai o diff com "desfazer hunk" para o arquivo clicado. */
 async function loadEdits() {
   const file = current && current.file;
   const seq = viewSeq;
-  if (!file) { editedFiles = []; editsError = ''; renderFiles(); return; }
+  if (!file) { editedFiles = []; return; }
   try {
     const list = JSON.parse(String(await inv('session_edits', { path: file })));
     if (seq !== viewSeq) return; // trocou de sessão durante a leitura
     editedFiles = Array.isArray(list) ? list : [];
-    editsError = '';
-  } catch (e) {
+  } catch {
     if (seq !== viewSeq) return;
     editedFiles = [];
-    editsError = String(e);
   }
-  renderFiles();
 }
 
 /** "a/b/c.dart" -> ["c.dart", "a/b"] (aceita separador do Windows). */
@@ -904,40 +900,57 @@ function splitPath(p) {
   return i < 0 ? [s, ''] : [s.slice(i + 1), s.slice(0, i)];
 }
 
-function renderFiles() {
-  const host = $('files');
-  const groups = new Map();
-  for (const e of editedFiles) {
-    if (!e || !e.file) continue;
-    const g = groups.get(e.file) || { file: e.file, items: [], at: 0 };
-    g.items.push(e);
-    g.at = Math.max(g.at, Number(e.at) || 0);
-    groups.set(e.file, g);
-  }
-  const list = [...groups.values()].sort((a, b) => b.at - a.at);
-  const cnt = $('filescnt');
-  if (cnt) cnt.textContent = list.length ? String(list.length) : '';
+/** Mesmo arquivo depois de normalizar separador e `./` (cwd pode vir com `\\`). */
+function samePath(a, b) {
+  const norm = (p) => String(p || '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\.\//, '');
+  return norm(a) === norm(b);
+}
 
+/** Grupo de edições da sessão para um path do git. `session_edits` guarda o
+    caminho absoluto; o status do git é relativo ao `cwd`. */
+function sessionEditsFor(path) {
+  const cwd = String((current && current.cwd) || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const abs = cwd ? cwd + '/' + String(path || '').replace(/\\/g, '/') : String(path || '');
+  const items = editedFiles.filter((e) => e && e.file && (samePath(e.file, abs) || samePath(e.file, path)));
+  if (!items.length) return null;
+  return { file: items[0].file, items, at: Math.max(...items.map((e) => Number(e.at) || 0)) };
+}
+
+/** Clique na row: edição da sessão (com desfazer) ou patch do git (só leitura). */
+function openGitDiff(path) {
+  const g = sessionEditsFor(path);
+  if (g) { openDiffs(g); return; }
+  openWorktreeDiff(path);
+}
+
+/** Patch do worktree (`git_file_diff`) no MESMO painel de detalhe; `file` null
+    desliga o botão "desfazer hunk" do `renderPatch`. */
+async function openWorktreeDiff(path) {
+  const host = $('detaillog');
+  const [name, dir] = splitPath(path);
+  $('detailtitle').textContent = name + (dir ? '  ·  ' + dir : '');
   clear(host);
-  if (editsError) { host.appendChild(el('div', 'empty', editsError)); return; }
-  if (!list.length) {
-    host.appendChild(el('div', 'empty', current && current.file
-      ? 'nenhum arquivo editado nesta sessão'
-      : 'sessão nova: nada no disco ainda'));
+  host.appendChild(el('div', 'history-head', 'git diff · somente leitura'));
+  const box = el('div', 'diff');
+  const body = el('div', 'diff-body');
+  box.appendChild(body);
+  host.appendChild(box);
+  body.appendChild(el('div', 'empty', 'lendo diff…'));
+  $('detail').classList.remove('hidden');
+  const seq = viewSeq;
+  let patch = '';
+  try {
+    patch = String(await inv('git_file_diff', { cwd: current && current.cwd, path }));
+  } catch (e) {
+    if (seq !== viewSeq) return;
+    clear(body);
+    body.appendChild(el('div', 'empty', 'git diff: ' + e));
     return;
   }
-  host.appendChild(el('div', 'history-head',
-    list.length + ' arquivo(s) · ' + editedFiles.length + ' edição(ões)'));
-  for (const g of list) {
-    const [name, dir] = splitPath(g.file);
-    const row = el('div', 'file-row');
-    row.title = g.file;
-    row.appendChild(el('span', 'file-name', name));
-    row.appendChild(el('span', 'file-dir', dir));
-    row.appendChild(el('span', 'file-count', String(g.items.length)));
-    row.onclick = () => openDiffs(g);
-    host.appendChild(row);
-  }
+  if (seq !== viewSeq) return; // trocou de sessão durante a leitura
+  clear(body);
+  if (!patch.trim()) { body.appendChild(el('div', 'empty', 'sem alterações no worktree')); return; }
+  renderPatch(body, patch, null);
 }
 
 /** Abre o diff no mesmo painel de detalhe dos subagents. */
@@ -1050,8 +1063,6 @@ async function loadMissions() {
 
 function renderMissions() {
   const host = $('missions');
-  const cnt = $('missionscnt');
-  if (cnt) cnt.textContent = missionsList.length ? String(missionsList.length) : '';
   clear(host);
   if (missionsError) { host.appendChild(el('div', 'empty', missionsError)); return; }
   if (!missionsList.length) {
@@ -1080,6 +1091,75 @@ function openMission(m) {
     host.appendChild(el('div', 'row note', k + ': ' + (v || '—')));
   }
   $('detail').classList.remove('hidden');
+}
+
+/* =============== painel: git (somente leitura) =============== */
+let gitData = null; // último payload de git_status ({repo,branch,ahead,behind,detached,changes,totals})
+let gitError = '';
+
+async function loadGit() {
+  const cwd = current && current.cwd;
+  const seq = viewSeq;
+  if (!cwd) { gitData = null; gitError = ''; renderGit(); return; }
+  try {
+    const data = JSON.parse(String(await inv('git_status', { cwd })));
+    if (seq !== viewSeq) return; // trocou de sessão durante a leitura
+    gitData = data && typeof data === 'object' ? data : null;
+    gitError = '';
+  } catch (e) {
+    if (seq !== viewSeq) return;
+    gitData = null;
+    gitError = String(e);
+  }
+  renderGit();
+}
+
+function renderGit() {
+  const host = $('git');
+  if (!host) return;
+  const repo = !!gitData && gitData.repo === true;
+  const list = repo && Array.isArray(gitData.changes) ? gitData.changes : [];
+  const cnt = $('gitcnt');
+  if (cnt) cnt.textContent = list.length ? String(list.length) : '';
+  clear(host);
+  if (gitError) { host.appendChild(el('div', 'empty', gitError)); return; }
+  if (!repo) {
+    const cwd = current && current.cwd;
+    host.appendChild(el('div', 'empty', cwd ? 'sem repositório git em ' + cwd : 'nenhuma sessão aberta'));
+    return;
+  }
+  const t = gitData.totals || {};
+  const head = el('div', 'history-head');
+  const branch = String(gitData.branch || '') || (gitData.detached ? '(detached)' : '—');
+  head.appendChild(el('span', null, branch));
+  head.appendChild(el('span', null, ' · ↑' + (Number(gitData.ahead) || 0) + ' ↓' + (Number(gitData.behind) || 0)));
+  head.appendChild(el('span', null, ' · ' + list.length + ' arquivo(s) '));
+  head.appendChild(el('span', 'git-add', '+' + (Number(t.add) || 0)));
+  head.appendChild(el('span', null, ' '));
+  head.appendChild(el('span', 'git-del', '−' + (Number(t.del) || 0)));
+  host.appendChild(head);
+  // Caminho e estado limpo explícitos: sem isso, repo sem mudanças e "nada carregou"
+  // ficam idênticos na tela (bug reportado 2026-11-16).
+  const cwdTxt = String((current && current.cwd) || '');
+  if (cwdTxt) host.appendChild(el('div', 'file-dir', cwdTxt));
+  if (!list.length) {
+    host.appendChild(el('div', 'empty', 'repositório limpo — nenhuma mudança no worktree'));
+  }
+  for (const c of list) {
+    const [name, dir] = splitPath(c.path);
+    const row = el('div', 'file-row');
+    row.title = String(c.path || '') + ' · ' + (c.untracked ? 'não rastreado' : (c.staged ? 'no índice' : 'no worktree'))
+      + ' · clique para o diff';
+    row.appendChild(el('span', 'file-name', name));
+    row.appendChild(el('span', 'file-dir', dir));
+    row.appendChild(el('span', 'file-count', String(c.status || '?')));
+    if (typeof c.add === 'number' || typeof c.del === 'number') {
+      row.appendChild(el('span', 'git-add', '+' + (Number(c.add) || 0)));
+      row.appendChild(el('span', 'git-del', '−' + (Number(c.del) || 0)));
+    }
+    row.onclick = () => openGitDiff(String(c.path || ''));
+    host.appendChild(row);
+  }
 }
 
 async function loadChildren(dir) {
@@ -1285,8 +1365,8 @@ listen('rpc-line', (ev) => {
       if (resp.success) handleResponse(resp);
       else {
         $('log').appendChild(el('div', 'row note', resp.command + ': falhou'));
-        // Diagnóstico se paga em incidente: abre sozinho na falha.
-        if (panelPane !== 'diag') switchPanel('diag');
+        // O Diagnóstico virou overlay (⚙ → Debug): o buffer já guarda a falha,
+        // mas nada abre sozinho por cima do que o usuário está lendo.
       }
       return;
     }
@@ -1382,7 +1462,7 @@ listen('rpc-line', (ev) => {
       { const st = tabs.find(x => x.key === sessionId); if (st && st.streamText) { st.streamText = ''; saveTabs(); } }
       if (current && current.childrenDir) loadChildren(current.childrenDir);
       // Turno pode ter editado arquivos: a aba de diffs se atualiza sozinha.
-      if (panelPane === 'files') loadEdits();
+      if (panelPane === 'git') { loadGit(); loadEdits(); }
       sendCommand({ type: 'get_session_stats' });
       break;
 
@@ -1925,7 +2005,7 @@ function handleResponse(rec) {
         // Sessão criada com `+ Nova` nasce sem childrenDir: sem isto o painel de
         // subagents fica sem origem e nunca lista nada até reabrir pela sidebar.
         if (current) loadChildren(dir);
-        if (panelPane === 'files') loadEdits();
+        if (panelPane === 'git') { loadGit(); loadEdits(); }
         // Pós-fork: abre a sessão nova resultante (histórico + sidebar).
         if (pendingForkReload) {
           pendingForkReload = false;
@@ -2046,13 +2126,9 @@ function resetPaged() {
   if (bar) bar.classList.add('hidden');
 }
 
-/** Arquivos editados são da sessão: a lista e o badge não sobrevivem à troca. */
+/** Arquivos editados são da sessão: a lista não sobrevive à troca. */
 function resetFiles() {
   editedFiles = [];
-  editsError = '';
-  const cnt = $('filescnt');
-  if (cnt) cnt.textContent = '';
-  if ($('files')) renderFiles();
 }
 
 function updateLoadMore(meta) {
@@ -2244,7 +2320,7 @@ async function switchTab(key) {
     sendCommand({ type: 'get_session_stats' });
   }
   if (t.childrenDir) await loadChildren(t.childrenDir);
-  if (panelPane === 'files') loadEdits();
+  if (panelPane === 'git') { loadGit(); loadEdits(); }
 }
 
 async function closeTab(key) {
@@ -3120,6 +3196,14 @@ function openPkgs() {
   if (!$('mcpenvrows').childElementCount) addEnvRow();
 }
 
+/** Overlay Debug (⚙): Missões e Diagnóstico saíram do painel direito. */
+function openDebug() {
+  $('settingspop').classList.add('hidden');
+  $('debug').classList.remove('hidden');
+  loadMissions();
+  renderDiag();
+}
+
 /* =============== auth do provider (perto da versão do pi) =============== */
 let authProvider = null;
 let authTimer = null;
@@ -3572,6 +3656,9 @@ async function runUpdate(scope) {
 $('updExt').onclick = () => runUpdate('extensions');
 $('updPi').onclick = () => runUpdate('self');
 $('pkgbtn').onclick = () => openPkgs();
+$('debugbtn').onclick = () => openDebug();
+$('debugback').onclick = () => $('debug').classList.add('hidden');
+$('debugrefresh').onclick = () => { loadMissions(); renderDiag(); };
 $('checkupdate').onclick = () => checkUpdate(true);
 $('updatebtn').onclick = () => {
   const u = $('updatebar').dataset.url;
@@ -3618,12 +3705,10 @@ window.addEventListener('pagehide', () => {
 
 applySubsVisibility((() => { try { return localStorage.getItem('subs-hidden') === '1'; } catch { return false; } })());
 $('panelsubs').onclick = () => switchPanel('subs');
-$('panelfiles').onclick = () => switchPanel('files');
-$('panelmissions').onclick = () => switchPanel('missions');
-$('paneldiag').onclick = () => switchPanel('diag');
+$('panelgit').onclick = () => switchPanel('git');
 $('diagclear').onclick = () => { diagBuf.length = 0; diagPending.clear(); renderDiag(); };
 switchPanel((() => {
-  try { return localStorage.getItem('panel-pane') || 'subs'; } catch { return 'subs'; }
+  try { return localStorage.getItem('panel-pane') || 'git'; } catch { return 'git'; }
 })());
 setEmptyState(true, 'nosession');
 

@@ -25,6 +25,7 @@
   <label><input type="checkbox" id="setHooks" /> Instrumentar hooks</label>
   <div class="settings-sep"></div>
   <button id="pkgbtn" class="ghost">Pacotes e MCP</button>
+  <button id="debugbtn" class="ghost">Debug</button>
   <button id="checkupdate" class="ghost">Verificar atualização</button>
   <div class="settings-actions">
     <button id="updExt" class="ghost">Atualizar extensões</button>
@@ -129,22 +130,13 @@
 
 <section>
   <div class="panel-tabs">
-    <button id="panelsubs" class="panel-tab active" data-pane="subs"
+    <button id="panelgit" class="panel-tab active" data-pane="git"
+            title="Status do repositório git (somente leitura)">Git<span id="gitcnt" class="cnt"></span></button>
+    <button id="panelsubs" class="panel-tab" data-pane="subs"
             title="Subagents desta sessão">Subagents</button>
-    <button id="panelfiles" class="panel-tab" data-pane="files"
-            title="Arquivos editados pela sessão e pelos subagents">Arquivos<span id="filescnt" class="cnt"></span></button>
-    <button id="panelmissions" class="panel-tab" data-pane="missions"
-            title="Missões do pi-subagents (somente leitura)">Missões<span id="missionscnt" class="cnt"></span></button>
-    <button id="paneldiag" class="panel-tab" data-pane="diag"
-            title="Log circular das linhas RPC (comando/latência/resultado)">Diagnóstico</button>
   </div>
-  <div id="subs" class="panel-pane"><div class="empty">nenhum subagent</div></div>
-  <div id="files" class="panel-pane hidden"><div class="empty">nenhum arquivo editado</div></div>
-  <div id="missions" class="panel-pane hidden"><div class="empty">nenhuma missão</div></div>
-  <div id="diag" class="panel-pane hidden">
-    <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
-    <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
-  </div>
+  <div id="git" class="panel-pane"><div class="empty">sem repositório git</div></div>
+  <div id="subs" class="panel-pane hidden"><div class="empty">nenhum subagent</div></div>
 </section>
 
 <div id="detail" class="detail hidden">
@@ -153,6 +145,24 @@
     <span class="detail-title" id="detailtitle"></span>
   </div>
   <div class="detail-log" id="detaillog"></div>
+</div>
+
+<div id="debug" class="overlay hidden">
+  <div class="detail-head">
+    <button id="debugback">← voltar</button>
+    <span class="detail-title">Debug</span>
+    <span class="spacer"></span>
+    <button id="debugrefresh" class="ghost">Atualizar</button>
+  </div>
+  <div class="overlay-body">
+    <h4>Missões</h4>
+    <div id="missions"><div class="empty">nenhuma missão</div></div>
+    <h4>Diagnóstico</h4>
+    <div id="diag">
+      <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
+      <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
+    </div>
+  </div>
 </div>
 
 <div id="pkgs" class="overlay hidden">

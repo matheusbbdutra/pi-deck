@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod git;
 mod rpc;
 mod sessions;
 
@@ -49,7 +50,9 @@ fn main() {
             sessions::pick_directory,
             sessions::pick_file,
             sessions::paste_image,
-            sessions::open_terminal_login
+            sessions::open_terminal_login,
+            git::git_status,
+            git::git_file_diff
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
