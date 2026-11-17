@@ -7,7 +7,16 @@ mod rpc;
 mod sessions;
 
 fn main() {
-    tauri::Builder::default()
+    // Os plugins de E2E só existem no binário de teste (`--features e2e`).
+    // Registrá-los sempre deixaria um servidor WebDriver embutido em produção.
+    #[cfg(feature = "e2e")]
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+    #[cfg(not(feature = "e2e"))]
+    let builder = tauri::Builder::default();
+
+    builder
         .manage(rpc::RpcState::default())
         .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![

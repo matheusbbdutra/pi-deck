@@ -10,6 +10,10 @@ import { initTerminal, reconcileTerminal } from './terminal.js';
 import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from './theme.js';
 import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
 
+/* E2E: o plugin do WebdriverIO só entra no bundle de teste (`--mode e2e`).
+ * `__WDIO_E2E__` é definido pelo vite config; no vitest/produção fica false. */
+if (typeof __WDIO_E2E__ !== 'undefined' && __WDIO_E2E__) import('@wdio/tauri-plugin');
+
 /* Idioma: auto-detect via navigator.language, persistido em localStorage['lang']. */
 setLang(getLangPref());
 

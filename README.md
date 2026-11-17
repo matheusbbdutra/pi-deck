@@ -173,7 +173,21 @@ npm install
 npm run dev      # tauri dev
 npm run build    # release bundle
 cargo test --manifest-path src-tauri/Cargo.toml   # payload budget test
+npm run test:ui  # vitest (unit, jsdom)
 ```
+
+### E2E (janela Tauri real)
+
+```bash
+npm run build:e2e   # binário debug com os plugins WebDriver (--features e2e)
+npm run test:e2e    # WebdriverIO + @wdio/tauri-service, provider embedded
+```
+
+O provider `embedded` roda o servidor WebDriver dentro do app: não precisa de
+`tauri-driver` nem `WebKitWebDriver` externo. Os crates `tauri-plugin-wdio*` são
+dependências **opcionais** e só entram com `--features e2e` — o binário de produção
+não registra os plugins nem abre porta de automação. A capability `wdio:*` vive em
+`src-tauri/tauri.e2e.conf.json` (merge aplicado só pelo `build:e2e`).
 
 Debug flags (env): `PWUI_DEBUG=1` logs every RPC line to stderr, `PWUI_AUTONEW=1` opens a
 new session on start.

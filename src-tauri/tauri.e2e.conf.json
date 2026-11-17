@@ -1,0 +1,17 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build:ui:e2e"
+  },
+  "app": {
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "e2e",
+          "description": "WebDriverIO: só existe no build com --features e2e",
+          "windows": ["main"],
+          "permissions": ["wdio:default", "wdio-webdriver:default"]
+        }
+      ]
+    }
+  }
+}
