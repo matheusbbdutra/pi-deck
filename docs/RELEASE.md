@@ -124,5 +124,5 @@ Nenhum dos três está implementado hoje; o README declara os binários como **u
 ```bash
 dpkg -i sightdeck_<x.y.z>_amd64.deb && sightdeck --version   # versão instalada
 sha256sum sightdeck_<x.y.z>_amd64.deb                        # conferir com o asset publicado
-gh release view v<x.y.z> --json assets --jq '.assets[].name' # 7 assets esperados
+gh release view v<x.y.z> --json assets --jq '.assets[].name' # 5 assets esperados (sem updater; com updater, +2)
 ```

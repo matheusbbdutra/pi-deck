@@ -1,5 +1,13 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-17)
+
+- **v0.2.3 publicada** (5 assets: deb/AppImage/rpm/exe/msi). Release: run `44198214263`
+  (`test`, `clippy`, `test (windows)`, builds Linux/Windows, `publish`), draft →
+  `gh release edit v0.2.3 --draft=false --latest`. Inclui o PR #4 (dedupe do reattach,
+  slim de mensagens grandes), i18n pt/en, stats ao vivo e o setup E2E (`--features e2e`).
+  `npm run build` release OK (deb 3.3 MiB); vitest 96, cargo 94, clippy verde.
+
 ## Onde estamos (2026-11-16)
 
 - Commit `c72194e` (thinking por aba, notificação, copiar-path/abrir, Missões); lote B mergeado sem commit (yaml pinado, custo/tokens, Diagnóstico); task-4 reimplementada no pai (allowlist 43 nomes confirmados via runtime `pi auth login __deck_list__`, 3 testes, CSP mínima cobrindo script/style inline, `data:`, 2 hosts fetch e IPC); cargo test a seguir.
@@ -271,7 +279,7 @@ cd ~/Projects/sightdeck/src-tauri && cargo run
    (recuperado por `get_messages` ao voltar).
 3. Pinar as actions por SHA (`unpinned-uses` ×6, `artipacked` ×1 nos advisories).
 4. Se um dia ativar o updater assinado do Tauri: reintroduzir `*.app.tar.gz` + chave
-   (hoje saem 7 assets, não 9).
+   (hoje saem **5** assets porque o macOS saiu do CI; com updater, 7).
 5. `open_terminal_login` interpola `provider` em `sh -c` (`sessions.rs`) — fechar o sink com
    whitelist. Aberto de propósito: entrada é digitada pelo próprio usuário (self-inflicted).
 6. **Acentuação no composer (quase fechado)**: fatos verificados 2026-11-15 — layout do compositor é
