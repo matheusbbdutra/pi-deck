@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -1430,7 +1431,7 @@ fn read_session_messages_in(
     // da coleta e `hasMore` saía sempre falso (bug do botão "carregar anteriores").
     let total = raw.lines().filter(|l| l.contains("\"type\":\"message\"")).count();
 
-    let mut kept: Vec<String> = Vec::new();
+    let mut kept: Vec<Cow<'_, str>> = Vec::new();
     let mut skipped = 0usize;
     // Linha que nem vira mensagem reduzida (JSON quebrado): não entra, mas conta
     // como consumida — senão o botão "carregar anteriores" tentaria para sempre.
@@ -1452,14 +1453,14 @@ fn read_session_messages_in(
         // ao trocar de conversa. Mantém a mensagem com o texto e sem o payload.
         let line = if line.len() > MAX_LINE_BYTES {
             match slim_message_line(line, MAX_LINE_BYTES) {
-                Some(slim) => slim,
+                Some(slim) => Cow::Owned(slim),
                 None => {
                     dropped += 1;
                     continue;
                 }
             }
         } else {
-            line.to_string()
+            Cow::Borrowed(line)
         };
         if line.len() > budget {
             break;
@@ -1480,7 +1481,7 @@ fn read_session_messages_in(
         MAX_TOTAL_BYTES - budget
     );
     for line in kept {
-        out.push_str(&line);
+        out.push_str(line.as_ref());
         out.push('\n');
     }
     Ok(out)

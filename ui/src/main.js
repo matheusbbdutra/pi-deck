@@ -3662,10 +3662,6 @@ function reattachStream() {
     $('log').appendChild(wrap);
     thinkBody = wrap.querySelector('.think-body');
   }
-  // Parcial que o disco/RPC já pintou não pode virar segunda cópia: `t.streamText`
-  // pode ser de um turno fechado (guardado pelo `stashDraft` ou restaurado do
-  // localStorage). Descarta em vez de reanexar a cada volta à aba.
-  if (t.streamText && logHasText(t.streamText)) t.streamText = '';
   if (!t.streamText) {
     // Só thinking até agora: ancora `stream` nele para o próximo delta continuar
     // no mesmo bloco em vez de abrir um segundo.
@@ -3680,6 +3676,13 @@ function reattachStream() {
     stream = { node: existing, text, thinkBody };
     const tt = tabs.find(x => x.key === current.key);
     if (tt) tt.streamText = text.slice(-STREAM_CAP);
+    return;
+  }
+  // Sem âncora: `t.streamText` pode ter sido cortado pelo `STREAM_CAP` e ser um
+  // SUFIXO do que o log mostra. Reanexar esse trecho criaria a segunda cópia.
+  if (logHasText(t.streamText)) {
+    t.streamText = '';
+    if (thinkBody) stream = { node: null, text: '', thinkBody };
     return;
   }
   const row = mdRow();
