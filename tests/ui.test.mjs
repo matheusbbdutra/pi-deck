@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { THEME_KEYS, applyTheme, resetTheme, validateTheme } from '../ui/src/theme.js';
+import { t, getLang, getLangPref, setLang, detectLang, applyStaticI18n } from '../ui/src/i18n.js';
 
 vi.mock('../ui/src/terminal.js', () => ({ initTerminal: () => {}, reconcileTerminal: () => {} }));
 vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor: () => null }));
@@ -111,6 +112,71 @@ describe('logHasText', () => {
     expect(logHasText('outra resposta')).toBe(false);
     expect(logHasText('')).toBe(false);
     log.innerHTML = '';
+  });
+});
+
+describe('i18n (pt/en)', () => {
+  // O `beforeAll` global fixa 'lang' em pt; captura aqui (roda depois dele) e restaura.
+  let saved = null;
+  let savedHtmlLang = '';
+  beforeAll(() => {
+    saved = localStorage.getItem('lang');
+    savedHtmlLang = document.documentElement.lang;
+  });
+
+  afterEach(() => {
+    if (saved === null) localStorage.removeItem('lang');
+    else localStorage.setItem('lang', saved);
+    document.documentElement.lang = savedHtmlLang;
+  });
+
+  // Override só na instância: `delete` volta ao getter do Navigator.prototype.
+  const withNavigatorLang = (value, fn) => {
+    Object.defineProperty(window.navigator, 'language', { value, configurable: true });
+    try { return fn(); } finally { delete window.navigator.language; }
+  };
+
+  it('detecta pt-* como pt e o resto como en', () => {
+    withNavigatorLang('pt-BR', () => expect(detectLang()).toBe('pt'));
+    withNavigatorLang('en-GB', () => expect(detectLang()).toBe('en'));
+    withNavigatorLang('fr-FR', () => expect(detectLang()).toBe('en'));
+  });
+
+  it('preferência salva manda; auto usa o navigator e valor inválido cai em auto', () => {
+    localStorage.setItem('lang', 'pt');
+    expect(getLang()).toBe('pt');
+    expect(getLangPref()).toBe('pt');
+    localStorage.setItem('lang', 'auto');
+    withNavigatorLang('pt-BR', () => expect(getLang()).toBe('pt'));
+    expect(getLangPref()).toBe('auto');
+    localStorage.setItem('lang', 'de');
+    expect(getLangPref()).toBe('auto');
+  });
+
+  it('setLang persiste, aplica o <html lang> e devolve o idioma efetivo', () => {
+    expect(setLang('en')).toBe('en');
+    expect(localStorage.getItem('lang')).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
+    expect(setLang('pt')).toBe('pt');
+    expect(document.documentElement.lang).toBe('pt-BR');
+    withNavigatorLang('en-GB', () => expect(setLang('xx')).toBe('en'));
+    expect(localStorage.getItem('lang')).toBe('auto');
+  });
+
+  it('traduz nos dois idiomas e devolve a própria chave quando ela não existe', () => {
+    setLang('pt');
+    expect(t('composer.send')).toBe('Enviar (Enter)');
+    setLang('en');
+    expect(t('composer.send')).toBe('Send (Enter)');
+    expect(t('chave.inexistente')).toBe('chave.inexistente');
+  });
+
+  it('applyStaticI18n aplica placeholder e título do index.html', () => {
+    setLang('en');
+    applyStaticI18n();
+    expect(document.getElementById('input').placeholder).toBe(t('composer.placeholder'));
+    expect(document.getElementById('send').title).toBe(t('composer.send'));
+    expect(document.getElementById('status').textContent).toBe(t('status.disconnected'));
   });
 });
 

@@ -274,9 +274,7 @@ cd ~/Projects/sightdeck/src-tauri && cargo run
    (hoje saem 7 assets, não 9).
 5. `open_terminal_login` interpola `provider` em `sh -c` (`sessions.rs`) — fechar o sink com
    whitelist. Aberto de propósito: entrada é digitada pelo próprio usuário (self-inflicted).
-6. Clippy no CI: `cargo-clippy` não está instalado nesta máquina, então um gate `-D warnings`
-   não foi validado e quebraria o release no primeiro push.
-7. **Acentuação no composer (quase fechado)**: fatos verificados 2026-11-15 — layout do compositor é
+6. **Acentuação no composer (quase fechado)**: fatos verificados 2026-11-15 — layout do compositor é
    `us` + variante `intl` em runtime (`hyprctl getoption input:kb_layout`/`kb_variant`), fcitx5 é o IM
    (`~/.config/fcitx5/profile` → `DefaultIM=keyboard-us-intl`), o processo do sightdeck carrega
    `im-fcitx5.so` (`/proc/<pid>/maps`), e `wry` desliga o preedit em toda webview
