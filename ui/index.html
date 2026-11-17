@@ -30,6 +30,7 @@
   <button id="themebtn" class="ghost">Tema</button>
   <button id="pkgbtn" class="ghost">Pacotes e MCP</button>
   <button id="debugbtn" class="ghost">Debug</button>
+  <button id="aboutbtn" class="ghost">Sobre</button>
   <button id="checkupdate" class="ghost">Verificar atualização</button>
   <div class="settings-actions">
     <button id="updExt" class="ghost">Atualizar extensões</button>
@@ -191,6 +192,8 @@
   <div class="overlay-body">
     <h4>Missões</h4>
     <div id="missions"><div class="empty">nenhuma missão</div></div>
+    <h4>Avisos de extensão</h4>
+    <div id="healthlist"><div class="empty">nenhum aviso nesta sessão</div></div>
     <h4>Diagnóstico</h4>
     <div id="diag">
       <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
@@ -263,6 +266,18 @@
       <code>sightdeck-hooks</code> (uma linha por hook disparado). Ligue em ⚙ → Instrumentar hooks; sessões abertas
       precisam de <code>/reload</code>.</p>
     </div>
+  </div>
+</div>
+
+<div id="about" class="overlay hidden">
+  <div class="detail-head">
+    <button id="aboutback" title="Fechar">×</button>
+    <span class="detail-title">Sobre</span>
+  </div>
+  <div class="overlay-body">
+    <div id="aboutlist"></div>
+    <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
+    atualiza o pi sozinho: os botões de atualização chamam <code>pi update</code>.</p>
   </div>
 </div>
 

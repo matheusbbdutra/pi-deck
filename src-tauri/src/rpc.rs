@@ -74,25 +74,46 @@ impl RpcState {
 
 /// PATH do processo filho do `pi`.
 /// Aberto pelo lançador gráfico, o app nasce com o PATH do `systemd --user`, que não tem
-/// `~/.local/bin` nem os shims do mise — daí `spawn npx ENOENT` nos servidores MCP.
-fn child_path() -> Option<std::ffi::OsString> {
-    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
-    let mut dirs: Vec<std::ffi::OsString> = [
-        ".local/bin",
-        ".local/share/mise/shims",
-        ".local/share/pi-node/current/bin",
-        ".pi/agent/bin",
-    ]
-    .iter()
-    .map(|rel| home.join(rel))
-    .filter(|d| d.is_dir())
-    .map(|d| d.into_os_string())
-    .collect();
+/// `~/.local/bin` nem os shims do mise — daí `spawn npx ENOENT` nos servidores MCP e
+/// `spawn npm ENOENT` em `pi update/install/remove` (o package-manager chama `npm`
+/// pelo nome). Fonte única: sessões RPC e update/install/remove usam esta.
+pub(crate) fn child_path() -> Option<std::ffi::OsString> {
+    let inherited = std::env::var_os("PATH");
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    child_path_with(inherited.as_deref(), home.as_deref(), std::path::Path::is_dir)
+}
+
+/// Diretórios de gerenciador de versão/runtime que o PATH do app não tem.
+const CHILD_PATH_DIRS: &[&str] = &[
+    ".local/bin",
+    ".local/share/mise/shims",
+    ".local/share/fnm/aliases/default/bin",
+    ".volta/bin",
+    ".bun/bin",
+    ".local/share/pnpm",
+    ".local/share/pi-node/current/bin",
+    ".pi/agent/bin",
+];
+
+/// Decisão pura de `child_path()` — sem env e sem fs, para testar.
+/// `None` quando nenhum diretório existe: aí não mexe no PATH herdado.
+fn child_path_with(
+    inherited: Option<&std::ffi::OsStr>,
+    home: Option<&std::path::Path>,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> Option<std::ffi::OsString> {
+    let home = home?;
+    let mut dirs: Vec<std::path::PathBuf> = CHILD_PATH_DIRS
+        .iter()
+        .map(|rel| home.join(rel))
+        .filter(|dir| exists(dir))
+        .collect();
     if dirs.is_empty() {
         return None;
     }
-    let current = std::env::var_os("PATH").unwrap_or_default();
-    dirs.extend(std::env::split_paths(&current).map(|p| p.into_os_string()));
+    if let Some(path) = inherited {
+        dirs.extend(std::env::split_paths(path));
+    }
     std::env::join_paths(dirs).ok()
 }
 
@@ -366,5 +387,38 @@ mod tests {
     fn take_if_same_sem_chave_nao_entra_em_panico() {
         let map: Arc<Mutex<HashMap<String, FakeSlot>>> = Arc::new(Mutex::new(HashMap::new()));
         assert!(take_if_same(&map, "s1", 1).is_none());
+    }
+
+    // ---------- child_path: PATH do filho com node/npm ----------
+
+    #[test]
+    fn child_path_pone_node_na_frente_do_path_herdado() {
+        let got = child_path_with(
+            Some(std::ffi::OsStr::new("/usr/bin:/bin")),
+            Some(std::path::Path::new("/home/u")),
+            |p| p.ends_with("mise/shims"),
+        );
+        assert_eq!(
+            got,
+            Some(std::ffi::OsString::from(
+                "/home/u/.local/share/mise/shims:/usr/bin:/bin"
+            ))
+        );
+    }
+
+    #[test]
+    fn child_path_none_sem_dir_existente_nao_mexe_no_path() {
+        assert_eq!(
+            child_path_with(
+                Some(std::ffi::OsStr::new("/usr/bin")),
+                Some(std::path::Path::new("/home/u")),
+                |_| false
+            ),
+            None
+        );
+        assert_eq!(
+            child_path_with(Some(std::ffi::OsStr::new("/usr/bin")), None, |_| true),
+            None
+        );
     }
 }

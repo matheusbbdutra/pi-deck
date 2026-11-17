@@ -2152,15 +2152,36 @@ export function healthChipState(map) {
 function renderHealthChip() {
   const chip = $('healthchip');
   if (!chip) return null;
-  const st = healthChipState(current ? healthBySession.get(current.key) : null);
-  // mcp pesa mais: servidor de MCP quebrado derruba tool, LSP inativo só tira refino.
+  const st = healthChipState(current ? healthBySession.get(current.key) : null);  // mcp pesa mais: servidor de MCP quebrado derruba tool, LSP inativo só tira refino.
   const warn = st.kinds.includes('mcp');
   chip.classList.toggle('hidden', !st.count);
   chip.classList.toggle('warn', !!st.count && warn);
   chip.classList.toggle('mute', !!st.count && !warn);
   chip.textContent = st.count ? '⚠ ' + st.count : '';
   chip.title = st.title;
+  // O chip só mostra a contagem; o overlay Debug é onde a lista vira legível.
+  if (!$('debug').classList.contains('hidden')) renderHealthList();
   return st;
+}
+
+/** Lista os avisos de extensão da sessão atual no overlay Debug (kind + mensagem).
+ *  Sem isso o clique no `⚠ N` abria um Diagnóstico só com linhas RPC e o aviso
+ *  ficava existindo apenas no `title` nativo do chip. */
+export function renderHealthList(map = current ? healthBySession.get(current.key) : null) {
+  const host = $('healthlist');
+  if (!host) return;
+  const entries = map instanceof Map ? Array.from(map.entries()) : [];
+  clear(host);
+  if (!entries.length) {
+    host.appendChild(el('div', 'empty', 'nenhum aviso nesta sessão'));
+    return;
+  }
+  for (const [id, kind] of entries) {
+    const row = el('div', 'file-row');
+    row.appendChild(el('span', 'file-name', id));
+    row.appendChild(el('span', 'file-count', kind));
+    host.appendChild(row);
+  }
 }
 
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
@@ -4137,7 +4158,35 @@ function openDebug() {
   $('settingspop').classList.add('hidden');
   $('debug').classList.remove('hidden');
   loadMissions();
+  renderHealthList();
   renderDiag();
+}
+
+/* =============== sobre =============== */
+
+/** Overlay "Sobre": versão do app, do `pi` e os caminhos que o app usa de fato
+ *  (`app_info` resolve o binário como `pi_bin()`; mostrar `pi` do PATH seria mentira). */
+async function openAbout() {
+  $('settingspop').classList.add('hidden');
+  $('about').classList.remove('hidden');
+  const host = $('aboutlist');
+  const add = (label, value) => {
+    const row = el('div', 'file-row');
+    row.appendChild(el('span', 'file-name', label));
+    row.appendChild(el('span', 'file-dir', value));
+    host.appendChild(row);
+  };
+  clear(host);
+  add('sightdeck', appVersion || '?');
+  try { add('pi', String(await inv('pi_version'))); } catch { add('pi', '?'); }
+  let info = null;
+  try { info = JSON.parse(await inv('app_info')); } catch { info = null; }
+  if (info) {
+    add('binário do pi', info.piBin || '?');
+    add('config do pi', info.agent || '?');
+    add('sessões', info.sessions || '?');
+    add('sistema', info.os || '?');
+  }
 }
 
 /* =============== tema (JSON) =============== */
@@ -4631,6 +4680,8 @@ $('themereset').onclick = () => {
 $('debugbtn').onclick = () => openDebug();
 // Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
 $('healthchip').onclick = () => openDebug();
+$('aboutbtn').onclick = () => openAbout();
+$('aboutback').onclick = () => $('about').classList.add('hidden');
 $('debugback').onclick = () => $('debug').classList.add('hidden');
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); };
 $('checkupdate').onclick = () => checkUpdate(true);

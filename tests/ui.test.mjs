@@ -27,6 +27,7 @@ let syncStopButton;
 let classifyHealthLine;
 let noteHealth;
 let healthChipState;
+let renderHealthList;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -51,7 +52,7 @@ beforeAll(async () => {
   });
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
-     healthChipState } = await import('../ui/src/main.js'));
+     healthChipState, renderHealthList } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -532,5 +533,33 @@ describe('layout com zoom', () => {
   it('bloco de código rola em vez de cortar linha longa', () => {
     const css = readFileSync(resolve(process.cwd(), 'ui/src/styles.css'), 'utf8');
     expect(css).toMatch(/\.md-code-box pre\s*\{[^}]*overflow-x:\s*auto/);
+  });
+});
+
+describe('avisos de extensão no Debug e overlay Sobre', () => {
+  it('renderHealthList escreve o vazio no #healthlist (id tem que bater com o index.html)', () => {
+    // Sem sessão atual o mapa não existe: o overlay precisa dizer isso, não ficar em branco.
+    renderHealthList();
+    const host = document.getElementById('healthlist');
+    expect(host).not.toBeNull();
+    expect(host.textContent).toContain('nenhum aviso');
+  });
+
+  it('renderHealthList lista kind + mensagem de cada aviso (o que o chip só conta)', () => {
+    renderHealthList(new Map([
+      ['MCP servers need attention: fetch failed', 'mcp'],
+      ['LSP inactive', 'lsp'],
+    ]));
+    const rows = document.querySelectorAll('#healthlist .file-row');
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain('MCP servers need attention');
+    expect(rows[0].textContent).toContain('mcp');
+    expect(rows[1].textContent).toContain('lsp');
+  });
+
+  it('todo id que o main.js consulta no Sobre/avisos existe no index.html', () => {
+    for (const id of ['about', 'aboutback', 'aboutlist', 'aboutbtn', 'healthlist', 'healthchip']) {
+      expect(document.getElementById(id), id).not.toBeNull();
+    }
   });
 });

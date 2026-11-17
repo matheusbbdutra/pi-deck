@@ -27,6 +27,10 @@ sai sem Authenticode.
    ```bash
    npm run test:ui && (cd src-tauri && cargo test) && npm run build
    ```
+   **Nunca** instale a partir de `cargo build --release`: sem `--features tauri/custom-protocol`
+   o build vira `dev = true` (`tauri/build.rs`), os assets não são embutidos e a webview tenta
+   `devUrl` (`localhost:1420`) — o app abre com "Could not connect to localhost". Use `tauri build`
+   (ou o `.deb`), que passa a feature.
 4. Commit, tag anotada e push dos dois:
    ```bash
    git commit -am "release: <x.y.z>"

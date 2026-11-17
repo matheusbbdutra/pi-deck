@@ -3,6 +3,19 @@
 All notable changes to sightdeck. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [SemVer](https://semver.org/).
 
+## [0.2.2] — 2026-11-17
+
+### Fixed
+- **"Atualizar extensões" morria com `spawn npm ENOENT`.** Aberto pelo launcher gráfico o app não herda o PATH do shell, e `pi update|install|remove` chamam `npm` **pelo nome** (`getNpmCommand` do package-manager). `pi_cmd()` (`sessions.rs`) agora entrega ao filho o `child_path()` que já existia em `rpc.rs` — promovido a `pub(crate)` (fonte única) e ampliado com mise/fnm/volta/bun/pnpm.
+- **App abria com "Could not connect to localhost: Connection refused".** Release local gerado por `cargo build --release` não liga a feature `tauri/custom-protocol`, então `tauri-build` marca `dev = true` e a webview carrega `devUrl` (`localhost:1420`) em vez dos assets embutidos. Release passa a sair de `tauri build`, que já passa `--features tauri/custom-protocol`.
+
+### Added
+- **Sobre** (⚙ → Sobre): versão do app e do `pi`, binário do pi em uso, diretório de config, pasta de sessões e SO — comando `app_info` no backend.
+- **Avisos de extensão no overlay Debug**: o chip `⚠ N` do header só mostrava a contagem (o texto ficava no `title` nativo). Agora o Debug lista `kind` + mensagem de cada aviso da sessão.
+
+### Changed
+- Botão do terminal (`>_`) vai para o fim da barra inferior do sidebar.
+
 ## [0.2.0] — 2026-11-16
 
 ### Renamed

@@ -73,6 +73,17 @@ fn resolve_pi_bin_with(
     PathBuf::from(format!("pi{suffix}"))
 }
 
+/// `Command` do CLI `pi` com o PATH ampliado (fonte única em `rpc::child_path`):
+/// `pi update/install/remove` chamam `npm` pelo nome e o app aberto pelo
+/// launcher gráfico não herda o PATH do shell — sem isso, `spawn npm ENOENT`.
+fn pi_cmd() -> std::process::Command {
+    let mut cmd = std::process::Command::new(pi_bin());
+    if let Some(path) = crate::rpc::child_path() {
+        cmd.env("PATH", path);
+    }
+    cmd
+}
+
 /// Root onde o pi guarda as sessões (`~/.pi/agent/sessions`).
 fn sessions_root() -> Result<PathBuf, String> {
     let home = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
@@ -576,6 +587,26 @@ pub fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Caminhos e SO para o "Sobre": sem isso a UI só teria as versões e o usuário
+/// não descobre qual binário do `pi` nem onde estão as sessões.
+#[tauri::command]
+pub fn app_info() -> String {
+    let agent = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+        .map(|h| h.join(".pi/agent"));
+    serde_json::json!({
+        "piBin": pi_bin().display().to_string(),
+        "agent": agent
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "?".to_string()),
+        "sessions": sessions_root()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|e| format!("? ({e})")),
+        "os": std::env::consts::OS,
+    })
+    .to_string()
+}
+
 /// Abre uma URL no navegador padrão do sistema.
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), String> {
@@ -789,7 +820,7 @@ pub fn pi_list() -> Result<String, String> {
 /// Instala um pacote pelo CLI oficial (`pi install <source>`).
 #[tauri::command]
 pub fn pi_install(spec: String, local: bool) -> Result<String, String> {
-    let mut cmd = std::process::Command::new(pi_bin());
+    let mut cmd = pi_cmd();
     cmd.args(["install", spec.as_str(), "--no-approve"]);
     if local {
         cmd.arg("-l");
@@ -852,7 +883,7 @@ pub fn pi_mcp_add(
 /// Remove um pacote instalado (`pi remove <source>`).
 #[tauri::command]
 pub fn pi_remove(spec: String, local: bool) -> Result<String, String> {
-    let mut cmd = std::process::Command::new(pi_bin());
+    let mut cmd = pi_cmd();
     cmd.args(["remove", spec.as_str(), "--no-approve"]);
     if local {
         cmd.arg("-l");
@@ -909,7 +940,7 @@ pub fn pi_update(scope: String) -> Result<String, String> {
         _ => "--extensions",
     };
 
-    let out = std::process::Command::new(pi_bin())
+    let out = pi_cmd()
         .args(["update", target, "--no-approve"])
         .output()
         .map_err(|e| format!("spawn pi: {e}"))?;
@@ -2212,6 +2243,16 @@ mod tests {
     fn bin_suffix_e_exe_so_no_windows() {
         assert_eq!(bin_suffix(true), ".exe");
         assert_eq!(bin_suffix(false), "");
+    }
+
+    #[test]
+    fn app_info_e_json_com_as_chaves_do_sobre() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&app_info()) else {
+            panic!("app_info não devolveu JSON");
+        };
+        for k in ["piBin", "agent", "sessions", "os"] {
+            assert!(v.get(k).is_some(), "faltou a chave {k}");
+        }
     }
 
     #[test]

@@ -47,6 +47,7 @@ fn main() {
             sessions::pi_mcp_add,
             sessions::pi_mcp_remove,
             sessions::app_version,
+            sessions::app_info,
             sessions::open_external,
             sessions::open_file,
             sessions::revert_hunk,
