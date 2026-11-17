@@ -5,6 +5,8 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-17
+
 ### Fixed
 - **Resposta duplicada ao voltar para a aba**: o parcial guardado da aba era reanexado mesmo quando o disco/RPC já tinha pintado a resposta inteira, criando uma segunda cópia. O reattach agora ancora no bloco já renderizado (só dentro do turno atual, depois da última user row) e nem tenta com turno encerrado.
 - **Mensagem do usuário sumia ao trocar de conversa**: `read_session_messages` descartava qualquer linha acima de 64 KB — mensagem com imagem em base64 sumia inteira do transcript. Agora a mensagem é mantida (texto truncado, imagem vira marcador `[imagem omitida]`) e só JSON quebrado é descartado.
