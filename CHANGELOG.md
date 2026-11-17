@@ -10,8 +10,13 @@ versioning follows [SemVer](https://semver.org/).
 - **Mensagem do usuário sumia ao trocar de conversa**: `read_session_messages` descartava qualquer linha acima de 64 KB — mensagem com imagem em base64 sumia inteira do transcript. Agora a mensagem é mantida (texto truncado, imagem vira marcador `[imagem omitida]`) e só JSON quebrado é descartado.
 - **`thinking`/`toolCall` grandes**: o corte de linha agora também trunca `thinking` e troca `arguments` de toolCall por marcador `[argumentos omitidos]` — antes uma mensagem cujo volume estava nesses campos (ex.: `write` de arquivo > 64 KB) continuava sumindo do transcript.
 - **User row duplicada**: a linha local comparava texto cru com o `text.trim()` do disco; a comparação passou a normalizar espaços.
+- **Trocar idioma escondia o transcript**: o handler do seletor repintava o estado vazio por cima do log (overlay opaca). Agora só repinta se a overlay já estava visível.
+- **Fim do turno perdia o último frame**: o markdown pendente do rAF é aplicado antes de zerar `stream` (antes o callback via `stream` nulo e o trecho desde o frame anterior não era pintado).
+- **Trocar idioma não mente sobre o estado**: `applyStaticI18n` não escreve mais em `#status`/`#send.title` (estado vivo de `setStatus`/`syncStopButton`).
+- **Dedupe do parcial restrito ao turno**: `logHasText` compara a cauda normalizada apenas nos blocos depois da última user row — resposta de um turno anterior com o mesmo final não descarta mais o parcial em voo.
 
 ### Added
+- **Seletor de idioma (pt/en)**: catálogo em `ui/src/i18n.js`, detecção por `navigator.language`, persistência em `localStorage['lang']` e aplicação nos estáticos do `index.html` e nas strings fiadas do `main.js`.
 - **Tempo real no painel de subagents**: run/child em andamento recalcula o relógio a cada segundo (antes congelava no último snapshot, ex.: `11m16` parado) e o child terminado congela no próprio `updatedAt`.
 - **Tokens/contexto em tempo real**: o parcial do turno em voo (usage + estimativa de chars/4, a mesma heurística do pi) é somado ao chip/popover, então `%` de contexto e tokens andam durante o streaming; `get_session_stats` é consultado durante o turno (2 s) e a cada `tool_execution_end`, em vez de só no `agent_settled`.
 

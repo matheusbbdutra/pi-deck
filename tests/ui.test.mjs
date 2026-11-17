@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { THEME_KEYS, applyTheme, resetTheme, validateTheme } from '../ui/src/theme.js';
-import { t, getLang, getLangPref, setLang, detectLang, applyStaticI18n } from '../ui/src/i18n.js';
+import { t, getLang, getLangPref, setLang, detectLang, applyStaticI18n, STRINGS } from '../ui/src/i18n.js';
 
 vi.mock('../ui/src/terminal.js', () => ({ initTerminal: () => {}, reconcileTerminal: () => {} }));
 vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor: () => null }));
@@ -34,6 +34,7 @@ let normalizeRowText;
 let answerAlreadyRendered;
 let isLiveRun;
 let elapsedFor;
+let reattachPlan;
 let renderSubs;
 let renderedAnswerNode;
 let estimateMessageTokens;
@@ -65,7 +66,7 @@ beforeAll(async () => {
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, logHasText, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
      healthChipState, renderHealthList, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
-     renderSubs, renderedAnswerNode, estimateMessageTokens, liveTurnTokens,
+     renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView } = await import('../ui/src/main.js'));
 });
 
@@ -111,6 +112,27 @@ describe('logHasText', () => {
     expect(logHasText(full.slice(-40))).toBe(true);
     expect(logHasText('outra resposta')).toBe(false);
     expect(logHasText('')).toBe(false);
+    log.innerHTML = '';
+  });
+
+  it('ignora texto de turno anterior e normaliza espaços', () => {
+    const log = document.getElementById('log');
+    log.innerHTML = '';
+    const oldUser = document.createElement('div');
+    oldUser.className = 'row user';
+    const old = document.createElement('div');
+    old.className = 'md-body';
+    old._md = 'Feito.';
+    const curUser = document.createElement('div');
+    curUser.className = 'row user';
+    log.append(oldUser, old, curUser);
+    // Resposta do turno anterior não pode zerar o parcial do turno atual.
+    expect(logHasText('Feito.')).toBe(false);
+    const cur = document.createElement('div');
+    cur.className = 'md-body';
+    cur._md = 'Feito.';
+    log.appendChild(cur);
+    expect(logHasText('  Feito.  \n')).toBe(true);
     log.innerHTML = '';
   });
 });
@@ -171,12 +193,29 @@ describe('i18n (pt/en)', () => {
     expect(t('chave.inexistente')).toBe('chave.inexistente');
   });
 
-  it('applyStaticI18n aplica placeholder e título do index.html', () => {
+  it('applyStaticI18n aplica placeholder e não sobrescreve estado vivo', () => {
     setLang('en');
+    // `status` e `#send.title` pertencem ao runtime (setStatus/syncStopButton).
+    document.getElementById('status').textContent = 'conectado · s1';
+    document.getElementById('send').title = 'Enfileirar mensagem (turno rodando)';
     applyStaticI18n();
     expect(document.getElementById('input').placeholder).toBe(t('composer.placeholder'));
-    expect(document.getElementById('send').title).toBe(t('composer.send'));
-    expect(document.getElementById('status').textContent).toBe(t('status.disconnected'));
+    expect(document.getElementById('status').textContent).toBe('conectado · s1');
+    expect(document.getElementById('send').title).toBe('Enfileirar mensagem (turno rodando)');
+  });
+
+  it('getLang ignora valor inválido salvo e cai na detecção', () => {
+    localStorage.setItem('lang', 'de');
+    withNavigatorLang('en-GB', () => expect(getLang()).toBe('en'));
+  });
+
+  it('pt e en têm exatamente as mesmas chaves', () => {
+    expect(Object.keys(STRINGS.en).sort()).toEqual(Object.keys(STRINGS.pt).sort());
+  });
+
+  it('o seletor de idioma declara auto/pt/en', () => {
+    const sel = document.getElementById('langsel');
+    expect(Array.from(sel.options).map(o => o.value)).toEqual(['auto', 'pt', 'en']);
   });
 });
 
@@ -532,7 +571,7 @@ describe('shouldRestoreLocalRow', () => {
 describe('tema por JSON', () => {
   afterEach(() => {
     resetTheme();
-    localStorage.clear();
+    localStorage.removeItem('theme');
   });
 
   it('THEME_KEYS tem os 46 tokens do :root, sem --mono', () => {
@@ -738,6 +777,28 @@ describe('painel de subagents: relógio ao vivo', () => {
       vi.advanceTimersByTime(1000);
       vi.useRealTimers();
     }
+  });
+});
+
+describe('reattachPlan (âncora antes do descarte)', () => {
+  it('turno encerrado descarta o parcial: o disco manda', () => {
+    expect(reattachPlan({ working: false, streamText: 'x', renderedBody: true, tailInLog: true })).toBe('drop-turn');
+  });
+
+  it('sem parcial, só ancora no bloco de thinking', () => {
+    expect(reattachPlan({ working: true, streamText: '', renderedBody: null, tailInLog: false })).toBe('thinking');
+  });
+
+  it('bloco já pintado vence o descarte por cauda (não cria 2ª cópia)', () => {
+    expect(reattachPlan({ working: true, streamText: 'Rode isso', renderedBody: true, tailInLog: true })).toBe('anchor');
+  });
+
+  it('parcial truncado que é sufixo do log é descartado', () => {
+    expect(reattachPlan({ working: true, streamText: 'final da resposta', renderedBody: false, tailInLog: true })).toBe('drop-tail');
+  });
+
+  it('nada pintado: abre o bloco com o parcial', () => {
+    expect(reattachPlan({ working: true, streamText: 'começando', renderedBody: false, tailInLog: false })).toBe('append');
   });
 });
 

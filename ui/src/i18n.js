@@ -440,7 +440,6 @@ export function applyStaticI18n() {
   const set = (id, v) => { try { const n = document.getElementById(id); if (n) n.textContent = v; } catch { /* sem DOM */ } };
   const ph = (id, v) => { try { const n = document.getElementById(id); if (n) n.placeholder = v; } catch { /* sem DOM */ } };
   const ti = (id, v) => { try { const n = document.getElementById(id); if (n) n.title = v; } catch { /* sem DOM */ } };
-  set('status', t('status.disconnected'));
   ph('sesssearch', t('sidebar.search_ph'));
   ph('toolfilter', t('sidebar.tool_filter_ph'));
   ph('input', t('composer.placeholder'));
@@ -453,7 +452,6 @@ export function applyStaticI18n() {
   ph('mcpargs', t('mcp.args_ph'));
   set('confirmok', t('common.execute'));
   set('confirmcancel', t('common.cancel'));
-  ti('send', t('composer.send'));
   ti('stopbtn', t('composer.stop'));
   set('lblExpTools', t('settings.expand_tools'));
   set('lblExpThink', t('settings.expand_think'));

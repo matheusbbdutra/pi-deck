@@ -2538,6 +2538,10 @@ listen('rpc-line', (ev) => {
         // `stream` também caduca. Sem isto, trocar de aba depois do fim do turno
         // fazia `stashDraft` regravar a resposta final em `t.streamText`, e voltar
         // pintava a mesma resposta duas vezes (histórico do disco + reattach).
+        // Último frame do rAF: `stream = null` sem flush perde o trecho acumulado
+        // desde o frame anterior (o callback veria `stream` já nulo).
+        if (stream && stream.node) setMarkdown(stream.node, stream.text);
+        if (pendingRender) { cancelAnimationFrame(pendingRender); pendingRender = 0; }
         stream = null;
         saveTabs();
       }
@@ -3616,32 +3620,47 @@ function logHasThinking(text) {
     .some(n => String(n.textContent || '').trim().startsWith(head));
 }
 
-/** Último bloco markdown DEPOIS da última mensagem do usuário cujo texto já
- *  contém o parcial. Restringir ao turno atual evita ancorar numa resposta antiga
- *  que só começa igual ("Ok", "Feito"). */
-export function renderedAnswerNode(partial) {
-  if (!normalizeRowText(partial)) return null;
+/** Blocos markdown do turno atual: depois da última `.row.user`. Evita casar
+ *  com resposta de um turno anterior que começa/termina igual ("Ok", "Feito"). */
+function turnAnswerBodies() {
   const log = $('log');
   const users = log.querySelectorAll('.row.user');
   const lastUser = users.length ? users[users.length - 1] : null;
-  const bodies = Array.from(log.querySelectorAll('.md-body'));
+  return Array.from(log.querySelectorAll('.md-body')).filter(body =>
+    !lastUser || (lastUser.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING));
+}
+
+/** Último bloco markdown DO TURNO ATUAL cujo texto já contém o parcial. */
+export function renderedAnswerNode(partial) {
+  if (!normalizeRowText(partial)) return null;
+  const bodies = turnAnswerBodies();
   for (let i = bodies.length - 1; i >= 0; i--) {
-    const body = bodies[i];
-    if (lastUser && !(lastUser.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-    const md = String(body._md || body.textContent || '');
-    if (answerAlreadyRendered(partial, [md])) return body;
+    const md = String(bodies[i]._md || bodies[i].textContent || '');
+    if (answerAlreadyRendered(partial, [md])) return bodies[i];
   }
   return null;
 }
 
-/** true se o log já mostra esse texto: o disco/RPC trouxe e o parcial seria duplicata.
- *  Compara pela cauda porque `t.streamText` é cortado em `STREAM_CAP` (`slice(-cap)`),
- *  então a cabeça pode não existir no log de uma resposta longa. */
+/** true se o turno atual já mostra esse texto: o disco/RPC trouxe e o parcial seria
+ *  duplicata. Compara pela cauda (normalizada) porque `t.streamText` é cortado em
+ *  `STREAM_CAP` (`slice(-cap)`), então a cabeça pode não existir no log. */
 export function logHasText(text) {
-  const tail = String(text || '').trim().slice(-120);
+  const tail = normalizeRowText(text).slice(-120);
   if (!tail) return false;
-  return Array.from($('log').querySelectorAll('.md-body'))
-    .some(n => String(n._md || n.textContent || '').trim().endsWith(tail));
+  return turnAnswerBodies()
+    .some(n => normalizeRowText(n._md || n.textContent || '').endsWith(tail));
+}
+
+/** Decisão do reattach, separada do DOM para ser testável:
+ *  `drop-turn` (turno encerrado, o disco manda), `thinking` (só thinking em voo),
+ *  `anchor` (o bloco já pintado é a continuação — vence `drop-tail`),
+ *  `drop-tail` (parcial truncado é sufixo do que já está no log) ou `append`. */
+export function reattachPlan({ working, streamText, renderedBody, tailInLog }) {
+  if (!working) return 'drop-turn';
+  if (!normalizeRowText(streamText)) return 'thinking';
+  if (renderedBody) return 'anchor';
+  if (tailInLog) return 'drop-tail';
+  return 'append';
 }
 
 /** Reanexa o parcial da aba ao voltar (o histórico do disco não o tem). */
@@ -3649,38 +3668,38 @@ function reattachStream() {
   if (stream || !current) return;
   const t = tabs.find(x => x.key === current.key);
   if (!t) return;
-  // Sem turno rodando o parcial guardado é resto do turno anterior: o disco manda.
-  if (!t.working) {
-    t.streamText = '';
-    t.thinkText = '';
-    return;
-  }
   // Thinking do turno em voo: `renderMessages` acima só pintou o que está no disco.
   let thinkBody = null;
-  if (t.thinkText && !logHasThinking(t.thinkText)) {
+  if (t.working && t.thinkText && !logHasThinking(t.thinkText)) {
     const wrap = thinkBlock(t.thinkText);
     $('log').appendChild(wrap);
     thinkBody = wrap.querySelector('.think-body');
   }
-  if (!t.streamText) {
-    // Só thinking até agora: ancora `stream` nele para o próximo delta continuar
-    // no mesmo bloco em vez de abrir um segundo.
+  // Âncora antes do descarte: ancorar mantém um único bloco (o parcial truncado
+  // que só é sufixo do log vem depois, em `drop-tail`).
+  const existing = renderedAnswerNode(t.streamText);
+  const plan = reattachPlan({
+    working: t.working,
+    streamText: t.streamText,
+    renderedBody: !!existing,
+    tailInLog: logHasText(t.streamText),
+  });
+  if (plan === 'drop-turn') {
+    t.streamText = '';
+    t.thinkText = '';
+    return;
+  }
+  if (plan === 'thinking') {
     if (thinkBody) stream = { node: null, text: '', thinkBody };
     return;
   }
-  // Resposta já pintada pelo disco/RPC: ancora nela em vez de duplicar. O próximo
-  // text_delta passa a escrever no mesmo bloco (antes abria uma 2ª cópia).
-  const existing = renderedAnswerNode(t.streamText);
-  if (existing) {
+  if (plan === 'anchor') {
     const text = String(existing._md || t.streamText);
     stream = { node: existing, text, thinkBody };
-    const tt = tabs.find(x => x.key === current.key);
-    if (tt) tt.streamText = text.slice(-STREAM_CAP);
+    t.streamText = text.slice(-STREAM_CAP);
     return;
   }
-  // Sem âncora: `t.streamText` pode ter sido cortado pelo `STREAM_CAP` e ser um
-  // SUFIXO do que o log mostra. Reanexar esse trecho criaria a segunda cópia.
-  if (logHasText(t.streamText)) {
+  if (plan === 'drop-tail') {
     t.streamText = '';
     if (thinkBody) stream = { node: null, text: '', thinkBody };
     return;
@@ -4959,6 +4978,9 @@ function loadSettings() {
     document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en';
   } catch { /* sem DOM */ }
   applyStaticI18n();
+  // `status` e `#send.title` são estado vivo, não chrome: o catálogo não os toca.
+  if (!current) setStatus(t('status.disconnected'));
+  syncStopButton(!!(current && current.working));
 }
 
 function saveSettings() {
@@ -4981,9 +5003,13 @@ $('setNotifySound').onchange = (e) => { uiSettings.notifySound = e.target.checke
 $('langsel').onchange = (e) => {
   setLang(e.target.value);
   applyStaticI18n();
-  try { document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en'; } catch { /* sem DOM */ }
   loadSessions();
-  if (current) { setEmptyState(true, current.file ? 'newsession' : 'nosession'); }
+  // Overlay de estado vazio só é repintada se já estava visível: com sessão
+  // aberta ela é opaca e cobriria o transcript.
+  if (current && !$('emptystate').classList.contains('hidden')) {
+    setEmptyState(true, current.file ? 'newsession' : 'nosession');
+  }
+  syncStopButton(!!(current && current.working));
 };
 
 async function runUpdate(scope) {
