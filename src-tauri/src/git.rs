@@ -717,6 +717,9 @@ mod tests {
             ("user.name", "sightdeck teste"),
             ("user.email", "teste@sightdeck.local"),
             ("commit.gpgsign", "false"),
+            // Git for Windows vem com `core.autocrlf=true`: o checkout gravaria
+            // CRLF e os testes que comparam "um\n" quebram só no CI do Windows.
+            ("core.autocrlf", "false"),
         ] {
             git_setup(&dir, &["config", k, v]);
         }
