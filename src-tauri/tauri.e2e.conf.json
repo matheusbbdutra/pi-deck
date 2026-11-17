@@ -9,7 +9,7 @@
           "identifier": "e2e",
           "description": "WebDriverIO: só existe no build com --features e2e",
           "windows": ["main"],
-          "permissions": ["wdio:default", "wdio-webdriver:default"]
+          "permissions": ["core:default", "wdio:default", "wdio-webdriver:default"]
         }
       ]
     }

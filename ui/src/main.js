@@ -11,8 +11,20 @@ import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from '
 import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
 
 /* E2E: o plugin do WebdriverIO só entra no bundle de teste (`--mode e2e`).
- * `__WDIO_E2E__` é definido pelo vite config; no vitest/produção fica false. */
-if (typeof __WDIO_E2E__ !== 'undefined' && __WDIO_E2E__) import('@wdio/tauri-plugin');
+ * `__WDIO_E2E__` é definido pelo vite config; no vitest/produção fica false.
+ * O coletor abaixo transforma erro silencioso de console em falha do smoke. */
+if (typeof __WDIO_E2E__ !== 'undefined' && __WDIO_E2E__) {
+  window.__e2eErrors = [];
+  const push = (msg) => window.__e2eErrors.push(String(msg));
+  window.addEventListener('error', (e) => push(e.message || e.error || 'error'));
+  window.addEventListener('unhandledrejection', (e) => push('unhandledrejection: ' + (e.reason?.message || e.reason)));
+  const origError = console.error.bind(console);
+  console.error = (...args) => {
+    push(args.map((a) => (a && a.message) || String(a)).join(' '));
+    origError(...args);
+  };
+  import('@wdio/tauri-plugin');
+}
 
 /* Idioma: auto-detect via navigator.language, persistido em localStorage['lang']. */
 setLang(getLangPref());

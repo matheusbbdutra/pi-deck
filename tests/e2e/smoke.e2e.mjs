@@ -28,4 +28,11 @@ describe('sightdeck (janela Tauri real)', () => {
     await $('#input').setValue('teste e2e');
     await expect($('#input')).toHaveValue('teste e2e');
   });
+
+  it('não deixa erro de JS no console da webview', async () => {
+    // O coletor vive no bundle E2E (main.js): erro de boot vira falha aqui.
+    await browser.pause(1000);
+    const errors = await browser.tauri.execute(() => window.__e2eErrors || []);
+    expect(errors).toEqual([]);
+  });
 });
