@@ -282,4 +282,8 @@ cd ~/Projects/sightdeck/src-tauri && cargo run
    com `GTK_IM_MODULE=gtk-im-context-simple` (`gtk-im-context-simple` é builtin na libgtk-3 3.24.52).
    Falta só confirmar na janela com o env normal (`fcitx`): se falhar lá, aplicar o IM simples no
    `main.rs` antes do GTK subir.
+7. **E2E da janela Tauri**: `npm run build:e2e && npm run test:e2e` (WebdriverIO + `@wdio/tauri-service`
+   provider `embedded`, 4/4; validado 2026-11-17). Os crates `tauri-plugin-wdio*` são opcionais e só
+   entram com `--features e2e` — produção não registra os plugins. Falta rodar no CI (exige sessão
+   gráfica/Xvfb e build do Tauri com a feature).
 
