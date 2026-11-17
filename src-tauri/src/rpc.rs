@@ -393,17 +393,24 @@ mod tests {
 
     #[test]
     fn child_path_pone_node_na_frente_do_path_herdado() {
+        // Separador de PATH é `;` no Windows e `:` no resto: monta e compara pelos
+        // componentes, senão o teste passa aqui e quebra no CI do Windows.
+        let Ok(inherited) = std::env::join_paths(["/usr/bin", "/bin"]) else {
+            panic!("join_paths falhou");
+        };
         let got = child_path_with(
-            Some(std::ffi::OsStr::new("/usr/bin:/bin")),
+            Some(inherited.as_os_str()),
             Some(std::path::Path::new("/home/u")),
             |p| p.ends_with("mise/shims"),
         );
-        assert_eq!(
-            got,
-            Some(std::ffi::OsString::from(
-                "/home/u/.local/share/mise/shims:/usr/bin:/bin"
-            ))
-        );
+        let Some(got) = got else {
+            panic!("com dir existente deve devolver PATH");
+        };
+        let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&got).collect();
+        assert_eq!(dirs.len(), 3, "{got:?}");
+        assert!(dirs[0].ends_with("mise/shims"), "{:?}", dirs[0]);
+        assert_eq!(dirs[1], std::path::PathBuf::from("/usr/bin"));
+        assert_eq!(dirs[2], std::path::PathBuf::from("/bin"));
     }
 
     #[test]
