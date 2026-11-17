@@ -1432,7 +1432,6 @@ fn read_session_messages_in(
 
     let mut kept: Vec<String> = Vec::new();
     let mut skipped = 0usize;
-    let mut oversized = 0usize;
     // Linha que nem vira mensagem reduzida (JSON quebrado): não entra, mas conta
     // como consumida — senão o botão "carregar anteriores" tentaria para sempre.
     let mut dropped = 0usize;
@@ -1452,7 +1451,6 @@ fn read_session_messages_in(
         // sumir do transcript: era isso que fazia a mensagem enviada desaparecer
         // ao trocar de conversa. Mantém a mensagem com o texto e sem o payload.
         let line = if line.len() > MAX_LINE_BYTES {
-            oversized += 1;
             match slim_message_line(line, MAX_LINE_BYTES) {
                 Some(slim) => slim,
                 None => {
@@ -1477,7 +1475,7 @@ fn read_session_messages_in(
     let older = total.saturating_sub(skipped + kept.len() + dropped);
     let consumed = skipped + kept.len() + dropped;
     let mut out = format!(
-        "{{\"type\":\"__deck_meta\",\"omitted\":{older},\"oversized\":{oversized},\"total\":{total},\"consumed\":{consumed},\"hasMore\":{},\"bytes\":{}}}\n",
+        "{{\"type\":\"__deck_meta\",\"omitted\":{older},\"total\":{total},\"consumed\":{consumed},\"hasMore\":{},\"bytes\":{}}}\n",
         older > 0,
         MAX_TOTAL_BYTES - budget
     );
@@ -1489,65 +1487,26 @@ fn read_session_messages_in(
 }
 
 /// Reduz uma mensagem grande sem apagá-la do histórico: preserva papel, timestamp
-/// e texto (truncado), descartando imagens em base64 e corpos de toolResult gigantes.
-/// Devolve `None` só quando a linha nem é JSON — aí não há o que salvar.
+/// e texto (truncado), descartando imagens em base64, `thinking` gigante e os
+/// argumentos de toolCall. Devolve `None` só quando a linha nem é JSON — aí não
+/// há o que salvar.
 fn slim_message_line(line: &str, max_bytes: usize) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    let mut slim = value.clone();
-    let message = slim.get_mut("message")?;
+    // 16k chars por bloco cabem no teto de 64 KB com folga; imagem e argumentos
+    // grandes viram marcador. Sem isto, thinking/toolCall acima do teto sumiam.
+    const TEXT_CHARS: usize = 16_000;
+    const ARGS_BYTES: usize = 8 * 1024;
 
+    let mut slim: serde_json::Value = serde_json::from_str(line).ok()?;
+    let message = slim.get_mut("message")?;
     if let Some(content) = message.get_mut("content") {
-        match content {
-            serde_json::Value::Array(blocks) => {
-                let mut kept = Vec::new();
-                for block in blocks.iter() {
-                    let kind = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    if kind == "image" {
-                        kept.push(serde_json::json!({
-                            "type": "text",
-                            "text": "[imagem omitida: mensagem grande]"
-                        }));
-                        continue;
-                    }
-                    let mut block = block.clone();
-                    if let Some(text) = block.get_mut("text").and_then(|v| v.as_str()).map(str::to_string) {
-                        let cut = text.chars().take(4000).collect::<String>();
-                        let text = if cut.len() < text.len() {
-                            format!("{cut}\n… (texto truncado: mensagem grande)")
-                        } else {
-                            cut
-                        };
-                        block["text"] = serde_json::Value::String(text);
-                    }
-                    kept.push(block);
-                }
-                *content = serde_json::Value::Array(kept);
-            }
-            serde_json::Value::String(text) => {
-                let cut: String = text.chars().take(8000).collect();
-                let cut = if cut.len() < text.len() {
-                    format!("{cut}\n… (texto truncado: mensagem grande)")
-                } else {
-                    cut
-                };
-                *content = serde_json::Value::String(cut);
-            }
-            _ => {}
-        }
+        slim_content(content, TEXT_CHARS, Some(ARGS_BYTES));
     }
 
     let mut out = serde_json::to_string(&slim).ok()?;
-    // Ainda acima do teto: corta todo texto para 500 chars e re-serializa.
+    // Ainda acima do teto: corta texto/thinking para 2k e omite todo argumento.
     if out.len() > max_bytes {
         if let Some(content) = slim.get_mut("message").and_then(|m| m.get_mut("content")) {
-            if let serde_json::Value::Array(blocks) = content {
-                for block in blocks.iter_mut() {
-                    if let Some(text) = block.get("text").and_then(|v| v.as_str()).map(str::to_string) {
-                        let cut: String = text.chars().take(500).collect();
-                        block["text"] = serde_json::Value::String(cut);
-                    }
-                }
-            }
+            slim_content(content, 2000, Some(0));
         }
         out = serde_json::to_string(&slim).ok()?;
     }
@@ -1555,6 +1514,59 @@ fn slim_message_line(line: &str, max_bytes: usize) -> Option<String> {
         None
     } else {
         Some(out)
+    }
+}
+
+/// Enxuga os blocos de `content` no lugar: imagem vira marcador, `text`/`thinking`
+/// são truncados em `text_chars` e `arguments` de toolCall acima de `args_bytes`
+/// viram marcador (`Some(0)` omite todos — passo final quando ainda estoura).
+fn slim_content(content: &mut serde_json::Value, text_chars: usize, args_bytes: Option<usize>) {
+    let marker = "\n… (texto truncado: mensagem grande)";
+    match content {
+        serde_json::Value::Array(blocks) => {
+            for block in blocks.iter_mut() {
+                if block.get("type").and_then(|v| v.as_str()) == Some("image") {
+                    *block = serde_json::json!({
+                        "type": "text",
+                        "text": "[imagem omitida: mensagem grande]"
+                    });
+                    continue;
+                }
+                // `thinking` e `text` são os campos grandes de uma mensagem; sem
+                // tratar os dois, uma linha só de thinking continuava acima do teto.
+                for field in ["text", "thinking"] {
+                    let text = match block.get(field).and_then(|v| v.as_str()).map(str::to_string) {
+                        Some(text) => text,
+                        None => continue,
+                    };
+                    let cut: String = text.chars().take(text_chars).collect();
+                    if cut.len() < text.len() {
+                        block[field] = serde_json::Value::String(format!("{cut}{marker}"));
+                    }
+                }
+                if block.get("type").and_then(|v| v.as_str()) != Some("toolCall") {
+                    continue;
+                }
+                if let Some(limit) = args_bytes {
+                    let len = block
+                        .get("arguments")
+                        .and_then(|a| serde_json::to_string(a).ok())
+                        .map_or(0, |a| a.len());
+                    if len > limit {
+                        block["arguments"] = serde_json::json!({
+                            "_omitted": "argumentos omitidos: mensagem grande"
+                        });
+                    }
+                }
+            }
+        }
+        serde_json::Value::String(text) => {
+            let cut: String = text.chars().take(text_chars).collect();
+            if cut.len() < text.len() {
+                *content = serde_json::Value::String(format!("{cut}{marker}"));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -2430,7 +2442,6 @@ mod tests {
 
         let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
         let meta = out.lines().next().unwrap();
-        assert!(meta.contains("\"oversized\":1"), "{meta}");
         assert!(meta.contains("\"total\":3"), "{meta}");
         assert_eq!(out.lines().count(), 3, "meta + 2 mensagens");
         assert!(!out.contains("xxxxx"), "linha gigante não pode ir ao webview");
@@ -2456,7 +2467,6 @@ mod tests {
         let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
         let meta = out.lines().next().unwrap();
         assert!(meta.contains("\"total\":3"), "{meta}");
-        assert!(meta.contains("\"oversized\":1"), "{meta}");
         assert_eq!(out.lines().count(), 4, "meta + 3 mensagens");
         assert!(out.contains("prompt que nao pode sumir"), "texto da mensagem sumiu: {out}");
         assert!(out.contains("imagem omitida"), "marcador da imagem sumiu: {out}");
@@ -2475,11 +2485,49 @@ mod tests {
         let f = t.file("sessions/proj/s.jsonl", &line);
 
         let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
-        let meta = out.lines().next().unwrap();
-        assert!(meta.contains("\"oversized\":1"), "{meta}");
         assert_eq!(out.lines().count(), 2, "meta + a mensagem truncada");
         assert!(out.contains("texto truncado"), "{out}");
         assert!(!out.contains(&big), "corpo gigante nao pode ir ao webview");
+    }
+
+    #[test]
+    fn read_messages_keeps_oversized_thinking_truncated() {
+        // Regressão: thinking acima do teto não era tratado pelo slim e a mensagem
+        // inteira era descartada (sumia do transcript, sem `hasMore` para voltar).
+        let t = Tmp::new("hugethinking");
+        let root = t.at("sessions");
+        let big = "z".repeat(70 * 1024);
+        let line = format!(
+            "{{\"type\":\"message\",\"id\":\"m1\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"thinking\",\"thinking\":\"{big}\"}}]}}}}\n"
+        );
+        let f = t.file("sessions/proj/s.jsonl", &line);
+
+        let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
+        let meta = out.lines().next().unwrap();
+        assert!(meta.contains("\"hasMore\":false"), "{meta}");
+        assert_eq!(out.lines().count(), 2, "meta + a mensagem truncada");
+        assert!(out.contains("texto truncado"), "{out}");
+        assert!(!out.contains(&big), "thinking gigante nao pode ir ao webview");
+    }
+
+    #[test]
+    fn read_messages_keeps_oversized_tool_call_arguments() {
+        // Regressão: `write`/`edit` com conteúdo grande perdia a mensagem do
+        // assistente (o volume estava em `arguments`, não em `text`).
+        let t = Tmp::new("hugetoolcall");
+        let root = t.at("sessions");
+        let big = "q".repeat(70 * 1024);
+        let line = format!(
+            "{{\"type\":\"message\",\"id\":\"m1\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"toolCall\",\"id\":\"c1\",\"name\":\"write\",\"arguments\":{{\"content\":\"{big}\"}}}}]}}}}\n"
+        );
+        let f = t.file("sessions/proj/s.jsonl", &line);
+
+        let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
+        let meta = out.lines().next().unwrap();
+        assert!(meta.contains("\"hasMore\":false"), "{meta}");
+        assert_eq!(out.lines().count(), 2, "meta + a mensagem truncada");
+        assert!(out.contains("argumentos omitidos"), "{out}");
+        assert!(!out.contains(&big), "argumentos gigantes nao podem ir ao webview");
     }
 
     #[test]

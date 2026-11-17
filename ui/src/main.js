@@ -2031,7 +2031,8 @@ function ensureSubsClock() {
   if (subsClock) return;
   subsClock = setInterval(() => {
     const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
-    if (!live.length) {
+    // Run terminado não faz o relógio andar: sem nenhum ao vivo, o timer morre.
+    if (!live.some(isLiveRun)) {
       clearInterval(subsClock);
       subsClock = null;
       return;
@@ -2069,10 +2070,6 @@ export function renderSubs(snap) {
  *  momento: poll curto mantém tokens, custo e % do contexto em tempo real. */
 const STATS_POLL_MS = 2000;
 let statsPoll = null;
-export function shouldPollStats(tabState_, now, lastAt, intervalMs) {
-  if (!tabState_ || !tabState_.working) return false;
-  return (now || 0) - (lastAt || 0) >= (intervalMs || STATS_POLL_MS);
-}
 function ensureStatsPoll() {
   if (statsPoll) return;
   statsPoll = setInterval(() => {
@@ -2480,7 +2477,8 @@ listen('rpc-line', (ev) => {
       if (rec.message && rec.message.role === 'assistant') {
         const et = tabs.find(x => current && x.key === current.key);
         if (et && et.live) et.livePending = true;
-        sendCommand({ type: 'get_session_stats' });
+        // Sem processo vivo o RPC falharia e a nota de erro cairia no transcript.
+        if (et && et.connected) sendCommand({ type: 'get_session_stats' });
         scheduleStatsRefresh();
       }
       break;
@@ -2515,7 +2513,10 @@ listen('rpc-line', (ev) => {
       applyToolResult(entry, rec.result);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
       // Tokens crescem também entre tool calls: atualiza o chip sem esperar o turno.
-      sendCommand({ type: 'get_session_stats' });
+      {
+        const tt = tabs.find(x => current && x.key === current.key);
+        if (tt && tt.connected) sendCommand({ type: 'get_session_stats' });
+      }
       scrollBottom();
       break;
     }
@@ -2720,9 +2721,9 @@ function fmtTokens(n) {
   return String(n);
 }
 
-/** Estimativa de tokens de uma mensagem em voo. Mesma razão do pi (3.5 chars/token):
- *  o RPC só contabiliza mensagens persistidas, então o turno em andamento ficaria
- *  de fora do chip de contexto até o `message_end`. */
+/** Estimativa de tokens de uma mensagem em voo (chars/4, a mesma heurística do
+ *  pi): o RPC só contabiliza mensagens persistidas, então o turno em andamento
+ *  ficaria de fora do chip de contexto até o `message_end`. */
 export function estimateMessageTokens(message) {
   if (!message || !Array.isArray(message.content)) return 0;
   let chars = 0;
@@ -2735,7 +2736,7 @@ export function estimateMessageTokens(message) {
       try { chars += JSON.stringify(block.arguments || {}).length; } catch { /* argumento parcial */ }
     }
   }
-  return Math.ceil(chars / 3.5);
+  return Math.ceil(chars / 4);
 }
 
 /** Tokens cobrados do turno em voo: usa o `usage` do parcial quando o provider já

@@ -32,7 +32,6 @@ let normalizeRowText;
 let answerAlreadyRendered;
 let isLiveRun;
 let elapsedFor;
-let shouldPollStats;
 let renderSubs;
 let renderedAnswerNode;
 let estimateMessageTokens;
@@ -63,7 +62,7 @@ beforeAll(async () => {
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
      healthChipState, renderHealthList, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
-     shouldPollStats, renderSubs, renderedAnswerNode, estimateMessageTokens, liveTurnTokens,
+     renderSubs, renderedAnswerNode, estimateMessageTokens, liveTurnTokens,
      liveStatsView } = await import('../ui/src/main.js'));
 });
 
@@ -630,14 +629,6 @@ describe('tempo dos runs ao vivo', () => {
   });
 });
 
-describe('poll de stats em tempo real', () => {
-  it('só consulta com turno rodando e respeita o intervalo', () => {
-    expect(shouldPollStats({ working: true }, 10_000, 0, 2000)).toBe(true);
-    expect(shouldPollStats({ working: true }, 10_000, 9_500, 2000)).toBe(false);
-    expect(shouldPollStats({ working: false }, 10_000, 0, 2000)).toBe(false);
-  });
-});
-
 describe('painel de subagents: relógio ao vivo', () => {
   it('o tempo do run em andamento avança sozinho, sem novo snapshot', () => {
     vi.useFakeTimers();
@@ -693,16 +684,17 @@ describe('tokens do turno em voo (mensagem ainda não persistida)', () => {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, ...over,
   });
 
-  it('estima tokens por conteúdo como o pi (3.5 chars/token)', () => {
-    expect(estimateMessageTokens({ content: [{ type: 'text', text: 'a'.repeat(350) }] })).toBe(100);
-    expect(estimateMessageTokens({ content: [{ type: 'thinking', thinking: 'b'.repeat(700) }] })).toBe(200);
+  it('estima tokens por conteúdo como o pi (4 chars/token)', () => {
+    expect(estimateMessageTokens({ content: [{ type: 'text', text: 'a'.repeat(400) }] })).toBe(100);
+    expect(estimateMessageTokens({ content: [{ type: 'thinking', thinking: 'b'.repeat(800) }] })).toBe(200);
     const tool = { type: 'toolCall', name: 'read', arguments: { path: 'x'.repeat(343) } };
-    expect(estimateMessageTokens({ content: [tool] })).toBeGreaterThan(100);
+    const toolChars = tool.name.length + JSON.stringify(tool.arguments).length;
+    expect(estimateMessageTokens({ content: [tool] })).toBe(Math.ceil(toolChars / 4));
     expect(estimateMessageTokens(null)).toBe(0);
   });
 
   it('usa usage do parcial quando o provider já informou; senão estima', () => {
-    const msg = { content: [{ type: 'text', text: 'a'.repeat(350) }], usage: usage() };
+    const msg = { content: [{ type: 'text', text: 'a'.repeat(400) }], usage: usage() };
     expect(liveTurnTokens(msg)).toBe(100);
     msg.usage = usage({ input: 1000, output: 200, totalTokens: 1200 });
     expect(liveTurnTokens(msg)).toBe(1200);
