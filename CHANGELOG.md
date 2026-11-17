@@ -3,6 +3,17 @@
 All notable changes to sightdeck. Format follows [Keep a Changelog](https://keepachangelog.com/),
 versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Resposta duplicada ao voltar para a aba**: o parcial guardado da aba era reanexado mesmo quando o disco/RPC já tinha pintado a resposta inteira, criando uma segunda cópia. O reattach agora ancora no bloco já renderizado (só dentro do turno atual, depois da última user row) e nem tenta com turno encerrado.
+- **Mensagem do usuário sumia ao trocar de conversa**: `read_session_messages` descartava qualquer linha acima de 64 KB — mensagem com imagem em base64 sumia inteira do transcript. Agora a mensagem é mantida (texto truncado, imagem vira marcador `[imagem omitida]`) e só JSON quebrado é descartado.
+- **User row duplicada**: a linha local comparava texto cru com o `text.trim()` do disco; a comparação passou a normalizar espaços.
+
+### Added
+- **Tempo real no painel de subagents**: run/child em andamento recalcula o relógio a cada segundo (antes congelava no último snapshot, ex.: `11m16` parado) e o child terminado congela no próprio `updatedAt`.
+- **Tokens/contexto em tempo real**: o parcial do turno em voo (usage + estimativa de 3.5 chars/token) é somado ao chip/popover, então `%` de contexto e tokens andam durante o streaming; `get_session_stats` é consultado durante o turno (2 s) e a cada `tool_execution_end`, em vez de só no `agent_settled`.
+
 ## [0.2.2] — 2026-11-17
 
 ### Fixed

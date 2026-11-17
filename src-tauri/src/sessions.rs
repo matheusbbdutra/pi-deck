@@ -1430,9 +1430,12 @@ fn read_session_messages_in(
     // da coleta e `hasMore` saía sempre falso (bug do botão "carregar anteriores").
     let total = raw.lines().filter(|l| l.contains("\"type\":\"message\"")).count();
 
-    let mut kept: Vec<&str> = Vec::new();
+    let mut kept: Vec<String> = Vec::new();
     let mut skipped = 0usize;
     let mut oversized = 0usize;
+    // Linha que nem vira mensagem reduzida (JSON quebrado): não entra, mas conta
+    // como consumida — senão o botão "carregar anteriores" tentaria para sempre.
+    let mut dropped = 0usize;
     let mut budget = MAX_TOTAL_BYTES;
 
     // Passo 2: pegar de trás para frente, pulando o que já está na tela.
@@ -1445,10 +1448,21 @@ fn read_session_messages_in(
             skipped += 1;
             continue;
         }
-        if line.len() > MAX_LINE_BYTES {
+        // Linha gigante (imagem embutida em base64, toolResult enorme) NÃO pode
+        // sumir do transcript: era isso que fazia a mensagem enviada desaparecer
+        // ao trocar de conversa. Mantém a mensagem com o texto e sem o payload.
+        let line = if line.len() > MAX_LINE_BYTES {
             oversized += 1;
-            continue;
-        }
+            match slim_message_line(line, MAX_LINE_BYTES) {
+                Some(slim) => slim,
+                None => {
+                    dropped += 1;
+                    continue;
+                }
+            }
+        } else {
+            line.to_string()
+        };
         if line.len() > budget {
             break;
         }
@@ -1460,18 +1474,88 @@ fn read_session_messages_in(
     }
     kept.reverse();
 
-    let older = total.saturating_sub(skipped + kept.len() + oversized);
-    let consumed = skipped + kept.len() + oversized;
+    let older = total.saturating_sub(skipped + kept.len() + dropped);
+    let consumed = skipped + kept.len() + dropped;
     let mut out = format!(
         "{{\"type\":\"__deck_meta\",\"omitted\":{older},\"oversized\":{oversized},\"total\":{total},\"consumed\":{consumed},\"hasMore\":{},\"bytes\":{}}}\n",
         older > 0,
         MAX_TOTAL_BYTES - budget
     );
     for line in kept {
-        out.push_str(line);
+        out.push_str(&line);
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Reduz uma mensagem grande sem apagá-la do histórico: preserva papel, timestamp
+/// e texto (truncado), descartando imagens em base64 e corpos de toolResult gigantes.
+/// Devolve `None` só quando a linha nem é JSON — aí não há o que salvar.
+fn slim_message_line(line: &str, max_bytes: usize) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let mut slim = value.clone();
+    let message = slim.get_mut("message")?;
+
+    if let Some(content) = message.get_mut("content") {
+        match content {
+            serde_json::Value::Array(blocks) => {
+                let mut kept = Vec::new();
+                for block in blocks.iter() {
+                    let kind = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if kind == "image" {
+                        kept.push(serde_json::json!({
+                            "type": "text",
+                            "text": "[imagem omitida: mensagem grande]"
+                        }));
+                        continue;
+                    }
+                    let mut block = block.clone();
+                    if let Some(text) = block.get_mut("text").and_then(|v| v.as_str()).map(str::to_string) {
+                        let cut = text.chars().take(4000).collect::<String>();
+                        let text = if cut.len() < text.len() {
+                            format!("{cut}\n… (texto truncado: mensagem grande)")
+                        } else {
+                            cut
+                        };
+                        block["text"] = serde_json::Value::String(text);
+                    }
+                    kept.push(block);
+                }
+                *content = serde_json::Value::Array(kept);
+            }
+            serde_json::Value::String(text) => {
+                let cut: String = text.chars().take(8000).collect();
+                let cut = if cut.len() < text.len() {
+                    format!("{cut}\n… (texto truncado: mensagem grande)")
+                } else {
+                    cut
+                };
+                *content = serde_json::Value::String(cut);
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = serde_json::to_string(&slim).ok()?;
+    // Ainda acima do teto: corta todo texto para 500 chars e re-serializa.
+    if out.len() > max_bytes {
+        if let Some(content) = slim.get_mut("message").and_then(|m| m.get_mut("content")) {
+            if let serde_json::Value::Array(blocks) = content {
+                for block in blocks.iter_mut() {
+                    if let Some(text) = block.get("text").and_then(|v| v.as_str()).map(str::to_string) {
+                        let cut: String = text.chars().take(500).collect();
+                        block["text"] = serde_json::Value::String(cut);
+                    }
+                }
+            }
+        }
+        out = serde_json::to_string(&slim).ok()?;
+    }
+    if out.len() > max_bytes {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// "Exclui" uma sessão movendo o `.jsonl` e o diretório de children para
@@ -2350,6 +2434,52 @@ mod tests {
         assert!(meta.contains("\"total\":3"), "{meta}");
         assert_eq!(out.lines().count(), 3, "meta + 2 mensagens");
         assert!(!out.contains("xxxxx"), "linha gigante não pode ir ao webview");
+    }
+
+    #[test]
+    fn read_messages_keeps_oversized_user_message_without_the_image() {
+        // Regressão: mensagem grande (imagem base64) era descartada inteira e o
+        // transcript "perdia" o que o usuário mandou ao trocar de conversa.
+        let t = Tmp::new("hugeuser");
+        let root = t.at("sessions");
+        let big = "A".repeat(70 * 1024);
+        let line = format!(
+            "{{\"type\":\"message\",\"id\":\"m2\",\"message\":{{\"role\":\"user\",\"timestamp\":123,\"content\":[{{\"type\":\"text\",\"text\":\"prompt que nao pode sumir\"}},{{\"type\":\"image\",\"data\":\"{big}\",\"mimeType\":\"image/png\"}}]}}}}\n"
+        );
+        let f = t.file(
+            "sessions/proj/s.jsonl",
+            &format!(
+                "{{\"type\":\"message\",\"id\":\"m1\",\"message\":{{\"role\":\"assistant\",\"content\":\"oi\"}}}}\n{line}{{\"type\":\"message\",\"id\":\"m3\",\"message\":{{\"role\":\"user\",\"content\":\"depois\"}}}}\n"
+            ),
+        );
+
+        let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
+        let meta = out.lines().next().unwrap();
+        assert!(meta.contains("\"total\":3"), "{meta}");
+        assert!(meta.contains("\"oversized\":1"), "{meta}");
+        assert_eq!(out.lines().count(), 4, "meta + 3 mensagens");
+        assert!(out.contains("prompt que nao pode sumir"), "texto da mensagem sumiu: {out}");
+        assert!(out.contains("imagem omitida"), "marcador da imagem sumiu: {out}");
+        assert!(!out.contains(&big), "base64 gigante nao pode ir ao webview");
+        assert!(out.contains("\"timestamp\":123"), "timestamp (ordem da row) deve sobreviver");
+    }
+
+    #[test]
+    fn read_messages_truncates_oversized_tool_result_text() {
+        let t = Tmp::new("hugetool");
+        let root = t.at("sessions");
+        let big = "x".repeat(70 * 1024);
+        let line = format!(
+            "{{\"type\":\"message\",\"id\":\"m1\",\"message\":{{\"role\":\"toolResult\",\"toolCallId\":\"c1\",\"content\":[{{\"type\":\"text\",\"text\":\"{big}\"}}]}}}}\n"
+        );
+        let f = t.file("sessions/proj/s.jsonl", &line);
+
+        let out = read_session_messages_in(&f, &root, Some(50), None).unwrap();
+        let meta = out.lines().next().unwrap();
+        assert!(meta.contains("\"oversized\":1"), "{meta}");
+        assert_eq!(out.lines().count(), 2, "meta + a mensagem truncada");
+        assert!(out.contains("texto truncado"), "{out}");
+        assert!(!out.contains(&big), "corpo gigante nao pode ir ao webview");
     }
 
     #[test]

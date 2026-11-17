@@ -133,6 +133,8 @@ function setTurn(sessionId, working, phase) {
     // Só redesenha na transição: text_delta chega a cada token.
     if (changed) renderTabs();
   }
+  // Turno da aba em foco começou: liga o poll de stats (tokens/tempo reais).
+  if (working && current && current.key === sessionId) ensureStatsPoll();
   if (current && current.key === sessionId) {
     setTyping(working, (t && t.phase) || phase || 'pensando…');
     // Mesmo caminho do indicador: o botão de parar segue o turno da aba em foco.
@@ -1926,6 +1928,22 @@ function fmtElapsed(from, to) {
   return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
 }
 
+/** Run ainda em andamento: o relógio anda com `now`, não congela no último snapshot.
+ *  Estado terminal usa `updatedAt` (o snapshot é o dono do instante final). */
+export function isLiveRun(run) {
+  const state = String((run && run.state) || '');
+  return state === 'running' || state === 'queued';
+}
+
+/** Tempo exibido de um run/child, recalculado a cada repaint (relógio de 1 s). */
+export function elapsedFor(run, now) {
+  if (!run || !run.startedAt) return '';
+  const end = isLiveRun(run)
+    ? (now || Date.now())
+    : (run.updatedAt || run.endedAt || run.startedAt);
+  return fmtElapsed(run.startedAt, end);
+}
+
 let lastSnap = null; // último widget ao vivo (runs em andamento), por sessão em foco
 let lastDiskList = null; // último histórico do disco, da sessão em foco
 
@@ -1935,18 +1953,51 @@ function liveRunBox(run, now) {
   const head = el('div', 'run-head');
   head.appendChild(el('span', 'run-label', String(run.label || run.kind || 'run')));
   head.appendChild(el('span', 'state state-' + state, state));
-  head.appendChild(el('span', 'tool-right', fmtElapsed(run.startedAt, run.updatedAt || now)));
+  head.appendChild(el('span', 'tool-right run-time', elapsedFor(run, now)));
+  box.dataset.state = state;
+  box.dataset.started = String(run.startedAt || '');
+  box.dataset.updated = String(run.updatedAt || '');
   box.appendChild(head);
 
   for (const ch of run.children || []) {
     const line = el('div', 'child');
+    line.dataset.state = String(ch.state || '');
+    line.dataset.started = String(ch.startedAt || '');
+    line.dataset.updated = String(ch.updatedAt || '');
     line.appendChild(el('b', null, String(ch.label || ch.agent || ch.id)));
     line.appendChild(el('span', null, ' · ' + String(ch.state || '?')));
     if (ch.model) line.appendChild(el('span', null, ' · ' + ch.model.split('/').pop()));
     if (ch.thinking) line.appendChild(el('span', null, ' · ' + ch.thinking));
+    const took = elapsedFor(ch, now);
+    line.appendChild(el('span', 'child-time', took ? ' · ' + took : ''));
     box.appendChild(line);
   }
   return box;
+}
+
+/** Tempo a partir do dataset da row: mantém o relógio sem repintar a lista toda
+ *  (repintar a cada segundo resetava o scroll do painel e perdia o hover). */
+function rowTiming(node) {
+  return {
+    state: node.dataset.state || '',
+    startedAt: Number(node.dataset.started) || 0,
+    updatedAt: Number(node.dataset.updated) || 0,
+  };
+}
+
+function tickSubsTimes(now = Date.now()) {
+  const host = $('subs');
+  if (!host) return;
+  for (const box of host.querySelectorAll('.run')) {
+    const time = box.querySelector('.run-time');
+    if (time) time.textContent = elapsedFor(rowTiming(box), now);
+    for (const line of box.querySelectorAll('.child')) {
+      const ct = line.querySelector('.child-time');
+      if (!ct) continue;
+      const took = elapsedFor(rowTiming(line), now);
+      ct.textContent = took ? ' · ' + took : '';
+    }
+  }
 }
 
 function diskRunBox(c) {
@@ -1973,7 +2024,23 @@ function sameSub(r, c) {
 /* Ao vivo e histórico se fundem: cada fonte atualiza só o seu estado e o paint
    desenha as duas metades. Antes um apagava o outro — o snapshot do widget limpava
    o histórico do disco a cada update ("aparece e depois fica só esse"). */
-function paintSubs() {
+/** Relógio de 1 s do painel: o snapshot só chega quando o run muda, então sem isto
+ *  o tempo do run congelava no último update ("11m16" parado). */
+let subsClock = null;
+function ensureSubsClock() {
+  if (subsClock) return;
+  subsClock = setInterval(() => {
+    const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
+    if (!live.length) {
+      clearInterval(subsClock);
+      subsClock = null;
+      return;
+    }
+    tickSubsTimes();
+  }, 1000);
+}
+
+function paintSubs(now = Date.now()) {
   const host = $('subs');
   if (!host) return;
   const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
@@ -1984,17 +2051,41 @@ function paintSubs() {
     applySubsWarning();
     return;
   }
-  const now = Date.now();
   for (const run of live) host.appendChild(liveRunBox(run, now));
+  if (live.length) ensureSubsClock();
   if (disk.length) {
     host.appendChild(el('div', 'history-head', 'histórico · ' + disk.length + ' run(s)'));
     for (const c of disk) host.appendChild(diskRunBox(c));
   }
 }
 
-function renderSubs(snap) {
+export function renderSubs(snap) {
   lastSnap = (snap && Array.isArray(snap.runs) && snap.runs.length) ? snap : null;
   paintSubs();
+}
+
+/** Enquanto um turno roda, o chip de contexto/tokens só mudava no `agent_settled`
+ *  (ou seja, "depois de um tempo"). O pi expõe `get_session_stats` a qualquer
+ *  momento: poll curto mantém tokens, custo e % do contexto em tempo real. */
+const STATS_POLL_MS = 2000;
+let statsPoll = null;
+export function shouldPollStats(tabState_, now, lastAt, intervalMs) {
+  if (!tabState_ || !tabState_.working) return false;
+  return (now || 0) - (lastAt || 0) >= (intervalMs || STATS_POLL_MS);
+}
+function ensureStatsPoll() {
+  if (statsPoll) return;
+  statsPoll = setInterval(() => {
+    const t = current && tabs.find(x => x.key === current.key);
+    if (!t || !t.working) {
+      clearInterval(statsPoll);
+      statsPoll = null;
+      return;
+    }
+    // Aba sem processo vivo não aceita RPC: poll falharia e encheria o log de erro.
+    if (!t.connected) return;
+    sendCommand({ type: 'get_session_stats' });
+  }, STATS_POLL_MS);
 }
 
 /* =============== fila de mensagens =============== */
@@ -2046,11 +2137,37 @@ export function insertRowByAt(log, row, at) {
   log.appendChild(row);
 }
 
+/** Texto de comparação de rows: colapsa espaços e remove as bordas.
+ *  O disco grava `text.trim()`; a linha local guarda o texto cru. Sem normalizar,
+ *  a mesma mensagem virava duas (uma do disco, outra local). */
+export function normalizeRowText(text) {
+  return String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+}
+
 /* Regra do restore: o que conta é o texto, não o estado. Linha cancelada cujo texto
    já está no transcript era a mesma mensagem — reinseri-la a prendia no fim do log
    para sempre (bug: mensagem antiga reaparecendo no fim do transcript). */
 export function shouldRestoreLocalRow(entry, seen) {
-  return !!(entry && seen) && !seen.has(entry.text);
+  if (!entry || !seen) return false;
+  const key = normalizeRowText(entry.text);
+  if (!key) return false;
+  if (typeof seen.has === 'function' && seen.has(key)) return false;
+  for (const text of seen) {
+    if (normalizeRowText(text) === key) return false;
+  }
+  return true;
+}
+
+/** O parcial da aba já está no log? O disco/RPC pode ter pintado a resposta
+ *  inteira (ou um prefixo maior) antes do `reattachStream`: reanexar o parcial
+ *  criava uma SEGUNDA cópia da mesma resposta ao trocar de aba e voltar. */
+export function answerAlreadyRendered(partial, renderedTexts) {
+  const p = normalizeRowText(partial);
+  if (!p) return false;
+  return (renderedTexts || []).some((text) => {
+    const n = normalizeRowText(text);
+    return !!n && n.startsWith(p);
+  });
 }
 
 /** Acumula `delta` em `prev` mantendo no máximo os `cap` últimos caracteres.
@@ -2191,7 +2308,8 @@ function restoreLocalRows() {
   const t = tabs.find(x => current && x.key === current.key);
   if (!t || !t.localRows || !t.localRows.length) return;
   const log = $('log');
-  const seen = new Set(Array.from(log.querySelectorAll('.row.user:not([data-local])')).map(n => n.dataset.text));
+  const seen = new Set(Array.from(log.querySelectorAll('.row.user:not([data-local])'))
+    .map(n => normalizeRowText(n.dataset.text)));
   t.localRows = t.localRows.filter((entry) => {
     if (!shouldRestoreLocalRow(entry, seen)) return false;
     if (!entry.row.isConnected) insertRowByAt(log, entry.row, entry.at);
@@ -2300,11 +2418,24 @@ listen('rpc-line', (ev) => {
         stream = { node: null, text: '', thinkBody: null };
         // Turno novo: o parcial guardado era do anterior (já está no disco).
         const mt = tabs.find(x => current && x.key === current.key);
-        if (mt) { mt.streamText = ''; mt.thinkText = ''; }
+        if (mt) { mt.streamText = ''; mt.thinkText = ''; mt.live = null; mt.livePending = false; }
       }
       break;
 
     case 'message_update': {
+      // Tokens/contexto do turno em voo: o `get_session_stats` só enxerga mensagens
+      // persistidas, então sem isto o chip ficava parado até o fim do turno.
+      if (rec.message && rec.message.role === 'assistant' && rec.message.stopReason === 'pending') {
+        const lt = tabs.find(x => current && x.key === current.key);
+        if (lt) {
+          lt.live = {
+            billed: liveTurnTokens(rec.message),
+            context: estimateMessageTokens(rec.message),
+            at: Date.now(),
+          };
+          scheduleStatsRefresh();
+        }
+      }
       const d = rec.assistantMessageEvent;
       if (!d || !d.delta) break;
 
@@ -2343,11 +2474,31 @@ listen('rpc-line', (ev) => {
       break;
     }
 
+    case 'message_end':
+      // Fim da resposta: pede stats frescos e deixa o live cair na resposta
+      // (a mensagem já foi persistida, então o próximo total a inclui).
+      if (rec.message && rec.message.role === 'assistant') {
+        const et = tabs.find(x => current && x.key === current.key);
+        if (et && et.live) et.livePending = true;
+        sendCommand({ type: 'get_session_stats' });
+        scheduleStatsRefresh();
+      }
+      break;
+
     case 'tool_execution_start':
       card(rec.toolCallId, rec.toolName, rec.args, null, Date.now());
       stream = null;
       // Trecho de texto anterior já está renderizado: não reanexa na volta.
-      { const tst = tabs.find(x => current && x.key === current.key); if (tst) { tst.streamText = ''; tst.thinkText = ''; } }
+      {
+        const tst = tabs.find(x => current && x.key === current.key);
+        if (tst) {
+          tst.streamText = '';
+          tst.thinkText = '';
+          // A mensagem do assistente terminou e foi persistida: mantém o parcial
+          // somando só até a resposta do stats, para o número não piscar para trás.
+          if (tst.live) tst.livePending = true;
+        }
+      }
       if (rec.toolName === 'subagent') setStatus('subagent disparado…');
       break;
 
@@ -2363,6 +2514,8 @@ listen('rpc-line', (ev) => {
       entry.icon.textContent = rec.isError ? '✕' : '✓';
       applyToolResult(entry, rec.result);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
+      // Tokens crescem também entre tool calls: atualiza o chip sem esperar o turno.
+      sendCommand({ type: 'get_session_stats' });
       scrollBottom();
       break;
     }
@@ -2376,7 +2529,7 @@ listen('rpc-line', (ev) => {
       renderHealthChip();
       {
         const st = tabs.find(x => x.key === sessionId);
-        if (st) { st.streamText = ''; st.thinkText = ''; }
+        if (st) { st.streamText = ''; st.thinkText = ''; st.live = null; st.livePending = false; }
         saveTabs();
       }
       if (current && current.childrenDir) loadChildren(current.childrenDir);
@@ -2567,12 +2720,83 @@ function fmtTokens(n) {
   return String(n);
 }
 
+/** Estimativa de tokens de uma mensagem em voo. Mesma razão do pi (3.5 chars/token):
+ *  o RPC só contabiliza mensagens persistidas, então o turno em andamento ficaria
+ *  de fora do chip de contexto até o `message_end`. */
+export function estimateMessageTokens(message) {
+  if (!message || !Array.isArray(message.content)) return 0;
+  let chars = 0;
+  for (const block of message.content) {
+    if (!block) continue;
+    if (block.type === 'text') chars += String(block.text || '').length;
+    else if (block.type === 'thinking') chars += String(block.thinking || '').length;
+    else if (block.type === 'toolCall') {
+      chars += String(block.name || '').length;
+      try { chars += JSON.stringify(block.arguments || {}).length; } catch { /* argumento parcial */ }
+    }
+  }
+  return Math.ceil(chars / 3.5);
+}
+
+/** Tokens cobrados do turno em voo: usa o `usage` do parcial quando o provider já
+ *  informou; senão estima pelo conteúdo (output crescendo token a token). */
+export function liveTurnTokens(message) {
+  const u = (message && message.usage) || null;
+  const used = u
+    ? (Number(u.totalTokens) || (Number(u.input) || 0) + (Number(u.output) || 0)
+        + (Number(u.cacheRead) || 0) + (Number(u.cacheWrite) || 0))
+    : 0;
+  return Math.max(used, estimateMessageTokens(message));
+}
+
+/** Stats do RPC + parcial em voo, sem tocar no cache por aba. */
+export function liveStatsView(data, live) {
+  const stats = data || {};
+  const billed = live ? Math.max(0, Number(live.billed) || 0) : 0;
+  const ctxDelta = live ? Math.max(0, Number(live.context) || 0) : 0;
+  if (!billed && !ctxDelta) return { stats, billed: 0, ctxDelta: 0 };
+  const tokens = stats.tokens
+    ? { ...stats.tokens, total: (Number(stats.tokens.total) || 0) + billed }
+    : stats.tokens;
+  let contextUsage = stats.contextUsage;
+  if (contextUsage && contextUsage.contextWindow) {
+    const base = typeof contextUsage.tokens === 'number' ? contextUsage.tokens : null;
+    const tokensCtx = base == null ? null : Math.min(contextUsage.contextWindow, base + ctxDelta);
+    contextUsage = {
+      ...contextUsage,
+      tokens: tokensCtx,
+      percent: tokensCtx == null ? null : (tokensCtx / contextUsage.contextWindow) * 100,
+      live: ctxDelta,
+    };
+  }
+  return { stats: { ...stats, tokens, contextUsage }, billed, ctxDelta };
+}
+
 /** Detalhamento do contexto (mesmo formato que o pi-gpui mostra). */
 function fmtCost(c) { return typeof c === 'number' ? 'US$ ' + c.toFixed(2) : '—'; }
 function sessShort(t) { return t.label || prettyId(t.key); }
+
+/** Parcial do turno em voo da aba em foco (setado em message_update/get_messages). */
+function currentLive() {
+  const t = current && tabs.find(x => x.key === current.key);
+  return (t && t.live) ? t.live : null;
+}
+
+let statsRefreshTimer = 0;
+/** Repinta o chip no máximo a cada 250 ms: text_delta chega por token. */
+function scheduleStatsRefresh() {
+  if (statsRefreshTimer) return;
+  statsRefreshTimer = setTimeout(() => {
+    statsRefreshTimer = 0;
+    if (current) renderCtxChip();
+    if (!$('ctxpop').classList.contains('hidden')) renderCtxPop();
+  }, 250);
+}
+
 function renderCtxPop() {
   const host = $('ctxrows');
-  const st = (sessionState && sessionState.stats) || null;
+  const view = liveStatsView(sessionState && sessionState.stats, currentLive());
+  const st = view.stats;
   if (!st || !st.tokens) {
     // Sem stats da sessão atual: ainda mostra o agregado das abas que já têm.
     clear(host);
@@ -2611,6 +2835,9 @@ function renderCtxPop() {
   row('Prompt cache (sessão)',
     'read ' + fmtTokens(t.cacheRead) + ' · write ' + fmtTokens(t.cacheWrite), true);
   row('Input / Output', fmtTokens(t.input) + ' / ' + fmtTokens(t.output));
+  if (view.billed || view.ctxDelta) {
+    row('Turno em andamento', '+' + fmtTokens(view.billed) + ' tokens · +' + fmtTokens(view.ctxDelta) + ' no contexto');
+  }
   row('Custo', fmtCost(st.cost));
   row('Mensagens', String(st.totalMessages || 0), true);
   renderSessAggregate(host, current && current.key);
@@ -2647,15 +2874,12 @@ function renderSessAggregate(host, curKey) {
   }
 }
 
-function updateStats(data) {
-  if (current) {
-    sessionState = { ...(sessionState || {}), stats: data || {} };
-    // Cache por sessão: o popover agrega tokens/custo sem pedir nada novo ao RPC.
-    const tb = tabs.find(x => x.key === current.key);
-    if (tb) tb.stats = data || {};
-  }
-  const cu = data && data.contextUsage;
+/** Chip do contexto. O valor exibido soma o parcial do turno em voo (liveStatsView),
+ *  então o % anda durante o streaming em vez de esperar o `message_end`. */
+function renderCtxChip() {
   const btn = $('ctxbtn');
+  const view = liveStatsView(sessionState && sessionState.stats, currentLive());
+  const cu = view.stats.contextUsage;
   if (!cu || cu.percent == null) {
     btn.textContent = '—';
     btn.title = 'contexto indisponível';
@@ -2665,14 +2889,32 @@ function updateStats(data) {
   }
   const pct = Math.round(cu.percent);
   btn.textContent = pct + '% · ' + fmtTokens(cu.tokens) + '/' + fmtTokens(cu.contextWindow);
-  btn.title = cu.tokens + ' / ' + cu.contextWindow + ' tokens (' + pct + '%) — clique para detalhes';
+  btn.title = (cu.tokens == null ? '?' : cu.tokens) + ' / ' + cu.contextWindow + ' tokens (' + pct + '%)'
+    + (view.billed ? ' · +' + view.billed + ' em voo' : '')
+    + ' — clique para detalhes';
   btn.classList.toggle('warn', pct >= 70 && pct < 90);
   btn.classList.toggle('danger', pct >= 90);
+  if (!$('ctxpop').classList.contains('hidden')) renderCtxPop();
+}
+
+function updateStats(data, opts) {
+  const fresh = !!(opts && opts.fresh);
+  if (current) {
+    sessionState = { ...(sessionState || {}), stats: data || {} };
+    // Cache por sessão: o popover agrega tokens/custo sem pedir nada novo ao RPC.
+    const tb = tabs.find(x => x.key === current.key);
+    if (tb) {
+      tb.stats = data || {};
+      // Resposta do RPC depois do message_end: a mensagem já está persistida,
+      // o parcial deixou de somar (evita contar duas vezes).
+      if (fresh && tb.livePending) { tb.livePending = false; tb.live = null; }
+    }
+  }
   if (data && typeof data.autoCompactionEnabled === 'boolean') {
     sessionState = { ...(sessionState || {}), autoCompactionEnabled: data.autoCompactionEnabled, stats: data };
     $('autocompact').classList.toggle('on', data.autoCompactionEnabled);
   }
-  if (!$('ctxpop').classList.contains('hidden')) renderCtxPop();
+  renderCtxChip();
 }
 
 function closeModelPop() { $('modelpop').classList.add('hidden'); }
@@ -2897,10 +3139,27 @@ function handleResponse(rec) {
       sendCommand({ type: 'get_state' });
       break;
     }
-    case 'get_messages':
+    case 'get_messages': {
       // Não deixa uma resposta vazia do RPC apagar o histórico já renderizado do disco.
-      if (Array.isArray(data.messages) && data.messages.length) renderMessages(data);
+      if (Array.isArray(data.messages) && data.messages.length) {
+        renderMessages(data);
+        const mt = tabs.find(x => current && x.key === current.key);
+        const partial = [...data.messages].reverse()
+          .find(m => m && m.role === 'assistant' && m.stopReason === 'pending');
+        if (mt && mt.working && partial) {
+          mt.live = {
+            billed: liveTurnTokens(partial),
+            context: estimateMessageTokens(partial),
+            at: Date.now(),
+          };
+        } else if (mt && !mt.working) {
+          mt.live = null;
+          mt.livePending = false;
+        }
+        renderCtxChip();
+      }
       break;
+    }
     case 'get_state':
       sessionState = data;
       if (current) { const tb = tabs.find(x => x.key === current.key); if (tb) { if (data.model) tb.model = data.model; if (data.thinkingLevel) tb.thinkingLevel = data.thinkingLevel; } }
@@ -2927,7 +3186,7 @@ function handleResponse(rec) {
       $('autocompact').classList.toggle('on', data.autoCompactionEnabled !== false);
       break;
     case 'get_session_stats':
-      updateStats(data);
+      updateStats(data, { fresh: true });
       // Só narra no transcript quando o usuário pediu (/session ou chip de contexto).
       if (statsNoteRequested && data && data.tokens) {
         statsNoteRequested = false;
@@ -3054,7 +3313,8 @@ function updateLoadMore(meta) {
 }
 
 function messages0(meta) {
-  return (meta.total || 0) - (meta.omitted || 0) - (meta.oversized || 0);
+  // `oversized` agora só conta mensagens truncadas (continuam no histórico).
+  return (meta.total || 0) - (meta.omitted || 0);
 }
 
 async function loadEarlier() {
@@ -3241,6 +3501,8 @@ async function switchTab(key) {
 
   if (t.file) await loadHistoryFromDisk(t.file);
   restoreLocalRows();
+  // Aba que entra em foco com turno rodando: stats (tokens/contexto) em tempo real.
+  if (t.working) ensureStatsPoll();
   // Sempre confirma o processo antes de falar com ele (a flag `connected` pode estar
   // velha após exit/evicção). ensureRpc devolve true na hora se já está vivo.
   if (await ensureRpc()) {
@@ -3345,11 +3607,35 @@ function logHasThinking(text) {
     .some(n => String(n.textContent || '').trim().startsWith(head));
 }
 
+/** Último bloco markdown DEPOIS da última mensagem do usuário cujo texto já
+ *  contém o parcial. Restringir ao turno atual evita ancorar numa resposta antiga
+ *  que só começa igual ("Ok", "Feito"). */
+export function renderedAnswerNode(partial) {
+  if (!normalizeRowText(partial)) return null;
+  const log = $('log');
+  const users = log.querySelectorAll('.row.user');
+  const lastUser = users.length ? users[users.length - 1] : null;
+  const bodies = Array.from(log.querySelectorAll('.md-body'));
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const body = bodies[i];
+    if (lastUser && !(lastUser.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+    const md = String(body._md || body.textContent || '');
+    if (answerAlreadyRendered(partial, [md])) return body;
+  }
+  return null;
+}
+
 /** Reanexa o parcial da aba ao voltar (o histórico do disco não o tem). */
 function reattachStream() {
   if (stream || !current) return;
   const t = tabs.find(x => x.key === current.key);
   if (!t) return;
+  // Sem turno rodando o parcial guardado é resto do turno anterior: o disco manda.
+  if (!t.working) {
+    t.streamText = '';
+    t.thinkText = '';
+    return;
+  }
   // Thinking do turno em voo: `renderMessages` acima só pintou o que está no disco.
   let thinkBody = null;
   if (t.thinkText && !logHasThinking(t.thinkText)) {
@@ -3361,6 +3647,16 @@ function reattachStream() {
     // Só thinking até agora: ancora `stream` nele para o próximo delta continuar
     // no mesmo bloco em vez de abrir um segundo.
     if (thinkBody) stream = { node: null, text: '', thinkBody };
+    return;
+  }
+  // Resposta já pintada pelo disco/RPC: ancora nela em vez de duplicar. O próximo
+  // text_delta passa a escrever no mesmo bloco (antes abria uma 2ª cópia).
+  const existing = renderedAnswerNode(t.streamText);
+  if (existing) {
+    const text = String(existing._md || t.streamText);
+    stream = { node: existing, text, thinkBody };
+    const tt = tabs.find(x => x.key === current.key);
+    if (tt) tt.streamText = text.slice(-STREAM_CAP);
     return;
   }
   const row = mdRow();

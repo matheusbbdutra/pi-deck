@@ -28,6 +28,16 @@ let classifyHealthLine;
 let noteHealth;
 let healthChipState;
 let renderHealthList;
+let normalizeRowText;
+let answerAlreadyRendered;
+let isLiveRun;
+let elapsedFor;
+let shouldPollStats;
+let renderSubs;
+let renderedAnswerNode;
+let estimateMessageTokens;
+let liveTurnTokens;
+let liveStatsView;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -52,7 +62,9 @@ beforeAll(async () => {
   });
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
-     healthChipState, renderHealthList } = await import('../ui/src/main.js'));
+     healthChipState, renderHealthList, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
+     shouldPollStats, renderSubs, renderedAnswerNode, estimateMessageTokens, liveTurnTokens,
+     liveStatsView } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -561,5 +573,171 @@ describe('avisos de extensão no Debug e overlay Sobre', () => {
     for (const id of ['about', 'aboutback', 'aboutlist', 'aboutbtn', 'healthlist', 'healthchip']) {
       expect(document.getElementById(id), id).not.toBeNull();
     }
+  });
+});
+
+describe('duplicação de resposta ao voltar para a aba', () => {
+  it('não reanexa o parcial quando o disco já pintou a resposta inteira', () => {
+    // Regressão: trocar de aba no meio do stream e voltar duplicava a mesma resposta.
+    const rendered = ['Rode isso para validar.', 'Rode isso para validar.\n\nSegunda parte'];
+    expect(answerAlreadyRendered('Rode isso para validar.', rendered)).toBe(true);
+    expect(answerAlreadyRendered('Rode isso para validar.', ['outra resposta'])).toBe(false);
+    // Parcial mais longo que o texto já pintado não é duplicata: ainda há stream.
+    expect(answerAlreadyRendered('Rode isso para validar.\n\nAinda escrevendo', rendered)).toBe(false);
+  });
+
+  it('normaliza espaços antes de comparar (parcial x markdown do disco)', () => {
+    expect(answerAlreadyRendered('linha 1\n\nlinha 2', ['linha 1\n\n  linha 2  '])).toBe(true);
+    expect(normalizeRowText('  a\n  b  ')).toBe('a b');
+  });
+
+  it('parcial vazio nunca conta como resposta já pintada', () => {
+    expect(answerAlreadyRendered('', ['qualquer'])).toBe(false);
+    expect(answerAlreadyRendered('   ', ['qualquer'])).toBe(false);
+  });
+});
+
+describe('mensagem do usuário não some ao trocar de conversa', () => {
+  it('deduplica texto cru local contra o texto trim() do disco', () => {
+    const seen = new Set([normalizeRowText('prompt grande\n')]);
+    expect(shouldRestoreLocalRow({ text: 'prompt grande\n', state: 'pending' }, seen)).toBe(false);
+  });
+
+  it('reinsere quando o disco não tem a mensagem (linha grande omitida)', () => {
+    const seen = new Set([normalizeRowText('outra mensagem')]);
+    expect(shouldRestoreLocalRow({ text: 'prompt com imagem', state: 'pending' }, seen)).toBe(true);
+  });
+});
+
+describe('tempo dos runs ao vivo', () => {
+  it('run em andamento usa `now`, então o relógio anda a cada repaint', () => {
+    const run = { state: 'running', startedAt: 1_000_000 };
+    expect(elapsedFor(run, 1_011_000)).toBe('11s');
+    expect(elapsedFor(run, 1_131_000)).toBe('2m11');
+    expect(elapsedFor(run, 1_005_000)).toBe('5s');
+  });
+
+  it('run terminado congela no updatedAt/endedAt', () => {
+    const run = { state: 'complete', startedAt: 1_000_000, updatedAt: 1_125_000 };
+    expect(elapsedFor(run, 9_999_999)).toBe('2m05');
+  });
+
+  it('classifica só running/queued como ao vivo', () => {
+    expect(isLiveRun({ state: 'running' })).toBe(true);
+    expect(isLiveRun({ state: 'queued' })).toBe(true);
+    expect(isLiveRun({ state: 'complete' })).toBe(false);
+    expect(isLiveRun(null)).toBe(false);
+  });
+});
+
+describe('poll de stats em tempo real', () => {
+  it('só consulta com turno rodando e respeita o intervalo', () => {
+    expect(shouldPollStats({ working: true }, 10_000, 0, 2000)).toBe(true);
+    expect(shouldPollStats({ working: true }, 10_000, 9_500, 2000)).toBe(false);
+    expect(shouldPollStats({ working: false }, 10_000, 0, 2000)).toBe(false);
+  });
+});
+
+describe('painel de subagents: relógio ao vivo', () => {
+  it('o tempo do run em andamento avança sozinho, sem novo snapshot', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:11Z'));
+    try {
+      renderSubs({
+        runs: [{
+          id: 'run-1', label: 'worker, worker, worker, +1 more', kind: 'subagent',
+          state: 'running', startedAt: Date.now() - 11000,
+          children: [{ id: 'c1', label: 'manifest', state: 'complete', startedAt: Date.now() - 9000, updatedAt: Date.now() - 1000 }],
+        }],
+      });
+      expect(document.getElementById('subs').textContent).toContain('11s');
+      vi.advanceTimersByTime(3000);
+      expect(document.getElementById('subs').textContent).toContain('14s');
+      // O child terminado congela no próprio updatedAt (não acompanha o relógio).
+      expect(document.getElementById('subs').textContent).toContain('8s');
+    } finally {
+      renderSubs(null);
+      vi.advanceTimersByTime(1000);
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('renderedAnswerNode (âncora do parcial em vez de 2ª cópia)', () => {
+  it('acha o bloco já pintado e não deixa o próximo delta abrir outra resposta', () => {
+    const log = document.getElementById('log');
+    log.innerHTML = '';
+    const firstUser = document.createElement('div');
+    firstUser.className = 'row user';
+    const old = document.createElement('div');
+    old.className = 'md-body';
+    old._md = 'resposta anterior';
+    const curUser = document.createElement('div');
+    curUser.className = 'row user';
+    const cur = document.createElement('div');
+    cur.className = 'md-body';
+    cur._md = 'Rode isso para validar.\n\nDetalhes finais.';
+    log.append(firstUser, old, curUser, cur);
+
+    expect(renderedAnswerNode('Rode isso para validar.')).toBe(cur);
+    expect(renderedAnswerNode('texto que não está no log')).toBe(null);
+    // Resposta de um turno ANTERIOR não pode ser a âncora do stream atual.
+    expect(renderedAnswerNode('resposta anterior')).toBe(null);
+    log.innerHTML = '';
+  });
+});
+
+describe('tokens do turno em voo (mensagem ainda não persistida)', () => {
+  const usage = (over = {}) => ({
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, ...over,
+  });
+
+  it('estima tokens por conteúdo como o pi (3.5 chars/token)', () => {
+    expect(estimateMessageTokens({ content: [{ type: 'text', text: 'a'.repeat(350) }] })).toBe(100);
+    expect(estimateMessageTokens({ content: [{ type: 'thinking', thinking: 'b'.repeat(700) }] })).toBe(200);
+    const tool = { type: 'toolCall', name: 'read', arguments: { path: 'x'.repeat(343) } };
+    expect(estimateMessageTokens({ content: [tool] })).toBeGreaterThan(100);
+    expect(estimateMessageTokens(null)).toBe(0);
+  });
+
+  it('usa usage do parcial quando o provider já informou; senão estima', () => {
+    const msg = { content: [{ type: 'text', text: 'a'.repeat(350) }], usage: usage() };
+    expect(liveTurnTokens(msg)).toBe(100);
+    msg.usage = usage({ input: 1000, output: 200, totalTokens: 1200 });
+    expect(liveTurnTokens(msg)).toBe(1200);
+  });
+
+  it('soma o parcial aos totals e ao contexto e recalcula o %', () => {
+    const data = {
+      tokens: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500 },
+      contextUsage: { tokens: 120_000, contextWindow: 1_000_000, percent: 12 },
+      totalMessages: 10,
+    };
+    const snapshot = JSON.parse(JSON.stringify(data));
+    const view = liveStatsView(data, { billed: 800, context: 600 });
+    expect(view.billed).toBe(800);
+    expect(view.ctxDelta).toBe(600);
+    expect(view.stats.tokens.total).toBe(2300);
+    expect(view.stats.contextUsage.tokens).toBe(120_600);
+    expect(view.stats.contextUsage.percent).toBeCloseTo(12.06, 5);
+    expect(data).toEqual(snapshot); // não muta o cache do RPC
+  });
+
+  it('sem parcial devolve os stats intactos', () => {
+    const data = { tokens: { total: 10 }, contextUsage: { tokens: 5, contextWindow: 100, percent: 5 } };
+    const view = liveStatsView(data, null);
+    expect(view.billed).toBe(0);
+    expect(view.ctxDelta).toBe(0);
+    expect(view.stats).toBe(data);
+  });
+
+  it('não estoura a janela de contexto', () => {
+    const view = liveStatsView(
+      { tokens: { total: 0 }, contextUsage: { tokens: 99_900, contextWindow: 100_000, percent: 99.9 } },
+      { billed: 10, context: 5000 },
+    );
+    expect(view.stats.contextUsage.tokens).toBe(100_000);
+    expect(view.stats.contextUsage.percent).toBe(100);
   });
 });
