@@ -12,10 +12,17 @@ on:
 permissions:
   contents: read
 
+# Duas execuções do mesmo ref (push de tag + dispatch manual) já criaram runs
+# duplicados; cancelar a antiga economiza cota de Actions.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # pinned: actions/checkout v4
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -61,6 +68,9 @@ jobs:
   test-windows:
     name: test (windows)
     runs-on: windows-latest
+    # Trava (sem log) quando algum teste espera processo/PTY: limite duro para
+    # não segurar o run por 1 h, e o teste de PTY fica de fora no Windows.
+    timeout-minutes: 25
     steps:
       # pinned: actions/checkout v4
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -74,11 +84,12 @@ jobs:
           workspaces: src-tauri
 
       - name: Testes (Windows)
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml -- --skip pty
 
   clippy:
     name: clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # pinned: actions/checkout v4
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -113,6 +124,7 @@ jobs:
   build:
     name: ${{ matrix.os }}
     needs: [test, clippy]
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -181,6 +193,7 @@ jobs:
     name: publish
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # `contents: write` só aqui: é o único job que cria release e sobe assets.
     # O `read` no topo do workflow é para os jobs de teste/build (zizmor).
     permissions:
