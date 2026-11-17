@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <title>sightdeck</title>
@@ -20,12 +20,17 @@
 <div id="tabs" class="tabs"></div>
 
 <div id="settingspop" class="settings-pop hidden">
-  <label><input type="checkbox" id="setExpTools" /> Ferramentas expandidas</label>
-  <label><input type="checkbox" id="setExpThink" /> Thinking expandido</label>
-  <label><input type="checkbox" id="setShowHidden" /> Mostrar projetos ocultos</label>
-  <label><input type="checkbox" id="setNotifyDesktop" /> Notificar término em 2º plano</label>
-  <label><input type="checkbox" id="setNotifySound" /> Som ao terminar em 2º plano</label>
-  <label><input type="checkbox" id="setHooks" /> Instrumentar hooks</label>
+  <label><input type="checkbox" id="setExpTools" /> <span id="lblExpTools">Ferramentas expandidas</span></label>
+  <label><input type="checkbox" id="setExpThink" /> <span id="lblExpThink">Thinking expandido</span></label>
+  <label><input type="checkbox" id="setShowHidden" /> <span id="lblShowHidden">Mostrar projetos ocultos</span></label>
+  <label><input type="checkbox" id="setNotifyDesktop" /> <span id="lblNotifyDesktop">Notificar término em 2º plano</span></label>
+  <label><input type="checkbox" id="setNotifySound" /> <span id="lblNotifySound">Som ao terminar em 2º plano</span></label>
+  <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
+  <label><span id="lblLang">Idioma</span> <select id="langsel" class="mfield">
+    <option value="auto">Auto (navegador)</option>
+    <option value="pt">Português</option>
+    <option value="en">English</option>
+  </select></label>
   <div class="settings-sep"></div>
   <button id="themebtn" class="ghost">Tema</button>
   <button id="pkgbtn" class="ghost">Pacotes e MCP</button>

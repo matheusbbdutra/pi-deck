@@ -165,6 +165,14 @@ cd ~/Projects/sightdeck/src-tauri && cargo run
 
 ## Gotchas já pagos
 
+- **`stream` não caducava no `agent_settled`**: o objeto global do stream continuava com a resposta
+  completa depois do fim do turno; trocar de aba chamava `stashDraft`, que regravava esse texto em
+  `t.streamText`, e ao voltar o `reattachStream` reanexava a resposta **por cima** do histórico do
+  disco (a mesma mensagem duas vezes). Só acontecia quando nenhum `message_start`/`tool_execution_start`
+  limpava `stream` — daí o "não ocorre em todas". Hoje `agent_settled` zera `stream` e `reattachStream`
+  descarta `t.streamText` quando o log já termina com ele (`logHasText`, cauda de 120 chars porque
+  `t.streamText` é cortado em `STREAM_CAP`).
+
 - **Aba criada com `+ Nova` nasce com `childrenDir = null`**, e o único lugar que descobre o diretório
   dos children é o `get_state` (`sessionFile` sem `.jsonl`). Sem derivar daí, o painel de subagents fica
   vazio para sempre mesmo com `run-0/session.jsonl` no disco — e `start()` não pode só olhar

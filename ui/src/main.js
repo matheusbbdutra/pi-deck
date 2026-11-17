@@ -8,6 +8,10 @@ import { appendHighlighted, langFor } from './highlight.js';
 import { diffView, setDiffView, splitHunk } from './diffview.js';
 import { initTerminal, reconcileTerminal } from './terminal.js';
 import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from './theme.js';
+import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
+
+/* Idioma: auto-detect via navigator.language, persistido em localStorage['lang']. */
+setLang(getLangPref());
 
 /* Tema por JSON: aplicado antes de qualquer render para o padrão não piscar na tela. */
 bootTheme();
@@ -83,16 +87,16 @@ function setEmptyState(on, kind) {
   const sub = el0.querySelector('.es-sub');
   if (sub) {
     if (kind === 'newsession') {
-      sub.textContent = 'Sessão nova — escreva abaixo para começar.';
+      sub.textContent = t('empty.new_session');
     } else if (kind === 'nosession') {
       clear(sub);
-      sub.append('Selecione uma sessão na barra à esquerda');
+      sub.append(t('empty.no_session_a'));
       sub.append(el('br'));
-      sub.append('ou crie uma nova com ');
+      sub.append(t('empty.no_session_b'));
       const b = el('b', null, '+ Nova');
       sub.append(b, ' / ');
       sub.append(el('b', null, '+'));
-      sub.append(' no projeto.');
+      sub.append(t('empty.no_session_c'));
     }
   }
 }
@@ -113,7 +117,7 @@ export function syncStopButton(working) {
   const stop = $('stopbtn');
   if (stop) stop.classList.toggle('hidden', !working);
   const send = $('send');
-  if (send) send.title = working ? 'Enfileirar mensagem (turno rodando)' : 'Enviar (Enter)';
+  if (send) send.title = working ? t('composer.enqueue') : t('composer.send');
   return !!working;
 }
 
@@ -2531,6 +2535,10 @@ listen('rpc-line', (ev) => {
       {
         const st = tabs.find(x => x.key === sessionId);
         if (st) { st.streamText = ''; st.thinkText = ''; st.live = null; st.livePending = false; }
+        // `stream` também caduca. Sem isto, trocar de aba depois do fim do turno
+        // fazia `stashDraft` regravar a resposta final em `t.streamText`, e voltar
+        // pintava a mesma resposta duas vezes (histórico do disco + reattach).
+        stream = null;
         saveTabs();
       }
       if (current && current.childrenDir) loadChildren(current.childrenDir);
@@ -3626,6 +3634,16 @@ export function renderedAnswerNode(partial) {
   return null;
 }
 
+/** true se o log já mostra esse texto: o disco/RPC trouxe e o parcial seria duplicata.
+ *  Compara pela cauda porque `t.streamText` é cortado em `STREAM_CAP` (`slice(-cap)`),
+ *  então a cabeça pode não existir no log de uma resposta longa. */
+export function logHasText(text) {
+  const tail = String(text || '').trim().slice(-120);
+  if (!tail) return false;
+  return Array.from($('log').querySelectorAll('.md-body'))
+    .some(n => String(n._md || n.textContent || '').trim().endsWith(tail));
+}
+
 /** Reanexa o parcial da aba ao voltar (o histórico do disco não o tem). */
 function reattachStream() {
   if (stream || !current) return;
@@ -3644,6 +3662,10 @@ function reattachStream() {
     $('log').appendChild(wrap);
     thinkBody = wrap.querySelector('.think-body');
   }
+  // Parcial que o disco/RPC já pintou não pode virar segunda cópia: `t.streamText`
+  // pode ser de um turno fechado (guardado pelo `stashDraft` ou restaurado do
+  // localStorage). Descarta em vez de reanexar a cada volta à aba.
+  if (t.streamText && logHasText(t.streamText)) t.streamText = '';
   if (!t.streamText) {
     // Só thinking até agora: ancora `stream` nele para o próximo delta continuar
     // no mesmo bloco em vez de abrir um segundo.
@@ -4928,6 +4950,12 @@ function loadSettings() {
   $('setShowHidden').checked = uiSettings.showHidden;
   $('setNotifyDesktop').checked = uiSettings.notifyDesktop;
   $('setNotifySound').checked = uiSettings.notifySound;
+  try {
+    const sel = $('langsel');
+    if (sel) sel.value = getLangPref();
+    document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en';
+  } catch { /* sem DOM */ }
+  applyStaticI18n();
 }
 
 function saveSettings() {
@@ -4947,6 +4975,13 @@ $('setShowHidden').onchange = (e) => {
 };
 $('setNotifyDesktop').onchange = (e) => { uiSettings.notifyDesktop = e.target.checked; saveSettings(); };
 $('setNotifySound').onchange = (e) => { uiSettings.notifySound = e.target.checked; saveSettings(); };
+$('langsel').onchange = (e) => {
+  setLang(e.target.value);
+  applyStaticI18n();
+  try { document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en'; } catch { /* sem DOM */ }
+  loadSessions();
+  if (current) { setEmptyState(true, current.file ? 'newsession' : 'nosession'); }
+};
 
 async function runUpdate(scope) {
   const out = $('updOut');

@@ -18,6 +18,7 @@ vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor:
 let insertRowByAt;
 let shouldRestoreLocalRow;
 let appendCapped;
+let logHasText;
 let setZoom;
 let shouldProbeTurn;
 let shouldAbortOnEsc;
@@ -55,11 +56,12 @@ beforeAll(async () => {
   // O ambiente jsdom não dá `import.meta.url` de arquivo: resolve pelo cwd (raiz do repo).
   const html = readFileSync(resolve(process.cwd(), 'ui/index.html'), 'utf8');
   document.body.innerHTML = html.slice(html.indexOf('<body>') + 6, html.indexOf('</body>'));
+  localStorage.setItem('lang', 'pt');
   vi.stubGlobal('__TAURI__', {
     core: { invoke: async () => { throw new Error('sem Tauri no teste'); } },
     event: { listen: async () => () => {} },
   });
-  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, setZoom, shouldProbeTurn, shouldAbortOnEsc,
+  ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, logHasText, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
      healthChipState, renderHealthList, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, estimateMessageTokens, liveTurnTokens,
@@ -90,6 +92,25 @@ describe('appendCapped', () => {
 
   it('mantém acento intacto no limite', () => {
     expect(appendCapped('', 'ção', 2)).toBe('ão');
+  });
+});
+
+describe('logHasText', () => {
+  it('reconhece o texto já pintado pelo histórico e ignora o resto', () => {
+    const log = document.getElementById('log');
+    log.innerHTML = '';
+    const body = document.createElement('div');
+    body.className = 'md-body';
+    const full = 'SIM — validada antes do fan-out:\n\n· subagent({action:list}) — único agente executável';
+    body._md = full;
+    log.appendChild(body);
+    expect(logHasText(full)).toBe(true);
+    // Parcial cortado pelo cap é um sufixo do texto completo: continua reconhecido.
+    expect(logHasText('x'.repeat(200) + '\n' + full.slice(-80))).toBe(false);
+    expect(logHasText(full.slice(-40))).toBe(true);
+    expect(logHasText('outra resposta')).toBe(false);
+    expect(logHasText('')).toBe(false);
+    log.innerHTML = '';
   });
 });
 
