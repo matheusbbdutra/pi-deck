@@ -1,5 +1,160 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, Fase 5a Svelte aplicada: anexos do composer)
+
+- **Fase 5a**: linha de anexos `#attachrow` em Svelte
+  (`ui/src/composer/Attachments.svelte`, montado por `composer/mount.js`).
+  Builder puro `attachmentsSnapshot(images)` exportado (idx/src/alt/rótulo).
+  `renderAttachments()` mantém o `hidden` do container e ganhou early-path
+  `attachmentsPane.sync()`; legado preservado. Ação via host: `remove(idx)`.
+- Wiring: `#attachrow` ✓, mount `main.js:5757`, early-path `main.js:5297`.
+- Verificado: `test:ui` **136/136**, `build:ui` ✓ (438 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 4 FECHADA: Plano, Missões, Git, Subagents)
+
+- **Fase 4e (Arquivos/diff) NÃO migrada — decisão técnica registrada**: o
+  overlay `#detail` é host compartilhado por 3 fluxos (`openDiffs`,
+  `openWorktreeDiff` async com loading/erro, `openMission`) e o núcleo é o
+  diff imperativo (Prism em `renderPatch` + `node.diffArgs` consumido por
+  `refreshDiffs`). Migrar só a casca adicionaria sincronização sem remover o
+  código imperativo → ficou como está (main.js:1455-1532).
+- **Fase 4 completa** (4 peças Svelte): Plano, Missões, Git, Subagents.
+- Verificado: `test:ui` **134/134**, `build:ui` ✓ (380 ms), oxlint exit 0.
+
+## Onde estamos (2026-11-18, Fase 4d Svelte aplicada: painel Subagents)
+
+- **Fase 4d**: painel `#subs` em Svelte (`ui/src/panels/SubsPane.svelte`).
+  Builder puro `subsSnapshot(live, disk, {now})` exportado (vazio/aviso de
+  extensão, runs ao vivo com children model/thinking/tempo, histórico de disco
+  deduplicado por `sameSub`, `CHILD_STATE`). `paintSubs()` ganhou early-path;
+  `applySubsWarning()` não injeta DOM quando o painel é Svelte (banner vem do
+  snapshot). Relógio de 1 s agora é `$effect` do componente: reavalia `now` e o
+  `{#each}` com key preserva nós/scroll (não repinta a lista).
+- Ajuste de teste pré-existente (`tests/ui.test.mjs`, relógio ao vivo): virou
+  async com `await tick()` — o flush do Svelte é microtask e o early-path não
+  pinta no DOM de forma síncrona.
+- Wiring: `#subs` ✓, mount `main.js:5889`, early-path `main.js:2332`.
+- Verificado: `test:ui` **134/134**, `build:ui` ✓ (380 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 4c Svelte aplicada: painel Git)
+
+- **Fase 4c**: painel `#git` em Svelte (`ui/src/panels/GitPane.svelte`).
+  Builder puro `gitSnapshot(data, ui)` exportado (erro/sem repo/sem sessão,
+  head branch/ahead/behind/arquivos/totais, linhas com seleção e titleAttr,
+  nota, composer com msg/amend/lease e labels i18n). `renderGit()` ganhou
+  early-path `gitPane.sync()`; legado preservado.
+  Estado canônico segue no main (`gitSel`/`gitMsg`/`gitAmend`/`gitLease`); o
+  componente só espelha. Foco/caret do textarea agora é nativo do Svelte
+  (não recria o nó), então o workaround antigo de re-focar sumiu do caminho novo.
+- Wiring: `#git` ✓, mount `main.js:5824`, early-path `main.js:1905`;
+  `startGitPoll()` em `5940` (depois do mount).
+- Verificado: `test:ui` **131/131**, `build:ui` ✓ (390 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 4b Svelte aplicada: painel Missões)
+
+- **Fase 4b**: painel `#missions` (Debug) em Svelte
+  (`ui/src/panels/MissionsPane.svelte`, montado por `panels/mount.js`).
+  Builder puro `missionsSnapshot(list, err)` exportado (vazio/erro, título,
+  status, runs, head com contagem). `renderMissions()` ganhou early-path
+  `missionsPane.sync()`; legado preservado. Ação via host: `open(id)` → `openMission`.
+- Wiring: `#missions` ✓, mount `main.js:5723`, early-path `main.js:1665`;
+  nenhuma chamada top-level de `renderMissions` (só via `loadMissions`).
+- Verificado: `test:ui` **128/128**, `build:ui` ✓ (340 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 4a Svelte aplicada: painel Plano)
+
+- **Fase 4a**: painel `#plans` em Svelte (`ui/src/panels/PlansPane.svelte` +
+  `panels/mount.js`). Builder puro `plansSnapshot(data, err)` exportado (vazio/
+  erro/sem repo, nome/fonte/próximo item, `done/total`, barra `pct`).
+  `renderPlans()` ganhou early-path `plansPane.sync()`; legado preservado.
+  Ação via host: `open(file)` → `open_file`.
+- Wiring: `#plans` ✓, mount `main.js:5689`, early-path `main.js:2011`;
+  `loadPlans` só roda por clique na aba (sempre após o mount).
+- Verificado: `test:ui` **126/126**, `build:ui` ✓ (393 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 3 FECHADA: abas + árvore + busca em Svelte)
+
+- **Fase 3c**: resultados da busca em Svelte (`ui/src/sidebar/SearchResults.svelte`
+  + `search-mount.js`). Builder puro `searchSnapshot(items, {total, offset})`
+  exportado (linha, snippet, badge de tools, erro, paginação, vazio).
+  `runSearch` acumula em `searchItems`/`searchTotal` e ganhou early-path
+  `searchResults.sync()`; legado preservado. Chave i18n nova `search.none`
+  (substitui o `'nada encontrado'` hardcoded) pt/en.
+- **Fase 3 completa**: abas (3a) + árvore de sessões (3b) + busca (3c).
+- Verificado: `test:ui` **123/123**, `build:ui` ✓ (340 ms), oxlint exit 0.
+  Wiring: `#searchresults` ✓, mount `main.js:5645`, early-path `main.js:640`.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 3b Svelte aplicada: árvore de sessões)
+
+- **Fase 3b**: `#sessions` em Svelte (`ui/src/sidebar/SessionTree.svelte` +
+  `mount.js`). Builder puro `sessionsSnapshot(groups, opts)` exportado (caret,
+  nome, contagem, oculto, paginação `SESS_PAGE`, labels i18n). `loadSessions`
+  mantém fetch/cache de títulos/init de colapsados e ganhou early-path
+  `sessionTree.sync()` **antes** do render legado (que segue intacto como fallback).
+  Ações via host: `toggleProject`/`hideProject`/`newSession`/`open`/`askDelete`/`loadMore`.
+- **Dívida consciente**: o render legado de `loadSessions` ainda não consome
+  `sessionsSnapshot` (duplicação temporária até a Fase 7 remover o fallback).
+- Ordem segura: mount em `main.js:5596`, boot `loadSessions()` em `5713` —
+  o early-path Svelte sempre vence.
+- Verificado: `test:ui` **120/120**, `build:ui` ✓ (316 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 3a Svelte aplicada: barra de abas)
+
+- **Fase 3a**: barra `#tabs` em Svelte (`ui/src/tabs/TabBar.svelte` + `mount.js`).
+  Builder puro `tabsSnapshot(list, active)` exportado; `renderTabs()` virou
+  `saveTabs()` + early-path `tabBar.sync()` + legado sobre o snapshot.
+  Sem wrapper legado: `#tabs` é preenchido só por JS, e o mount roda antes do
+  boot (IIFE no fim do arquivo), então não há duplicação.
+- A11y: tab com `role=button`/`tabindex`/Enter/Espaço.
+- Verificado: `test:ui` **117/117**, `build:ui` ✓ (307 ms), oxlint exit 0.
+  NÃO commitar sem pedido.
+
+## Onde estamos (2026-11-18, Fase 2 Svelte aplicada: pops do composer)
+
+- **Fase 2**: 3 pops do composer em Svelte (`ui/src/composer/`: `ModelPop` +
+  `CtxPop` + `ForkPop` + `mount.js`, contrato `mount(host)` do piloto).
+  Builders puros exportados (`modelListSnapshot`, `levelsSnapshot`,
+  `ctxSnapshot`, `sessAggSnapshot`, `limitSnapshot`, `forkSnapshot`);
+  renders legados refatorados sobre os builders (saída idêntica) com
+  early-path Svelte; overlays legados viraram fallback (`#*-legacy`).
+- i18n: 1 par novo (`fork.header` pt/en); resto reutiliza chaves existentes.
+- A11y: rows clicáveis com `role=button` + `tabindex` + Enter/Espaço.
+- Verificado neste turno: `test:ui` **113/113**, zero warnings Svelte,
+  `build:ui` ✓ (549 ms). NÃO commitar sem pedido.
+- **Armadilhas descobertas na Fase 2** (valem para toda migração Svelte):
+  - Svelte 5 **delega** `click`/`change`/`input` na raiz do componente: em teste
+    jsdom, `dispatchEvent(new Event('change'))` sem `{ bubbles: true }` não chega
+    ao handler (teste do CtxPop falhou assim; corrigido no teste, não no componente).
+  - pi-lens/oxlint analisa só o `<script>` de arquivos `.svelte` e reporta falso
+    "unused" para estado consumido no template. Suprimir na linha com
+    `// pi-lens-ignore: lint/correctness/noUnusedVariables — <motivo>`.
+  - `lang;` solto para registrar dependência reativa gera
+    `no-unused-expressions`; a forma limpa é `void lang;` (provado com oxlint).
+  - Pops/Theme **não** precisam de `lang` local: `setLang` só é chamado pelo
+    Settings, e abrir o Settings fecha esses overlays (estado morto removido).
+
+## Onde estamos (2026-11-18, Fase 0+1 Svelte aplicada: Tema com presets)
+
+- **Fase 0**: warning `state_referenced_locally` de `Settings.svelte:9` eliminado
+  (snapshot intencional + `svelte-ignore`); comentário TODO órfão removido.
+  `test:ui` sem warnings Svelte.
+- **Fase 1**: diálogo de Tema em Svelte (`ui/src/settings/theme/Theme.svelte` +
+  `mount.js`, contrato `mount(host)` do piloto) com galeria de **6 presets**
+  (`ui/src/themes/presets.js`: Sightdeck Dark, One Dark, Darcula, Dracula,
+  Gruvbox Dark, Nord — 16 chaves ⊆ `THEME_KEYS`, motor `applyTheme` intacto).
+  Overlay legado virou fallback (`#theme-legacy`, esconde quando o mount funciona).
+- i18n: 5 chaves `theme.*` novas em pt+en (`presets`, `custom`, `use_preset`,
+  `active`, `exported`); handler legado `themeexport` usa `t()` agora.
+- Verificado neste turno: `test:ui` **104/104**, `build:ui` ✓ (710 ms).
+  NÃO commitar sem pedido (lote i18n 2 em curso no mesmo arquivo).
+
 ## Onde estamos (2026-11-18, v0.2.5 publicada)
 
 - **v0.2.5 publicada** (11 assets: 5 instaladores + 5 `.sig` + `latest.json`). Run `44321035468`

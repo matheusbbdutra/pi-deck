@@ -11,7 +11,20 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { THEME_KEYS, applyTheme, resetTheme, validateTheme } from '../ui/src/theme.js';
+import { PRESETS, presetById } from '../ui/src/themes/presets.js';
 import { t, getLang, getLangPref, setLang, detectLang, applyStaticI18n, STRINGS } from '../ui/src/i18n.js';
+import { mount, unmount, tick } from 'svelte';
+import ModelPop from '../ui/src/composer/ModelPop.svelte';
+import ForkPop from '../ui/src/composer/ForkPop.svelte';
+import CtxPop from '../ui/src/composer/CtxPop.svelte';
+import TabBar from '../ui/src/tabs/TabBar.svelte';
+import SessionTree from '../ui/src/sidebar/SessionTree.svelte';
+import SearchResults from '../ui/src/sidebar/SearchResults.svelte';
+import PlansPane from '../ui/src/panels/PlansPane.svelte';
+import MissionsPane from '../ui/src/panels/MissionsPane.svelte';
+import GitPane from '../ui/src/panels/GitPane.svelte';
+import SubsPane from '../ui/src/panels/SubsPane.svelte';
+import Attachments from '../ui/src/composer/Attachments.svelte';
 
 vi.mock('../ui/src/terminal.js', () => ({ initTerminal: () => {}, reconcileTerminal: () => {} }));
 vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor: () => null }));
@@ -44,6 +57,20 @@ let estimateMessageTokens;
 let liveTurnTokens;
 let liveStatsView;
 let msgSpeed;
+let modelListSnapshot;
+let levelsSnapshot;
+let ctxSnapshot;
+let sessAggSnapshot;
+let limitSnapshot;
+let forkSnapshot;
+let tabsSnapshot;
+let sessionsSnapshot;
+let searchSnapshot;
+let plansSnapshot;
+let missionsSnapshot;
+let gitSnapshot;
+let subsSnapshot;
+let attachmentsSnapshot;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -71,7 +98,8 @@ beforeAll(async () => {
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
-     liveStatsView, msgSpeed } = await import('../ui/src/main.js'));
+     liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
+     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -658,6 +686,593 @@ describe('tema por JSON', () => {
   });
 });
 
+describe('presets de tema', () => {
+  it('traz 6 presets com ids únicos, incluindo o default vazio', () => {
+    expect(PRESETS.length).toBe(6);
+    expect(new Set(PRESETS.map((p) => p.id)).size).toBe(6);
+    expect(presetById('sightdeck').tokens).toEqual({});
+  });
+
+  it('só usa chaves de THEME_KEYS', () => {
+    const known = new Set(THEME_KEYS);
+    for (const p of PRESETS) {
+      for (const k of Object.keys(p.tokens)) expect(known.has(k)).toBe(true);
+    }
+  });
+
+  it('todos os valores passam no validateTheme', () => {
+    for (const p of PRESETS) {
+      const res = validateTheme(p.tokens);
+      expect(res.error).toBeUndefined();
+      expect(res.ignored).toEqual([]);
+      expect(Object.keys(res.ok).length).toBe(Object.keys(p.tokens).length);
+    }
+  });
+
+  it('preset desconhecido devolve null', () => {
+    expect(presetById('inexistente')).toBe(null);
+  });
+});
+
+describe('snapshots dos pops (Fase 2)', () => {
+  const provs = () => new Map([
+    ['acme', [
+      { id: 'b', name: 'Bravo', contextWindow: 200000, provider: 'acme' },
+      { id: 'a', name: 'Alpha', contextWindow: 100000, provider: 'acme' },
+    ]],
+    ['zed', [{ id: 'z', contextWindow: null, provider: 'zed' }]],
+  ]);
+
+  it('modelListSnapshot agrupa por provider, ordena, filtra e marca o atual', () => {
+    const snap = modelListSnapshot(provs(), 'a', '');
+    expect(snap.empty).toBe(false);
+    expect(snap.groups.map(g => g.provider)).toEqual(['acme', 'zed']);
+    expect(snap.groups[0].rows.map(r => r.id)).toEqual(['a', 'b']);
+    expect(snap.groups[0].rows[0]).toMatchObject({ name: 'Alpha', ctx: '100k', current: true });
+    expect(snap.groups[1].rows[0]).toMatchObject({ name: 'z', ctx: '', current: false });
+    expect(modelListSnapshot(provs(), '', 'br').groups[0].rows.map(r => r.id)).toEqual(['b']);
+    expect(modelListSnapshot(provs(), '', 'nada').empty).toBe(true);
+  });
+
+  it('levelsSnapshot: vazio, único (sem slider) e múltiplo', () => {
+    expect(levelsSnapshot([], 'x')).toEqual({ levels: [], at: 0, name: '', showSlider: false });
+    expect(levelsSnapshot(['off'], 'off')).toMatchObject({ at: 0, name: 'off', showSlider: false });
+    expect(levelsSnapshot(['off', 'low', 'high'], 'low')).toMatchObject({ at: 1, name: 'low', showSlider: true });
+    expect(levelsSnapshot(['off', 'low'], 'ghost')).toMatchObject({ at: 0, name: 'off' });
+  });
+
+  it('limitSnapshot: default, match de preset e custom', () => {
+    const d = limitSnapshot(200000, null, true);
+    expect(d.value).toBe('');
+    expect(d.options[0]).toEqual({ value: '', label: 'padrão do pi' });
+    expect(d.disabled).toBe(false);
+    expect(limitSnapshot(200000, 40000, true).value).toBe('80');
+    const c = limitSnapshot(200000, 12345, true);
+    expect(c.value).toBe('custom');
+    expect(c.options[c.options.length - 1].value).toBe('custom');
+    expect(limitSnapshot(200000, null, false).disabled).toBe(true);
+    expect(limitSnapshot(0, null, true).disabled).toBe(true);
+  });
+
+  it('sessAggSnapshot agrega, ordena por uso e marca a atual', () => {
+    expect(sessAggSnapshot([], null)).toBe(null);
+    const tabs = [
+      { key: 'k1', label: 'S1', stats: { tokens: { total: 100 }, cost: 0.5, totalMessages: 3, contextUsage: { percent: 10 } } },
+      { key: 'k2', label: 'S2', stats: { tokens: { total: 300 }, cost: 1.5, totalMessages: 5, contextUsage: { percent: 80 } } },
+    ];
+    const agg = sessAggSnapshot(tabs, 'k2');
+    expect(agg.totalLabel).toBe('2 sessões');
+    expect(agg.totalText).toBe('400 · US$ 2.00 · 8 msg');
+    expect(agg.rows.map(r => r.title)).toEqual(['k2', 'k1']);
+    expect(agg.rows[0].n).toBe('● S2');
+    expect(agg.rows[0].cls).toBe('warn');
+  });
+
+  it('forkSnapshot normaliza, trunca e rotula', () => {
+    expect(forkSnapshot([])).toEqual([]);
+    expect(forkSnapshot([{ noid: 1 }, null])).toEqual([]);
+    const snap = forkSnapshot([{ entryId: 'abcdef123456', text: '  olá   mundo  ' }]);
+    expect(snap[0]).toMatchObject({ entryId: 'abcdef123456', label: 'olá mundo', short: 'abcdef12' });
+    expect(snap[0].title).toMatch(/olá   mundo[\s\S]*fork/);
+  });
+
+  it('ctxSnapshot vazio mostra só o agregado (ou nada)', () => {
+    const tabs = [{ key: 'k1', label: 's1', stats: { tokens: { total: 100 }, cost: 0.01, totalMessages: 2 } }];
+    const e = ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, { tabs });
+    expect(e.empty).toBe(true);
+    expect(e.blocks.length).toBe(1);
+    expect(e.blocks[0].t).toBe('agg');
+    expect(ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, { tabs: [] }).blocks).toEqual([]);
+  });
+
+  it('ctxSnapshot cheio ordena blocos e alerta aos 90%', () => {
+    const view = {
+      stats: {
+        tokens: { total: 190000, input: 100000, output: 90000, cacheRead: 10, cacheWrite: 20 },
+        contextUsage: { tokens: 190000, contextWindow: 200000, percent: 95 },
+        cost: 1.5, totalMessages: 7,
+      },
+      billed: 100, ctxDelta: 5000,
+    };
+    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true });
+    expect(snap.empty).toBe(false);
+    expect(snap.blocks.map(b => b.t)).toEqual(['row', 'alert', 'row', 'limit', 'row', 'row', 'row', 'row', 'row']);
+    expect(snap.blocks[1]).toMatchObject({ kind: 'danger' });
+    expect(snap.blocks[2].v).toBe('ligada');
+  });
+});
+
+describe('pops svelte montam e sincronizam (Fase 2)', () => {
+  it('ModelPop monta, aplica, filtra e reabre', async () => {
+    const applied = [];
+    const host = {
+      t: (k) => k,
+      getLangPref: () => 'pt',
+      snapshot: (filter) => ({
+        list: modelListSnapshot(new Map([['acme', [{ id: 'a', name: 'A', contextWindow: 1000, provider: 'acme' }]]]), '', filter),
+        levels: levelsSnapshot([], null),
+      }),
+      apply: async (id) => { applied.push(id); },
+      previewLevel: () => '',
+      setLevel: async () => {},
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(ModelPop, { target, props: { host } });
+    expect(target.querySelectorAll('.model-row').length).toBe(1);
+    target.querySelector('.model-row').click();
+    expect(applied).toEqual(['a']);
+    inst.sync('zzz');
+    await tick();
+    expect(target.querySelectorAll('.model-row').length).toBe(0);
+    expect(target.querySelector('.model-empty')).not.toBe(null);
+    await inst.open();
+    expect(target.querySelectorAll('.model-row').length).toBe(1);
+    unmount(inst);
+    target.remove();
+  });
+
+  it('ForkPop monta, sincroniza e forka', async () => {
+    const done = [];
+    const host = {
+      t: (k) => k,
+      getLangPref: () => 'pt',
+      snapshot: (m) => forkSnapshot(m),
+      doFork: (id) => { done.push(id); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(ForkPop, { target, props: { host } });
+    expect(target.querySelector('.model-empty')).not.toBe(null);
+    inst.sync([{ entryId: 'abc123', text: 'hello' }]);
+    await tick();
+    expect(target.querySelectorAll('.model-row').length).toBe(1);
+    target.querySelector('.model-row').click();
+    expect(done).toEqual(['abc123']);
+    unmount(inst);
+    target.remove();
+  });
+  it('CtxPop monta blocos, salva limite e sincroniza', async () => {
+    const saved = [];
+    let state = {
+      empty: false,
+      blocks: [
+        { t: 'row', k: 'Context window', v: '10% usado · 1k / 10k tokens' },
+        { t: 'alert', kind: 'warn', text: 'Contexto em 75%' },
+        {
+          t: 'limit',
+          win: 10000,
+          limit: {
+            options: [{ value: '', label: 'padrão do pi' }, { value: '80', label: '80% · reserva 2k' }],
+            value: '',
+            disabled: false,
+            title: 'limite',
+          },
+        },
+      ],
+    };
+    const host = {
+      t: (k) => k,
+      getLangPref: () => 'pt',
+      snapshot: () => state,
+      saveLimit: async (value) => { saved.push(value); return state; },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(CtxPop, { target, props: { host } });
+    expect(target.querySelectorAll('.ctx-row').length).toBe(2);
+    expect(target.querySelector('.ctx-alert.warn')).not.toBe(null);
+    const sel = target.querySelector('.ctx-sel');
+    expect(sel.options.length).toBe(2);
+    expect(sel.disabled).toBe(false);
+    sel.value = '80';
+    // Svelte 5 delega `change` na raiz do componente: sem bubbles o handler não roda.
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await tick();
+    expect(saved).toEqual(['80']);
+    state = { empty: true, blocks: [] };
+    inst.sync();
+    await tick();
+    expect(target.querySelectorAll('.ctx-row').length).toBe(0);
+    expect(target.querySelector('.model-empty')).not.toBe(null);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('barra de abas (Fase 3)', () => {
+  const list = () => [
+    { key: '2026-11-18T10-41-00-000Z_sessao-a', cwd: '/home/user/proj', label: 'A', working: true, connected: true },
+    { key: '2026-11-18T10-42-00-000Z', cwd: '/tmp/x', label: '', connected: true },
+    { key: '2026-11-18T10-43-00-000Z', cwd: '', working: false, connected: false },
+  ];
+
+  it('tabsSnapshot monta estado, projeto e título por aba', () => {
+    const snap = tabsSnapshot(list(), { key: '2026-11-18T10-41-00-000Z_sessao-a' });
+    expect(snap.length).toBe(3);
+    expect(snap[0]).toMatchObject({ active: true, dot: ' busy', project: 'proj', title: 'A' });
+    expect(snap[0].titleAttr).toContain('/home/user/proj');
+    expect(snap[1]).toMatchObject({ active: false, dot: ' live', project: 'x' });
+    expect(snap[1].title).toBe('18/11 10:42');
+    expect(snap[2]).toMatchObject({ active: false, dot: '', project: '', title: '18/11 10:43' });
+  });
+
+  it('tabsSnapshot aguenta lista vazia e activeTab nulo', () => {
+    expect(tabsSnapshot([], null)).toEqual([]);
+    expect(tabsSnapshot(null, null)).toEqual([]);
+    expect(tabsSnapshot(list(), null).every(t => t.active === false)).toBe(true);
+  });
+
+  it('TabBar monta, troca de aba e fecha', async () => {
+    const calls = [];
+    const host = {
+      snapshot: () => tabsSnapshot(list(), { key: '2026-11-18T10-41-00-000Z_sessao-a' }),
+      switchTab: (k) => { calls.push(['switch', k]); },
+      closeTab: (k) => { calls.push(['close', k]); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(TabBar, { target, props: { host } });
+    const nodes = target.querySelectorAll('.tab');
+    expect(nodes.length).toBe(3);
+    expect(nodes[0].classList.contains('active')).toBe(true);
+    nodes[1].click();
+    expect(calls).toEqual([['switch', '2026-11-18T10-42-00-000Z']]);
+    target.querySelectorAll('.tab-close')[2].click();
+    expect(calls[1]).toEqual(['close', '2026-11-18T10-43-00-000Z']);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('árvore de sessões (Fase 3b)', () => {
+  const groups = () => [
+    { path: '/home/user/proj', name: 'proj', sessions: [
+      { id: 's1', title: 'Sessão 1', children: 2, file: '/x/s1.jsonl' },
+      { id: 's2', title: '', children: 0, file: '/x/s2.jsonl' },
+    ] },
+    { path: '/home/user', name: 'user', sessions: [] },
+  ];
+  const opts = (o) => ({ collapsed: new Set(), expanded: new Set(), hidden: new Set(), homeDir: '/home/user', ...o });
+
+  it('sessionsSnapshot monta caret, nome, contagem e linhas', () => {
+    const snap = sessionsSnapshot(groups(), opts());
+    expect(snap.groups[0]).toMatchObject({ path: '/home/user/proj', caret: '▾', name: 'proj', count: 2, hiddenCount: 0 });
+    expect(snap.groups[0].rows[0]).toMatchObject({ key: 's1', title: 'Sessão 1', children: 2 });
+    expect(snap.groups[0].rows[1].title).toBe('sem título');
+    expect(snap.groups[1].name).toBe('sem projeto');
+    expect(snap.groups[1].rows).toEqual([]);
+  });
+
+  it('sessionsSnapshot reflete colapsado, oculto e paginação', () => {
+    const many = [{ path: '/p', name: 'p', sessions: Array.from({ length: 10 }, (_, i) => ({ id: 'k' + i, title: 't' + i })) }];
+    const cut = sessionsSnapshot(many, opts({ collapsed: new Set(['/p']), hidden: new Set(['/p']), homeDir: null }));
+    expect(cut.groups[0].caret).toBe('▸');
+    expect(cut.groups[0].hideMark).toBe('↺');
+    expect(cut.groups[0].rows.length).toBe(8);
+    expect(cut.groups[0].hiddenCount).toBe(2);
+    expect(cut.groups[0].moreLabel).toContain('2');
+    const full = sessionsSnapshot(many, opts({ expanded: new Set(['/p']), homeDir: null }));
+    expect(full.groups[0].rows.length).toBe(10);
+    expect(full.groups[0].hiddenCount).toBe(0);
+  });
+
+  it('SessionTree monta, abre sessão e alterna projeto', async () => {
+    const calls = [];
+    const host = {
+      snapshot: () => sessionsSnapshot(groups(), opts()),
+      toggleProject: (p) => { calls.push(['toggle', p]); },
+      hideProject: (p) => { calls.push(['hide', p]); },
+      newSession: (p) => { calls.push(['new', p]); },
+      open: (p, k) => { calls.push(['open', p, k]); },
+      askDelete: (p, k) => { calls.push(['delete', p, k]); },
+      loadMore: (p) => { calls.push(['more', p]); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(SessionTree, { target, props: { host } });
+    expect(target.querySelectorAll('.group').length).toBe(2);
+    expect(target.querySelectorAll('.sess').length).toBe(2);
+    target.querySelectorAll('.sess')[0].click();
+    expect(calls[0]).toEqual(['open', '/home/user/proj', 's1']);
+    target.querySelector('.group-head').click();
+    expect(calls[1]).toEqual(['toggle', '/home/user/proj']);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('resultados da busca (Fase 3c)', () => {
+  const items = () => [
+    { id: '2026-11-18T10-41-00-000Z_a', title: 'Alpha', file: '/s/a.jsonl', snippet: 'trecho…', matches: 3, tools: ['edit', 'bash', 'read', 'grep'], hasError: true, cwd: '/home/user/p' },
+    { id: '2026-11-18T10-42-00-000Z_b', title: '', file: '/s/b.jsonl', matches: 1 },
+  ];
+
+  it('searchSnapshot normaliza linhas, badge e erro', () => {
+    const snap = searchSnapshot(items(), { total: 5, offset: 2 });
+    expect(snap.rows.length).toBe(2);
+    expect(snap.rows[0]).toMatchObject({ key: '2026-11-18T10-41-00-000Z_a', title: 'Alpha', snippet: 'trecho…', tools: 'edit,bash,read', hasError: true });
+    expect(snap.rows[0].meta).toContain('3');
+    expect(snap.rows[1].title).toBe('sem título');
+    expect(snap.rows[1].snippet).toBe('');
+    expect(snap.showMore).toBe(true);
+    expect(snap.moreLabel).toContain('3');
+    expect(snap.empty).toBe(false);
+  });
+
+  it('searchSnapshot: vazio e sem paginação', () => {
+    const vazio = searchSnapshot([], { total: 0, offset: 0 });
+    expect(vazio.empty).toBe(true);
+    expect(vazio.showMore).toBe(false);
+    expect(vazio.emptyLabel).toBe('nada encontrado');
+    const fim = searchSnapshot(items(), { total: 2, offset: 2 });
+    expect(fim.showMore).toBe(false);
+    expect(fim.moreLabel).toBe('');
+  });
+
+  it('SearchResults monta, abre resultado e pagina', async () => {
+    const calls = [];
+    let total = 5;
+    const host = {
+      snapshot: () => searchSnapshot(items(), { total, offset: 2 }),
+      open: (k) => { calls.push(['open', k]); },
+      loadMore: () => { calls.push(['more']); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(SearchResults, { target, props: { host } });
+    expect(target.querySelectorAll('.sess').length).toBe(2);
+    expect(target.querySelector('.badge').textContent).toBe('edit,bash,read');
+    target.querySelectorAll('.sess')[0].click();
+    expect(calls[0]).toEqual(['open', '2026-11-18T10-41-00-000Z_a']);
+    target.querySelector('.sess-more').click();
+    expect(calls[1]).toEqual(['more']);
+    total = 2;
+    inst.sync();
+    await tick();
+    expect(target.querySelector('.sess-more')).toBe(null);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('painel Plano (Fase 4a)', () => {
+  it('plansSnapshot: erro, sem dados, sem repo e vazio', () => {
+    expect(plansSnapshot(null, 'falhou')).toEqual({ empty: 'falhou', rows: [] });
+    expect(plansSnapshot(null, '').empty).toBe('nenhum plano');
+    expect(plansSnapshot({ repo: false }, '').empty).toContain('nenhum plano encontrado');
+    expect(plansSnapshot({ repo: true, plans: [] }, '').empty).toBe('nenhum plano');
+  });
+
+  it('plansSnapshot monta nome, fonte, próximo item, checklist e barra', () => {
+    const snap = plansSnapshot({ repo: true, plans: [
+      { file: 'plans/a.md', name: 'A', source: 'spec', current: 'fazer X', done: 3, total: 4 },
+      { file: 'plans/b.md', done: 0, total: 0 },
+    ] }, '');
+    expect(snap.rows[0]).toMatchObject({ file: 'plans/a.md', name: 'A', source: 'spec', current: 'fazer X', count: '3/4', pct: 75 });
+    expect(snap.rows[1].name).toBe('plans/b.md');
+    expect(snap.rows[1].count).toBe('sem checklist');
+    expect(snap.rows[1].pct).toBe(0);
+  });
+
+  it('PlansPane monta, pinta a barra e abre o plano', async () => {
+    const opened = [];
+    const host = {
+      snapshot: () => plansSnapshot({ repo: true, plans: [{ file: 'plans/a.md', name: 'A', done: 1, total: 2 }] }, ''),
+      open: (f) => { opened.push(f); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(PlansPane, { target, props: { host } });
+    expect(target.querySelectorAll('.plan-item').length).toBe(1);
+    expect(target.querySelector('.plan-bar-fill').style.width).toBe('50%');
+    target.querySelector('.plan-item').click();
+    expect(opened).toEqual(['plans/a.md']);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('painel Missões (Fase 4b)', () => {
+  it('missionsSnapshot: erro, vazio e linhas', () => {
+    expect(missionsSnapshot([], 'falhou')).toEqual({ empty: 'falhou', head: '', rows: [] });
+    const vazio = missionsSnapshot([], '');
+    expect(vazio.rows).toEqual([]);
+    expect(vazio.empty).toBeTruthy();
+    const snap = missionsSnapshot([
+      { id: 'm1', title: 'Corrigir X', status: 'open', runs: 3, cwd: '/p' },
+      { id: 'm2', status: 'done' },
+    ], '');
+    expect(snap.rows[0]).toEqual({ key: 'm1', title: 'Corrigir X', status: 'open', runs: '3', titleAttr: '/p' });
+    expect(snap.rows[1].title).toBe('m2');
+    expect(snap.head).toContain('2');
+  });
+
+  it('MissionsPane monta e abre o detalhe', async () => {
+    const opened = [];
+    const host = {
+      snapshot: () => missionsSnapshot([{ id: 'm1', title: 'A', status: 'open', runs: 1 }], ''),
+      open: (k) => { opened.push(k); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(MissionsPane, { target, props: { host } });
+    expect(target.querySelectorAll('.file-row').length).toBe(1);
+    target.querySelector('.file-row').click();
+    expect(opened).toEqual(['m1']);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('painel Git (Fase 4c)', () => {
+  it('gitSnapshot: erro, sem repo e sem sessão', () => {
+    expect(gitSnapshot(null, { error: 'falhou' }).empty).toBe('falhou');
+    expect(gitSnapshot({ repo: false }, { cwd: '/p' }).empty).toContain('/p');
+    expect(gitSnapshot(null, {}).empty).toBe('sem sessão aberta');
+  });
+
+  it('gitSnapshot monta head, arquivos, seleção e labels', () => {
+    const snap = gitSnapshot({
+      repo: true, branch: 'main', ahead: 2, behind: 1,
+      totals: { add: 10, del: 3 },
+      changes: [
+        { path: 'src/a.js', status: 'M', add: 5, del: 1, staged: true },
+        { path: 'b.md', status: '??', untracked: true },
+      ],
+    }, { cwd: '/p', sel: new Set(['b.md']), msg: 'oi', amend: true, lease: false, note: 'ok', noteErr: false });
+    expect(snap.head).toEqual({ branch: 'main', ahead: 2, behind: 1, count: 2, add: 10, del: 3 });
+    expect(snap.files[0]).toMatchObject({ path: 'src/a.js', name: 'a.js', dir: 'src', status: 'M', add: 5, del: 1, selected: false });
+    expect(snap.files[0].titleAttr).toContain('no índice');
+    expect(snap.files[1]).toMatchObject({ path: 'b.md', name: 'b.md', dir: '', selected: true, add: null, del: null });
+    expect(snap.files[1].titleAttr).toContain('não rastreado');
+    expect(snap.selCount).toBe(1);
+    expect(snap).toMatchObject({ msg: 'oi', amend: true, lease: false, note: 'ok', noteErr: false, empty: '' });
+    expect(snap.labels.reload).toBeTruthy();
+  });
+
+  it('GitPane monta, seleciona, abre diff e digita a mensagem', async () => {
+    const calls = [];
+    const snapData = gitSnapshot(
+      { repo: true, branch: 'main', changes: [{ path: 'a.js', status: 'M', add: 1, del: 0 }] },
+      { cwd: '/p', sel: new Set() },
+    );
+    const host = {
+      snapshot: () => snapData,
+      reload: () => { calls.push(['reload']); },
+      discard: () => { calls.push(['discard']); },
+      stash: () => { calls.push(['stash']); },
+      stashPop: () => { calls.push(['stashPop']); },
+      pull: () => { calls.push(['pull']); },
+      toggleSel: (p) => { calls.push(['toggle', p]); },
+      openDiff: (p) => { calls.push(['diff', p]); },
+      setMsg: (v) => { calls.push(['msg', v]); },
+      setFlag: (w, on) => { calls.push(['flag', w, on]); },
+      commit: (push) => { calls.push(['commit', push]); },
+      push: () => { calls.push(['push']); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(GitPane, { target, props: { host } });
+    expect(target.querySelectorAll('.file-row').length).toBe(1);
+    expect(target.querySelector('button[disabled]')).not.toBe(null);
+    target.querySelector('.file-row').click();
+    expect(calls[0]).toEqual(['toggle', 'a.js']);
+    target.querySelector('.file-row button').click();
+    expect(calls[1]).toEqual(['diff', 'a.js']);
+    const ta = target.querySelector('#gitmsg');
+    expect(ta).not.toBe(null);
+    ta.value = 'feat: x';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(calls[2]).toEqual(['msg', 'feat: x']);
+    target.querySelector('button.primary').click();
+    expect(calls[3]).toEqual(['commit', false]);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('painel Subagents (Fase 4d)', () => {
+  it('subsSnapshot: vazio com e sem aviso de extensão', () => {
+    const v = subsSnapshot([], [], { emptyLabel: 'nenhum subagent', warn: false });
+    expect(v.empty).toBe(true);
+    expect(v.runs).toEqual([]);
+    expect(v.history).toEqual([]);
+    expect(v.emptyLabel).toBe('nenhum subagent');
+    expect(subsSnapshot([], [], { warn: true }).warn).toBe(true);
+  });
+
+  it('subsSnapshot: live com children, tempos e dedupe do histórico', () => {
+    const now = 100000;
+    const live = [{
+      id: 'r1', label: 'run A', state: 'running', startedAt: now - 5000, updatedAt: now,
+      children: [{ id: 'c1', label: 'child', state: 'running', model: 'anthropic/claude', thinking: 'high', startedAt: now - 3000, updatedAt: now }],
+    }];
+    const disk = [
+      { id: 'r1', label: 'dup', state: 'running', run: 1, mtime: now },
+      { id: 'd1', label: 'disco', state: 'done', run: 2, mtime: now - 60000 },
+    ];
+    const snap = subsSnapshot(live, disk, { now, emptyLabel: 'x' });
+    expect(snap.empty).toBe(false);
+    expect(snap.runs.length).toBe(1);
+    expect(snap.runs[0]).toMatchObject({ id: 'r1', label: 'run A', state: 'running', time: '5s' });
+    expect(snap.runs[0].children[0]).toMatchObject({ label: 'child', model: 'claude', thinking: 'high', time: '3s' });
+    expect(snap.history.length).toBe(1);
+    expect(snap.history[0]).toMatchObject({ id: 'd1', label: 'disco', stateText: 'concluído', stateClass: 'chip-done' });
+    expect(snap.historyHead).toContain('1');
+  });
+
+  it('SubsPane monta live + histórico e abre o child do disco', async () => {
+    const opened = [];
+    const now = Date.now();
+    const live = [{ id: 'r1', label: 'A', state: 'running', startedAt: now - 1000, updatedAt: now }];
+    const disk = [{ id: 'd1', state: 'done', run: 1, mtime: now - 1000 }];
+    const host = {
+      snapshot: (n) => subsSnapshot(live, disk, { now: n || now, emptyLabel: 'vazio' }),
+      openChild: (id) => { opened.push(id); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(SubsPane, { target, props: { host } });
+    expect(target.querySelectorAll('.run').length).toBe(2);
+    expect(target.querySelectorAll('.run.clickable').length).toBe(1);
+    target.querySelector('.run.clickable').click();
+    expect(opened).toEqual(['d1']);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('anexos do composer (Fase 5a)', () => {
+  it('attachmentsSnapshot lista dataUrl com índice e rótulos', () => {
+    const snap = attachmentsSnapshot([
+      { dataUrl: 'data:image/png;base64,AAA', mimeType: 'image/png' },
+      null,
+    ]);
+    expect(snap.length).toBe(2);
+    expect(snap[0]).toEqual({ idx: 0, src: 'data:image/png;base64,AAA', alt: 'imagem colada', removeTitle: 'Remover imagem' });
+    expect(snap[1].src).toBe('');
+    expect(attachmentsSnapshot(null)).toEqual([]);
+  });
+
+  it('Attachments monta e remove pelo índice', async () => {
+    const removed = [];
+    const host = {
+      snapshot: () => attachmentsSnapshot([{ dataUrl: 'data:image/png;base64,AAA' }]),
+      remove: (i) => { removed.push(i); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(Attachments, { target, props: { host } });
+    expect(target.querySelectorAll('.attach').length).toBe(1);
+    expect(target.querySelector('img').getAttribute('src')).toBe('data:image/png;base64,AAA');
+    target.querySelector('.attach button').click();
+    expect(removed).toEqual([0]);
+    unmount(inst);
+    target.remove();
+  });
+});
+
 describe('Esc interrompe o turno', () => {
   it('aborta com turno trabalhando e foco no composer', () => {
     expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: true })).toBe(true);
@@ -792,7 +1407,7 @@ describe('tempo dos runs ao vivo', () => {
 });
 
 describe('painel de subagents: relógio ao vivo', () => {
-  it('o tempo do run em andamento avança sozinho, sem novo snapshot', () => {
+  it('o tempo do run em andamento avança sozinho, sem novo snapshot', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:11Z'));
     try {
@@ -803,8 +1418,12 @@ describe('painel de subagents: relógio ao vivo', () => {
           children: [{ id: 'c1', label: 'manifest', state: 'complete', startedAt: Date.now() - 9000, updatedAt: Date.now() - 1000 }],
         }],
       });
+      // Com o painel em Svelte o paint é flushado no microtask: sem o tick o
+      // teste leria o estado anterior (early-path de `paintSubs`).
+      await tick();
       expect(document.getElementById('subs').textContent).toContain('11s');
       vi.advanceTimersByTime(3000);
+      await tick();
       expect(document.getElementById('subs').textContent).toContain('14s');
       // O child terminado congela no próprio updatedAt (não acompanha o relógio).
       expect(document.getElementById('subs').textContent).toContain('8s');

@@ -12,6 +12,13 @@ import { initTerminal, reconcileTerminal } from './terminal.js';
 import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from './theme.js';
 import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
 import { mountSettings } from './settings/mount.js';
+import { mountTheme } from './settings/theme/mount.js';
+import { mountModelPop, mountCtxPop, mountForkPop, mountAttachments } from './composer/mount.js';
+import { mountTabBar } from './tabs/mount.js';
+import { mountSessionTree } from './sidebar/mount.js';
+import { mountSearchResults } from './sidebar/search-mount.js';
+import { mountPlansPane, mountMissionsPane, mountGitPane, mountSubsPane } from './panels/mount.js';
+import { PRESETS } from './themes/presets.js';
 
 /* E2E: o plugin do WebdriverIO só entra no bundle de teste (`--mode e2e`).
  * `__WDIO_E2E__` é definido pelo vite config; no vitest/produção fica false.
@@ -86,6 +93,27 @@ let modelsByProvider = new Map();
 let levelList = [];
 let debugEnabled = false;
 let tabs = [];
+/* Pops do composer em Svelte (Fase 2): instâncias montadas ou null (fallback legado). */
+let modelPop = null, ctxPop = null, forkPop = null;
+/* Anexos do composer em Svelte (Fase 5a): instância montada ou null (fallback). */
+let attachmentsPane = null;
+/* Barra de abas em Svelte (Fase 3): instância montada ou null (fallback legado). */
+let tabBar = null;
+/* Árvore de sessões em Svelte (Fase 3b): grupos crus para os callbacks + instância. */
+let sessionGroups = [];
+let sessionTree = null;
+/* Resultados da busca global em Svelte (Fase 3c): itens acumulados + instância. */
+let searchItems = [];
+let searchTotal = 0;
+let searchResults = null;
+/* Painel Plano em Svelte (Fase 4a): instância montada ou null (fallback legado). */
+let plansPane = null;
+/* Painel Missões em Svelte (Fase 4b): instância montada ou null (fallback legado). */
+let missionsPane = null;
+/* Painel Git em Svelte (Fase 4c): instância montada ou null (fallback legado). */
+let gitPane = null;
+/* Painel Subagents em Svelte (Fase 4d): instância montada ou null (fallback legado). */
+let subsPane = null;
 /* Título canônico por sessão (lido do .jsonl por loadSessions) — a aba mostra isso,
    não a data/hora do id. */
 let sessionTitles = new Map();
@@ -335,6 +363,52 @@ let hiddenProjects = new Set();
 let expandedProjects = new Set();
 const SESS_PAGE = 8;
 
+/** Opções do snapshot da árvore (estado de UI persistido). */
+function treeOpts() {
+  return { collapsed: collapsedProjects, expanded: expandedProjects, hidden: hiddenProjects, homeDir };
+}
+
+/** Snapshot puro da árvore de sessões (Svelte + testes). */
+export function sessionsSnapshot(groups, opts) {
+  const o = opts || {};
+  const collapsed = o.collapsed || new Set();
+  const expanded = o.expanded || new Set();
+  const hidden = o.hidden || new Set();
+  const page = o.page || SESS_PAGE;
+  return {
+    emptyLabel: t('sidebar.no_sessions'),
+    groups: (groups || []).map(g => {
+      const isCollapsed = collapsed.has(g.path);
+      const isHidden = hidden.has(g.path);
+      const shown = expanded.has(g.path) ? g.sessions : g.sessions.slice(0, page);
+      const hiddenCount = g.sessions.length - shown.length;
+      const isHome = !!(o.homeDir && g.path === o.homeDir);
+      return {
+        path: g.path,
+        collapsed: isCollapsed,
+        caret: isCollapsed ? '▸' : '▾',
+        name: isHome ? t('sidebar.no_project') : (g.name || g.path),
+        count: g.sessions.length,
+        hidden: isHidden,
+        hideMark: isHidden ? '↺' : '⊘',
+        hideTitle: isHidden ? t('proj.show') : t('proj.hide'),
+        newTitle: t('proj.new_here', { path: g.path }),
+        hiddenCount,
+        moreLabel: hiddenCount > 0 ? t('sidebar.load_more', { n: hiddenCount }) : '',
+        rows: shown.map(s => ({
+          key: s.id,
+          title: s.title || t('sidebar.untitled'),
+          titleAttr: (s.title || s.id) + '\n' + s.id,
+          meta: prettyId(s.id),
+          children: s.children || 0,
+          childrenTitle: t('sess.badge_runs'),
+          trashTitle: t('sess.trash'),
+        })),
+      };
+    }),
+  };
+}
+
 function loadTreeState() {
   try {
     collapsedProjects = new Set(JSON.parse(localStorage.getItem('collapsed-projects') || '[]'));
@@ -405,6 +479,7 @@ async function loadSessions() {
     clear(side);
 
     const visible = groups.filter(g => !hiddenProjects.has(g.path) || uiSettings.showHidden);
+    sessionGroups = visible;
     if (!visible.length) { setEmpty(side, t('sidebar.no_sessions')); return; }
 
     // Títulos ficam em cache: a aba aberta mostra o mesmo nome da lista.
@@ -424,6 +499,8 @@ async function loadSessions() {
       saveTreeState();
       try { localStorage.setItem('collapsed-initialized', '1'); } catch { /* sem storage */ }
     }
+
+    if (sessionTree) { sessionTree.sync(); return; }
 
     for (const g of visible) {
       const isCollapsed = collapsedProjects.has(g.path);
@@ -519,6 +596,30 @@ function setSearchMeta(t) {
   m.appendChild(el('span', null, t));
 }
 
+/** Snapshot puro dos resultados da busca global (Svelte + testes). */
+export function searchSnapshot(items, opts) {
+  const o = opts || {};
+  const list = items || [];
+  const total = Number(o.total) || 0;
+  const offset = Number(o.offset) || 0;
+  return {
+    rows: list.map(r => ({
+      key: r.id,
+      title: r.title || t('sidebar.untitled'),
+      titleAttr: (r.title || r.id) + '\n' + r.file,
+      snippet: r.snippet || '',
+      meta: t('search.matches', { id: prettyId(r.id), n: r.matches }),
+      tools: (r.tools || []).slice(0, 3).join(','),
+      hasError: !!r.hasError,
+      errorLabel: t('sidebar.error_badge'),
+    })),
+    showMore: offset < total,
+    moreLabel: offset < total ? t('sidebar.show_more', { n: total - offset }) : '',
+    empty: !list.length,
+    emptyLabel: t('search.none'),
+  };
+}
+
 function scheduleSearch() {
   // Filtros aparecem ao focar/digitar; sem critério a árvore normal volta.
   const on = searchActive();
@@ -541,6 +642,13 @@ async function runSearch(append) {
     const raw = await inv('search_sessions', { query, tool, errorsOnly, limit: SEARCH_PAGE, offset: searchOffset });
     const res = JSON.parse(raw);
     const items = (res && res.results) || [];
+    if (!append) searchItems = [];
+    searchItems.push(...items);
+    searchOffset += items.length;
+    const total = (res && res.total) || 0;
+    searchTotal = total;
+    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
+    if (searchResults) { searchResults.sync(); return; }
     if (!append) clear($('searchresults'));
     $('searchresults').querySelectorAll('.sess-more').forEach(n => n.remove());
     for (const r of items) {
@@ -557,9 +665,6 @@ async function runSearch(append) {
       row.onclick = () => openSession(r.cwd, r);
       $('searchresults').appendChild(row);
     }
-    searchOffset += items.length;
-    const total = (res && res.total) || 0;
-    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
     // Paginação: o botão some quando tudo já está na tela.
     if (searchOffset < total) {
       const more = el('button', 'sess-more', t('sidebar.show_more', { n: total - searchOffset }));
@@ -1545,7 +1650,25 @@ async function loadMissions() {
   renderMissions();
 }
 
+/** Snapshot puro do painel Missões (Svelte + testes). */
+export function missionsSnapshot(list, err) {
+  if (err) return { empty: err, head: '', rows: [] };
+  const rows = (list || []).map(m => ({
+    key: String(m.id || ''),
+    title: String(m.title || m.id || t('sidebar.untitled')),
+    status: String(m.status || ''),
+    runs: String(m.runs || 0),
+    titleAttr: String(m.cwd || m.project || ''),
+  }));
+  return {
+    empty: rows.length ? '' : t('missions.empty'),
+    head: rows.length ? t('missions.count', { n: rows.length }) : '',
+    rows,
+  };
+}
+
 function renderMissions() {
+  if (missionsPane) { missionsPane.sync(); return; }
   const host = $('missions');
   clear(host);
   if (missionsError) { host.appendChild(el('div', 'empty', missionsError)); return; }
@@ -1723,7 +1846,67 @@ function gitCheck(text, on, title, onchange) {
   return lab;
 }
 
+/** Snapshot puro do painel Git (Svelte + testes). */
+export function gitSnapshot(data, ui) {
+  const u = ui || {};
+  const cwd = String(u.cwd || '');
+  if (u.error) return { empty: u.error, files: [], head: null };
+  const repo = !!data && data.repo === true;
+  if (!repo) return { empty: cwd ? t('git.no_repo', { path: cwd }) : t('composer.no_session'), files: [], head: null };
+  const list = Array.isArray(data.changes) ? data.changes : [];
+  const tot = data.totals || {};
+  const sel = u.sel || new Set();
+  return {
+    empty: '',
+    head: {
+      branch: String(data.branch || '') || (data.detached ? '(detached)' : '—'),
+      ahead: Number(data.ahead) || 0,
+      behind: Number(data.behind) || 0,
+      count: list.length,
+      add: Number(tot.add) || 0,
+      del: Number(tot.del) || 0,
+    },
+    cwd,
+    files: list.map(c => {
+      const path = String(c.path || '');
+      const [name, dir] = splitPath(path);
+      return {
+        path, name, dir,
+        status: String(c.status || '?'),
+        add: typeof c.add === 'number' ? c.add : null,
+        del: typeof c.del === 'number' ? c.del : null,
+        selected: sel.has(path),
+        titleAttr: path + ' · ' + (c.untracked ? 'não rastreado' : (c.staged ? 'no índice' : 'no worktree'))
+          + ' · clique na row seleciona; `diff` abre o patch',
+      };
+    }),
+    cleanLabel: t('panel.git_clean'),
+    note: u.note || '',
+    noteErr: !!u.noteErr,
+    msg: u.msg || '',
+    amend: !!u.amend,
+    lease: !!u.lease,
+    selCount: sel.size,
+    labels: {
+      reload: t('git.reload'), hintReload: t('git.hint_reload'),
+      discard: t('git.discard'), hintDiscard: t('git.hint_discard'),
+      stash: t('git.stash'), hintStash: t('git.hint_stash'),
+      stashPop: t('git.stash_pop'), hintStashPop: t('git.hint_stash_pop'),
+      pull: t('git.pull'), hintPull: t('git.hint_pull'),
+      selectTitle: 'selecionar para commit/descartar',
+      diffTitle: 'abrir o diff deste arquivo',
+      msgPh: 'mensagem do commit · Ctrl+Enter commita',
+      hintAmend: t('git.hint_amend'),
+      hintLease: t('git.hint_lease'),
+      hintCommit: t('git.hint_commit'),
+      commitPushTitle: 'commit e depois push; se o push falhar o commit fica',
+      pushTitle: 'git push (--force-with-lease se o toggle estiver ligado)',
+    },
+  };
+}
+
 function renderGit() {
+  if (gitPane) { gitPane.sync(); return; }
   const host = $('git');
   if (!host) return;
   const repo = !!gitData && gitData.repo === true;
@@ -1884,7 +2067,34 @@ async function loadPlans() {
 
 /** Uma linha por plano (`name`, `done/total`, próximo item aberto) + barra de 2px.
     Clique na linha abre o markdown no app padrão. */
+/** Snapshot puro do painel Plano (Svelte + testes). */
+export function plansSnapshot(data, err) {
+  if (err) return { empty: err, rows: [] };
+  if (!data) return { empty: t('panel.no_plans'), rows: [] };
+  if (data.repo !== true) return { empty: t('panel.no_plans_found'), rows: [] };
+  const list = Array.isArray(data.plans) ? data.plans : [];
+  if (!list.length) return { empty: t('panel.no_plans'), rows: [] };
+  return {
+    empty: '',
+    rows: list.map(p => {
+      const file = String(p.file || '');
+      const done = Number(p.done) || 0;
+      const total = Number(p.total) || 0;
+      return {
+        file,
+        name: String(p.name || file),
+        source: p.source ? String(p.source) : '',
+        current: p.current ? String(p.current) : '',
+        count: total ? done + '/' + total : t('panel.no_checklist'),
+        pct: total ? Math.min(100, Math.round((done / total) * 100)) : 0,
+        title: file + ' · ' + t('plan.open_in_app'),
+      };
+    }),
+  };
+}
+
 function renderPlans() {
+  if (plansPane) { plansPane.sync(); return; }
   const host = $('plans');
   if (!host) return;
   clear(host);
@@ -2079,7 +2289,49 @@ function ensureSubsClock() {
   }, 1000);
 }
 
+/** Snapshot puro do painel Subagents (Svelte + testes). `live` são os runs do
+ *  widget; `disk` o histórico de `list_children` (deduplicado por id). */
+export function subsSnapshot(live, disk, opts) {
+  const o = opts || {};
+  const now = o.now || Date.now();
+  const liveList = Array.isArray(live) ? live : [];
+  const diskList = (Array.isArray(disk) ? disk : []).filter(c => !liveList.some(r => sameSub(r, c)));
+  const runs = liveList.map(run => ({
+    id: String(run.id || ''),
+    label: String(run.label || run.kind || 'run'),
+    state: String(run.state || '?'),
+    time: elapsedFor(run, now),
+    children: (run.children || []).map(ch => ({
+      key: String(ch.id || ch.agent || ch.label || ''),
+      label: String(ch.label || ch.agent || ch.id),
+      state: String(ch.state || '?'),
+      model: ch.model ? String(ch.model).split('/').pop() : '',
+      thinking: ch.thinking ? String(ch.thinking) : '',
+      time: elapsedFor(ch, now),
+    })),
+  }));
+  const history = diskList.map(c => {
+    const meta = CHILD_STATE[c.state] || CHILD_STATE.unknown;
+    return {
+      id: String(c.id || ''),
+      label: String(c.label || String(c.id || '').slice(0, 8)),
+      stateText: meta[0],
+      stateClass: meta[1],
+      meta: (c.run != null ? c.run + ' · ' : '') + relTime(c.mtime),
+    };
+  });
+  return {
+    empty: !runs.length && !history.length,
+    emptyLabel: o.emptyLabel || '',
+    warn: !!o.warn,
+    runs,
+    history,
+    historyHead: history.length ? t('subs.history', { n: history.length }) : '',
+  };
+}
+
 function paintSubs(now = Date.now()) {
+  if (subsPane) { subsPane.sync(); return; }
   const host = $('subs');
   if (!host) return;
   const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
@@ -2808,7 +3060,8 @@ function fillModels(models, currentModel) {
   }
   const cur = (sessionState && sessionState.model) || currentModel;
   if (cur) updateModelButton(cur);
-  renderModelList($('modelsearch') ? $('modelsearch').value : '');
+  // Montado (Svelte): o filtro vive no componente; undefined = só atualizar.
+  renderModelList(modelPop ? undefined : ($('modelsearch') ? $('modelsearch').value : ''));
   try { localStorage.setItem('models-cache', JSON.stringify(models)); } catch { /* sem storage */ }
   debugNote('providers=' + modelsByProvider.size + ' models=' + allModels.length);
 }
@@ -2821,56 +3074,75 @@ function loadCachedModels() {
   } catch { /* ignora */ }
 }
 
+/** Snapshot puro da lista de modelos (pop Svelte + testes): grupos por provider
+ *  com linhas `{id,name,ctx,current}`. `providers` é o Map montado em `fillModels`. */
+export function modelListSnapshot(providers, currentId, filter) {
+  const q = String(filter || '').toLowerCase();
+  const groups = [];
+  for (const provider of [...providers.keys()].sort()) {
+    const rows = providers.get(provider)
+      .filter(m => m && m.id && (!q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      .map(m => ({ id: m.id, name: m.name || m.id, ctx: contextLabel(m.contextWindow), current: m.id === currentId }));
+    if (rows.length) groups.push({ provider, rows });
+  }
+  return { groups, empty: groups.length === 0 };
+}
+
+/** Snapshot puro do thinking (pop Svelte + testes): níveis, posição e se há slider. */
+export function levelsSnapshot(levels, thinkingLevel) {
+  const list = Array.isArray(levels) ? levels : [];
+  if (!list.length) return { levels: [], at: 0, name: '', showSlider: false };
+  const at = Math.max(0, list.indexOf(thinkingLevel));
+  return { levels: list.slice(), at, name: list[at], showSlider: list.length > 1 };
+}
+
 function renderModelList(filter) {
+  if (modelPop) { modelPop.sync(filter); return; }
+  const snap = modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter);
+  const byId = new Map(allModels.filter(m => m && m.id).map(m => [m.id, m]));
   const host = $('modellist');
   if (!host) return;
   clear(host);
-  const q = String(filter || '').toLowerCase();
-  const curId = sessionState && sessionState.model ? sessionState.model.id : '';
-
-  for (const provider of [...modelsByProvider.keys()].sort()) {
-    const rows = modelsByProvider.get(provider)
-      .filter(m => !q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q))
-      .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    if (!rows.length) continue;
-
-    host.appendChild(el('div', 'model-group', provider.toUpperCase()));
-    for (const m of rows) {
-      const row = el('div', 'model-row' + (m.id === curId ? ' current' : ''));
-      row.appendChild(el('span', 'model-name', m.name || m.id));
-      row.appendChild(el('span', 'model-ctx', contextLabel(m.contextWindow)));
-      row.onclick = () => applyModel(m);
+  for (const g of snap.groups) {
+    host.appendChild(el('div', 'model-group', g.provider.toUpperCase()));
+    for (const r of g.rows) {
+      const row = el('div', 'model-row' + (r.current ? ' current' : ''));
+      row.appendChild(el('span', 'model-name', r.name));
+      row.appendChild(el('span', 'model-ctx', r.ctx));
+      const m = byId.get(r.id);
+      if (m) row.onclick = () => applyModel(m);
       host.appendChild(row);
     }
   }
-  if (!host.childElementCount) host.appendChild(el('div', 'model-empty', t('model.none')));
+  if (snap.empty) host.appendChild(el('div', 'model-empty', t('model.none')));
 }
 
 function fillLevels(levels) {
   if (Array.isArray(levels)) levelList = levels;
+  if (modelPop) { modelPop.sync(); return; }
+  const snap = levelsSnapshot(levelList, sessionState && sessionState.thinkingLevel);
   const btn = $('thinkbtn');
   const foot = $('thinkfoot');
   const slider = $('thinkslider');
   const name = $('thinkname');
   if (!btn || !foot || !slider || !name) return;
-  if (!levelList.length) {
+  if (!snap.levels.length) {
     btn.textContent = 'thinking';
     foot.classList.add('hidden');
     return;
   }
 
-  const cur = sessionState && sessionState.thinkingLevel;
-  const at = Math.max(0, levelList.indexOf(cur));
-  btn.textContent = levelList[at];
-  btn.title = 'thinking: ' + levelList[at] + ' — clique para escolher';
+  btn.textContent = snap.name;
+  btn.title = 'thinking: ' + snap.name + ' — clique para escolher';
   // Modelo sem reasoning devolve só ["off"]: sem slider.
-  if (levelList.length <= 1) { foot.classList.add('hidden'); return; }
+  if (!snap.showSlider) { foot.classList.add('hidden'); return; }
   foot.classList.remove('hidden');
   slider.min = '0';
-  slider.max = String(levelList.length - 1);
-  slider.value = String(at);
-  name.textContent = levelList[at];
-  debugNote('levels=' + levelList.length + ' selected=' + cur);
+  slider.max = String(snap.levels.length - 1);
+  slider.value = String(snap.at);
+  name.textContent = snap.name;
+  debugNote('levels=' + snap.levels.length + ' selected=' + (sessionState && sessionState.thinkingLevel));
 }
 
 function fmtTokens(n) {
@@ -2968,85 +3240,146 @@ function scheduleStatsRefresh() {
   }, 250);
 }
 
-function renderCtxPop() {
-  const host = $('ctxrows');
-  const view = liveStatsView(sessionState && sessionState.stats, currentLive());
-  const st = view.stats;
-  if (!st || !st.tokens) {
-    // Sem stats da sessão atual: ainda mostra o agregado das abas que já têm.
-    clear(host);
-    renderSessAggregate(host, null);
-    if (!host.childElementCount) setEmpty(host, t('panel.no_stats'));
-    return;
+/** Snapshot puro do seletor de limite (ctx Svelte + testes). */
+export function limitSnapshot(win, reserve, canEdit) {
+  const options = [{ value: '', label: t('ctx.limit_default') }];
+  let matched = '';
+  for (const p of LIMIT_PRESETS) {
+    const r = win ? Math.round(win * (100 - p) / 100) : 0;
+    options.push({ value: String(p), label: r ? t('ctx.limit_pct', { p, r: fmtTokens(r) }) : p + '%' });
+    if (reserve != null && r &&
+        Math.abs(reserve - r) <= Math.max(1, win * 0.004)) matched = String(p);
   }
-
-  const cu = st.contextUsage || {};
-  const tok = st.tokens || {};
-  clear(host);
-
-  const row = (k, v, dim) => {
-    const r = el('div', 'ctx-row');
-    r.appendChild(el('div', 'k', k));
-    r.appendChild(el('div', 'v' + (dim ? ' dim' : ''), v));
-    host.appendChild(r);
+  if (reserve != null && !matched) options.push({ value: 'custom', label: t('ctx.limit_custom', { r: fmtTokens(reserve) }) });
+  return {
+    options,
+    value: reserve == null ? '' : (matched || 'custom'),
+    disabled: !canEdit || !(win > 0),
+    title: t('ctx.limit_title'),
   };
-
-  row(t('ctx.window'),
-    (cu.percent != null ? t('ctx.percent_used', { pct: Math.round(cu.percent) }) + ' · ' : '') +
-    t('ctx.tokens_of', { used: fmtTokens(cu.tokens), win: fmtTokens(cu.contextWindow) }));
-  // Alerta por % do contexto: mesmo limiar do chip (70/90).
-  if (cu.percent != null && Math.round(cu.percent) >= 70) {
-    const pct = Math.round(cu.percent);
-    host.appendChild(el('div', 'ctx-alert ' + (pct >= 90 ? 'danger' : 'warn'),
-      pct >= 90
-        ? t('ctx.alert_full', { pct })
-        : t('ctx.alert_warn', { pct })));
-  }
-  row(t('ctx.auto'), sessionState && sessionState.autoCompactionEnabled ? t('ctx.on') : t('ctx.off'), true);
-  const limRow = el('div', 'ctx-row');
-  limRow.appendChild(el('div', 'k', t('ctx.compact_at')));
-  limRow.appendChild(renderLimitSelect(cu.contextWindow || ctxWindow()));
-  host.appendChild(limRow);
-  row(t('ctx.cache'),
-    t('ctx.cache_value', { r: fmtTokens(tok.cacheRead), w: fmtTokens(tok.cacheWrite) }), true);
-  row(t('ctx.io'), fmtTokens(tok.input) + ' / ' + fmtTokens(tok.output));
-  if (view.billed || view.ctxDelta) {
-    row(t('ctx.live'), t('ctx.live_value', { b: fmtTokens(view.billed), c: fmtTokens(view.ctxDelta) }));
-  }
-  row(t('ctx.cost'), fmtCost(st.cost));
-  row(t('ctx.messages'), String(st.totalMessages || 0), true);
-  renderSessAggregate(host, current && current.key);
 }
 
-/** Agregado tokens/custo por sessão a partir do cache em tabs[] (sem RPC novo). */
-function renderSessAggregate(host, curKey) {
-  const rows = tabs.filter(x => x.stats && x.stats.tokens);
-  if (!rows.length) return;
+/** Snapshot puro do agregado por sessão (ctx Svelte + testes). */
+export function sessAggSnapshot(tabsList, curKey) {
+  const found = (tabsList || []).filter(x => x && x.stats && x.stats.tokens);
+  if (!found.length) return null;
   let totTok = 0, totCost = 0, totMsg = 0;
-  for (const x of rows) {
+  for (const x of found) {
     totTok += Number(x.stats.tokens && x.stats.tokens.total) || 0;
     if (typeof x.stats.cost === 'number') totCost += x.stats.cost;
     totMsg += Number(x.stats.totalMessages) || 0;
   }
-  const tot = el('div', 'ctx-total');
-  tot.appendChild(el('span', null, rows.length === 1 ? t('ctx.sess_one', { n: rows.length }) : t('ctx.sess_many', { n: rows.length })));
-  tot.appendChild(el('span', null, t('ctx.agg', { tok: fmtTokens(totTok), cost: fmtCost(totCost), n: totMsg })));
-  host.appendChild(tot);
-  const ordered = rows.slice().sort((a, b) => {
+  const ordered = found.slice().sort((a, b) => {
     const pa = (a.stats.contextUsage && a.stats.contextUsage.percent) || 0;
     const pb = (b.stats.contextUsage && b.stats.contextUsage.percent) || 0;
     return pb - pa;
   });
-  for (const x of ordered.slice(0, 8)) {
-    const p = x.stats.contextUsage && x.stats.contextUsage.percent != null
-      ? Math.round(x.stats.contextUsage.percent) : null;
-    const r = el('div', 'ctx-sess');
-    r.appendChild(el('span', 'n', (x.key === curKey ? '● ' : '') + sessShort(x)));
-    r.appendChild(el('span', 'm' + (p == null ? '' : ' ' + (p >= 90 ? 'danger' : p >= 70 ? 'warn' : '')),
-      (p == null ? '—' : p + '%') + ' · ' + fmtTokens(x.stats.tokens.total) + ' · ' + fmtCost(x.stats.cost)));
-    r.title = x.key;
-    host.appendChild(r);
+  return {
+    totalLabel: found.length === 1 ? t('ctx.sess_one', { n: found.length }) : t('ctx.sess_many', { n: found.length }),
+    totalText: t('ctx.agg', { tok: fmtTokens(totTok), cost: fmtCost(totCost), n: totMsg }),
+    rows: ordered.slice(0, 8).map(x => {
+      const p = x.stats.contextUsage && x.stats.contextUsage.percent != null
+        ? Math.round(x.stats.contextUsage.percent) : null;
+      return {
+        n: (x.key === curKey ? '● ' : '') + sessShort(x),
+        m: (p == null ? '—' : p + '%') + ' · ' + fmtTokens(x.stats.tokens.total) + ' · ' + fmtCost(x.stats.cost),
+        cls: p == null ? '' : (p >= 90 ? 'danger' : p >= 70 ? 'warn' : ''),
+        title: x.key,
+      };
+    }),
+  };
+}
+
+/** Snapshot puro do popover de contexto (Svelte + testes): blocos ordenados
+ *  `{t:'row'|'alert'|'limit'|'agg'}`. `view` vem de `liveStatsView`. */
+export function ctxSnapshot(view, opts) {
+  const o = opts || {};
+  const st = view.stats;
+  if (!st || !st.tokens) {
+    const agg = sessAggSnapshot(o.tabs || [], null);
+    return { empty: true, blocks: agg ? [{ t: 'agg', agg }] : [] };
   }
+  const cu = st.contextUsage || {};
+  const tok = st.tokens || {};
+  const blocks = [];
+  blocks.push({ t: 'row', k: t('ctx.window'),
+    v: (cu.percent != null ? t('ctx.percent_used', { pct: Math.round(cu.percent) }) + ' · ' : '') +
+      t('ctx.tokens_of', { used: fmtTokens(cu.tokens), win: fmtTokens(cu.contextWindow) }) });
+  // Alerta por % do contexto: mesmo limiar do chip (70/90).
+  if (cu.percent != null && Math.round(cu.percent) >= 70) {
+    const pct = Math.round(cu.percent);
+    blocks.push({ t: 'alert', kind: pct >= 90 ? 'danger' : 'warn',
+      text: pct >= 90 ? t('ctx.alert_full', { pct }) : t('ctx.alert_warn', { pct }) });
+  }
+  blocks.push({ t: 'row', k: t('ctx.auto'), v: o.autoOn ? t('ctx.on') : t('ctx.off'), dim: true });
+  const win = cu.contextWindow || o.win;
+  blocks.push({ t: 'limit', win, limit: limitSnapshot(win, o.reserve, !!o.canEdit) });
+  blocks.push({ t: 'row', k: t('ctx.cache'),
+    v: t('ctx.cache_value', { r: fmtTokens(tok.cacheRead), w: fmtTokens(tok.cacheWrite) }), dim: true });
+  blocks.push({ t: 'row', k: t('ctx.io'), v: fmtTokens(tok.input) + ' / ' + fmtTokens(tok.output) });
+  if (view.billed || view.ctxDelta) {
+    blocks.push({ t: 'row', k: t('ctx.live'),
+      v: t('ctx.live_value', { b: fmtTokens(view.billed), c: fmtTokens(view.ctxDelta) }) });
+  }
+  blocks.push({ t: 'row', k: t('ctx.cost'), v: fmtCost(st.cost) });
+  blocks.push({ t: 'row', k: t('ctx.messages'), v: String(st.totalMessages || 0), dim: true });
+  const agg = sessAggSnapshot(o.tabs || [], o.curKey);
+  if (agg) blocks.push({ t: 'agg', agg });
+  return { empty: false, blocks };
+}
+
+function appendAgg(host, agg) {
+  if (!agg) return;
+  const tot = el('div', 'ctx-total');
+  tot.appendChild(el('span', null, agg.totalLabel));
+  tot.appendChild(el('span', null, agg.totalText));
+  host.appendChild(tot);
+  for (const r of agg.rows) {
+    const row = el('div', 'ctx-sess');
+    row.appendChild(el('span', 'n', r.n));
+    row.appendChild(el('span', 'm' + (r.cls ? ' ' + r.cls : ''), r.m));
+    row.title = r.title;
+    host.appendChild(row);
+  }
+}
+
+function appendCtxBlock(host, b) {
+  if (b.t === 'row') {
+    const r = el('div', 'ctx-row');
+    r.appendChild(el('div', 'k', b.k));
+    r.appendChild(el('div', 'v' + (b.dim ? ' dim' : ''), b.v));
+    host.appendChild(r);
+  } else if (b.t === 'alert') {
+    host.appendChild(el('div', 'ctx-alert ' + b.kind, b.text));
+  } else if (b.t === 'limit') {
+    const limRow = el('div', 'ctx-row');
+    limRow.appendChild(el('div', 'k', t('ctx.compact_at')));
+    limRow.appendChild(renderLimitSelect(b.win));
+    host.appendChild(limRow);
+  } else if (b.t === 'agg') {
+    appendAgg(host, b.agg);
+  }
+}
+
+function renderCtxPop() {
+  if (ctxPop) { ctxPop.sync(); return; }
+  const host = $('ctxrows');
+  if (!host) return;
+  const view = liveStatsView(sessionState && sessionState.stats, currentLive());
+  const snap = ctxSnapshot(view, {
+    autoOn: !!(sessionState && sessionState.autoCompactionEnabled),
+    tabs, curKey: current && current.key,
+    reserve: compactReserve, win: ctxWindow(),
+    canEdit: !!(sessionState && sessionState.model && current),
+  });
+  clear(host);
+  if (snap.empty) {
+    // Sem stats da sessão atual: ainda mostra o agregado das abas que já têm.
+    for (const b of snap.blocks) appendCtxBlock(host, b);
+    if (!snap.blocks.length) setEmpty(host, t('panel.no_stats'));
+    return;
+  }
+  for (const b of snap.blocks) appendCtxBlock(host, b);
 }
 
 /** Chip do contexto. O valor exibido soma o parcial do turno em voo (liveStatsView),
@@ -3150,19 +3483,31 @@ async function desfazerFila() {
 
 function closeForkPop() { $('forkpop').classList.add('hidden'); }
 
+/** Snapshot puro do picker de fork (pop Svelte + testes). */
+export function forkSnapshot(messages) {
+  const items = (messages || []).filter(m => m && m.entryId);
+  return items.map(m => ({
+    entryId: m.entryId,
+    label: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 120) || t('composer.notext'),
+    short: String(m.entryId).slice(0, 8),
+    title: (m.text || '') + '\n' + t('fork.title_suffix'),
+  }));
+}
+
 function openForkPop(messages) {
   closeModelPop();
+  if (forkPop) { forkPop.sync(messages); $('forkpop').classList.remove('hidden'); return; }
+  const snap = forkSnapshot(messages);
   const host = $('forklist');
   clear(host);
-  const items = (messages || []).filter(m => m && m.entryId);
-  if (!items.length) { host.appendChild(el('div', 'model-empty', t('fork.empty'))); $('forkpop').classList.remove('hidden'); return; }
-  for (const m of items) {
+  if (!snap.length) { host.appendChild(el('div', 'model-empty', t('fork.empty'))); $('forkpop').classList.remove('hidden'); return; }
+  for (const r of snap) {
     const row = el('div', 'model-row');
-    const label = String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 120) || t('composer.notext');
-    row.appendChild(el('span', 'model-name', label));
-    row.appendChild(el('span', 'model-ctx', String(m.entryId).slice(0, 8)));
-    row.title = (m.text || '') + '\n' + t('fork.title_suffix');
-    row.onclick = () => { closeForkPop(); sendCommand({ type: 'fork', entryId: m.entryId }); };
+    row.appendChild(el('span', 'model-name', r.label));
+    row.appendChild(el('span', 'model-ctx', r.short));
+    row.title = r.title;
+    const id = r.entryId;
+    row.onclick = () => { closeForkPop(); sendCommand({ type: 'fork', entryId: id }); };
     host.appendChild(row);
   }
   $('forkpop').classList.remove('hidden');
@@ -3181,37 +3526,29 @@ function ctxWindow() {
 }
 
 function renderLimitSelect(win) {
+  const snap = limitSnapshot(win, compactReserve, !!(sessionState && sessionState.model && current));
   const sel = document.createElement('select');
   sel.id = 'ctxlimit';
   sel.className = 'ctx-sel';
-  sel.title = t('ctx.limit_title');
-  const opt = (v, label) => {
-    const o = document.createElement('option');
-    o.value = v;
-    o.textContent = label;
-    sel.appendChild(o);
-  };
-  opt('', t('ctx.limit_default'));
-  let matched = '';
-  for (const p of LIMIT_PRESETS) {
-    const reserve = win ? Math.round(win * (100 - p) / 100) : 0;
-    opt(String(p), reserve ? t('ctx.limit_pct', { p, r: fmtTokens(reserve) }) : p + '%');
-    if (compactReserve != null && reserve &&
-        Math.abs(compactReserve - reserve) <= Math.max(1, win * 0.004)) matched = String(p);
+  sel.title = snap.title;
+  for (const o of snap.options) {
+    const opt = document.createElement('option');
+    opt.value = o.value;
+    opt.textContent = o.label;
+    sel.appendChild(opt);
   }
-  if (compactReserve != null && !matched) opt('custom', t('ctx.limit_custom', { r: fmtTokens(compactReserve) }));
-  sel.value = compactReserve == null ? '' : (matched || 'custom');
-  sel.disabled = !(sessionState && sessionState.model && current) || !(win > 0);
+  sel.value = snap.value;
+  sel.disabled = snap.disabled;
   sel.onchange = () => saveLimit(sel, win);
   return sel;
 }
 
-async function saveLimit(sel, win) {
+/** Núcleo do save do limite (legado + Svelte): IPC + `compactReserve` + texto p/ `note`. */
+async function applyLimitValue(value, win) {
   const model = sessionState && sessionState.model;
-  if (!current || !model || !(win > 0) || sel.value === 'custom') return;
-  const pct = sel.value === '' ? null : Number(sel.value);
+  if (!current || !model || !(win > 0) || value === 'custom') return null;
+  const pct = value === '' ? null : Number(value);
   const reserve = pct == null ? null : Math.max(0, Math.round(win * (100 - pct) / 100));
-  sel.disabled = true;
   try {
     const raw = await inv('compaction_set', {
       cwd: current.cwd,
@@ -3221,12 +3558,20 @@ async function saveLimit(sel, win) {
     });
     const st = JSON.parse(String(raw));
     compactReserve = typeof st.reserveTokens === 'number' ? st.reserveTokens : null;
-    note(pct == null
+    return pct == null
       ? t('ctx.limit_saved_default')
-      : t('ctx.limit_saved', { pct, r: fmtTokens(compactReserve) }));
+      : t('ctx.limit_saved', { pct, r: fmtTokens(compactReserve) });
   } catch (e) {
-    note(t('ctx.limit_fail', { e }));
+    return t('ctx.limit_fail', { e });
   }
+}
+
+async function saveLimit(sel, win) {
+  const model = sessionState && sessionState.model;
+  if (!current || !model || !(win > 0) || sel.value === 'custom') return;
+  sel.disabled = true;
+  const text = await applyLimitValue(sel.value, win);
+  if (text != null) note(text);
   renderCtxPop();
 }
 
@@ -3619,26 +3964,40 @@ function tabState(t) {
   return { label: 'somente leitura', dot: '' };
 }
 
+/** Snapshot puro da barra de abas (Svelte + testes). */
+export function tabsSnapshot(list, active) {
+  return (list || []).map(t => {
+    const st = tabState(t);
+    return {
+      key: t.key,
+      active: !!(active && t.key === active.key),
+      dot: st.dot,
+      project: projectName(t.cwd),
+      title: t.label || prettyId(t.key),
+      titleAttr: projectName(t.cwd) + '\n' + (t.cwd || '—') + '\n' + t.key + '\n' + st.label,
+    };
+  });
+}
+
 function renderTabs() {
+  // Toda mutação de aba passa por aqui: persiste sem RPC novo.
+  saveTabs();
+  if (tabBar) { tabBar.sync(); return; }
   const host = $('tabs');
   if (!host) return;
   clear(host);
-  for (const t of tabs) {
-    const active = activeTab && t.key === activeTab.key;
-    const st = tabState(t);
-    const tab = el('div', 'tab' + (active ? ' active' : ''));
-    tab.title = projectName(t.cwd) + '\n' + (t.cwd || '—') + '\n' + t.key + '\n' + st.label;
-    tab.appendChild(el('span', 'tab-dot' + st.dot));
-    tab.appendChild(el('span', 'tab-proj', projectName(t.cwd)));
-    tab.appendChild(el('span', 'tab-title', t.label || prettyId(t.key)));
+  for (const t of tabsSnapshot(tabs, activeTab)) {
+    const tab = el('div', 'tab' + (t.active ? ' active' : ''));
+    tab.title = t.titleAttr;
+    tab.appendChild(el('span', 'tab-dot' + t.dot));
+    tab.appendChild(el('span', 'tab-proj', t.project));
+    tab.appendChild(el('span', 'tab-title', t.title));
     const x = el('button', 'tab-close', '✕');
     x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
     tab.appendChild(x);
     tab.onclick = () => switchTab(t.key);
     host.appendChild(tab);
   }
-  // Toda mutação de aba passa por aqui: persiste sem RPC novo.
-  saveTabs();
 }
 
 async function switchTab(key) {
@@ -4309,6 +4668,8 @@ function noSubsMessage() {
 
 function applySubsWarning() {
   const host = $('subs');
+  // Com o painel em Svelte o banner é renderizado pelo componente (snapshot.warn).
+  if (subsPane) return;
   // Só avisa quando a extensão de fato não carregou: sem esta condição o painel
   // repetia "nenhum subagent" (banner + vazio) depois de cada setEmpty.
   if (!host || caps.subagents !== false || host.querySelector('.warn-banner')) return;
@@ -4733,15 +5094,20 @@ async function openAbout() {
 
 /* =============== tema (JSON) =============== */
 
-/** Linha de status do overlay: quantas chaves entraram, quais foram ignoradas e o erro de parse. */
-function showThemeNote(res, prefix) {
+/** Texto da linha de status do tema: quantas chaves entraram, quais foram ignoradas e o erro de parse. */
+function themeNoteText(res, prefix) {
   const applied = Object.keys(res.ok).length;
   const parts = [];
   if (prefix) parts.push(prefix);
   parts.push(applied + ' aplicada(s)');
   if (res.ignored.length) parts.push(res.ignored.length + ' ignorada(s): ' + res.ignored.join(', '));
   if (res.error) parts.push(res.error);
-  $('themenote').textContent = parts.join(' · ');
+  return parts.join(' · ');
+}
+
+/** Linha de status do overlay: quantas chaves entraram, quais foram ignoradas e o erro de parse. */
+function showThemeNote(res, prefix) {
+  $('themenote').textContent = themeNoteText(res, prefix);
 }
 
 function openTheme() {
@@ -4915,8 +5281,20 @@ $('input').addEventListener('input', () => { renderPalette(); autosizeInput(); }
 $('input').addEventListener('blur', () => setTimeout(hidePalette, 150));
 
 /* =============== anexos =============== */
+/** Snapshot puro da linha de anexos (Svelte + testes). */
+export function attachmentsSnapshot(images) {
+  return (images || []).map((img, idx) => ({
+    idx,
+    src: String((img && img.dataUrl) || ''),
+    alt: 'imagem colada',
+    removeTitle: 'Remover imagem',
+  }));
+}
+
 function renderAttachments() {
   const row = $('attachrow');
+  if (row) row.classList.toggle('hidden', pendingImages.length === 0);
+  if (attachmentsPane) { attachmentsPane.sync(); return; }
   clear(row);
   pendingImages.forEach((img, i) => {
     const box = el('div', 'attach');
@@ -5053,9 +5431,12 @@ $('modeltoggle').onclick = (e) => {
   e.stopPropagation();
   $('modelpop').classList.toggle('hidden');
   if (!$('modelpop').classList.contains('hidden')) {
-    $('modelsearch').value = '';
-    renderModelList('');
-    $('modelsearch').focus();
+    if (modelPop) modelPop.open();
+    else {
+      $('modelsearch').value = '';
+      renderModelList('');
+      $('modelsearch').focus();
+    }
   }
 };
 $('modelsearch').oninput = (e) => renderModelList(e.target.value);
@@ -5065,19 +5446,7 @@ $('thinkslider').oninput = (e) => {
   const lv = levelList[Number(e.target.value)];
   if (lv) $('thinkname').textContent = lv;
 };
-$('thinkslider').onchange = async (e) => {
-  const key = current && current.key;
-  const lv = levelList[Number(e.target.value)];
-  if (!lv) return;
-  if (!current || !current.connected) {
-    if (!(await ensureRpc())) return;
-  }
-  if (!current || current.key !== key) return;
-  sendCommand({ type: 'set_thinking_level', level: lv });
-  sessionState = { ...(sessionState || {}), thinkingLevel: lv };
-  if (current) { const tb = tabs.find(x => x.key === current.key); if (tb) tb.thinkingLevel = lv; }
-  fillLevels(null);
-};
+$('thinkslider').onchange = (e) => modelPopHost.setLevel(e.target.value);
 
 document.addEventListener('click', (e) => {
   if (!$('modelpop').classList.contains('hidden')
@@ -5235,13 +5604,320 @@ $('themeapply').onclick = () => showThemeNote(applyTheme($('themejson').value), 
 $('themeexport').onclick = () => {
   const current = themeFromDom();
   $('themejson').value = JSON.stringify(current, null, 2);
-  showThemeNote(validateTheme(current), 'exportado');
+  showThemeNote(validateTheme(current), t('theme.exported'));
 };
 $('themereset').onclick = () => {
   resetTheme();
   $('themejson').value = '';
   $('themenote').textContent = t('theme.restored');
 };
+
+/* Host do diálogo Svelte de Tema: presets + JSON usam o mesmo motor
+   (`applyTheme`/`validateTheme`/`themeFromDom`/`resetTheme`), sem o componente
+   importar este módulo (evita ciclo). `themePreset` guarda o preset ativo. */
+const PRESET_KEY = 'themePreset';
+const themeHost = {
+  t,
+  getLangPref,
+  presets: PRESETS,
+  getActiveId() {
+    try { return localStorage.getItem(PRESET_KEY) || 'sightdeck'; } catch { return 'sightdeck'; }
+  },
+  applyPreset(id) {
+    const p = PRESETS.find((x) => x.id === id);
+    if (!p) return { ok: {}, ignored: [] };
+    const res = applyTheme(p.tokens);
+    try {
+      if (res.error) localStorage.removeItem(PRESET_KEY);
+      else localStorage.setItem(PRESET_KEY, id);
+    } catch { /* sem storage */ }
+    return res;
+  },
+  applyJson(text) {
+    const res = applyTheme(text);
+    if (!res.error) { try { localStorage.setItem(PRESET_KEY, 'custom'); } catch { /* sem storage */ } }
+    return res;
+  },
+  exportJson() {
+    const current = themeFromDom();
+    return { json: JSON.stringify(current, null, 2), res: validateTheme(current) };
+  },
+  resetAll() {
+    resetTheme();
+    try { localStorage.removeItem(PRESET_KEY); } catch { /* sem storage */ }
+  },
+  note(res, prefix) {
+    return themeNoteText(res, prefix);
+  },
+};
+
+/* Diálogo novo e overlay legado convivem: monta o Svelte e só esconde o markup
+   legado quando o mount funciona. Sem Svelte, o overlay continua como hoje. */
+let themeMounted = null;
+try {
+  themeMounted = mountTheme(themeHost);
+} catch (e) {
+  debugNote('theme svelte: mount falhou — usando o overlay legado (' + e + ')');
+}
+const legacyTheme = $('theme-legacy');
+if (legacyTheme) legacyTheme.classList.toggle('hidden', !!themeMounted);
+
+/* Hosts dos pops do composer (Fase 2): snapshots puros entram no componente,
+   ações voltam para as funções deste módulo. O componente nunca importa este
+   módulo (evita ciclo) — mesmo contrato do piloto de Settings/Tema. */
+const modelPopHost = {
+  t,
+  getLangPref,
+  snapshot(filter) {
+    return {
+      list: modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter),
+      levels: levelsSnapshot(levelList, sessionState && sessionState.thinkingLevel),
+    };
+  },
+  async apply(id) {
+    const m = allModels.find(x => x && x.id === id);
+    await applyModel(m);
+  },
+  previewLevel(i) {
+    return levelList[Number(i)] || '';
+  },
+  async setLevel(v) {
+    const key = current && current.key;
+    const lv = levelList[Number(v)];
+    if (!lv) return;
+    if (!current || !current.connected) {
+      if (!(await ensureRpc())) return;
+    }
+    if (!current || current.key !== key) return;
+    sendCommand({ type: 'set_thinking_level', level: lv });
+    sessionState = { ...(sessionState || {}), thinkingLevel: lv };
+    if (current) { const tb = tabs.find(x => x.key === current.key); if (tb) tb.thinkingLevel = lv; }
+    fillLevels(null);
+  },
+};
+
+const ctxPopHost = {
+  t,
+  getLangPref,
+  snapshot() {
+    const view = liveStatsView(sessionState && sessionState.stats, currentLive());
+    return ctxSnapshot(view, {
+      autoOn: !!(sessionState && sessionState.autoCompactionEnabled),
+      tabs, curKey: current && current.key,
+      reserve: compactReserve, win: ctxWindow(),
+      canEdit: !!(sessionState && sessionState.model && current),
+    });
+  },
+  async saveLimit(value) {
+    const text = await applyLimitValue(value, ctxWindow());
+    if (text != null) note(text);
+    return this.snapshot();
+  },
+};
+
+const forkPopHost = {
+  t,
+  getLangPref,
+  snapshot(messages) {
+    return forkSnapshot(messages);
+  },
+  doFork(entryId) {
+    closeForkPop();
+    sendCommand({ type: 'fork', entryId });
+  },
+};
+
+/* Pops novos e markup legado convivem: monta os 3 e só esconde o legado quando
+   o mount funciona. Sem Svelte, os pops continuam como hoje. */
+try {
+  modelPop = mountModelPop(modelPopHost);
+} catch (e) {
+  debugNote('modelpop svelte: mount falhou — usando o markup legado (' + e + ')');
+}
+try {
+  ctxPop = mountCtxPop(ctxPopHost);
+} catch (e) {
+  debugNote('ctxpop svelte: mount falhou — usando o markup legado (' + e + ')');
+}
+try {
+  forkPop = mountForkPop(forkPopHost);
+} catch (e) {
+  debugNote('forkpop svelte: mount falhou — usando o markup legado (' + e + ')');
+}
+
+/* Linha de anexos em Svelte (Fase 5a): snapshot das imagens pendentes + remover. */
+const attachmentsHost = {
+  snapshot: () => attachmentsSnapshot(pendingImages),
+  remove(idx) {
+    pendingImages.splice(idx, 1);
+    renderAttachments();
+  },
+};
+try {
+  attachmentsPane = mountAttachments(attachmentsHost);
+} catch (e) {
+  debugNote('attachments svelte: mount falhou — usando o render legado (' + e + ')');
+}
+for (const id of ['modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy']) {
+  const n = $(id);
+  if (!n) continue;
+  const mounted = id === 'modelpop-legacy' ? modelPop : id === 'ctxpop-legacy' ? ctxPop : forkPop;
+  n.classList.toggle('hidden', !!mounted);
+}
+
+/* Barra de abas em Svelte (Fase 3): o snapshot vem deste módulo e as ações
+   voltam para `switchTab`/`closeTab`. Sem o mount, `renderTabs` legado pinta. */
+const tabBarHost = {
+  snapshot: () => tabsSnapshot(tabs, activeTab),
+  switchTab,
+  closeTab,
+};
+try {
+  tabBar = mountTabBar(tabBarHost);
+} catch (e) {
+  debugNote('tabs svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Árvore de sessões em Svelte (Fase 3b): snapshot dos grupos + ações da sidebar.
+   `sessionGroups` guarda os objetos crus para resolver sessão por path/key. */
+const sessionTreeHost = {
+  snapshot: () => sessionsSnapshot(sessionGroups, treeOpts()),
+  toggleProject(path) {
+    if (collapsedProjects.has(path)) collapsedProjects.delete(path);
+    else collapsedProjects.add(path);
+    saveTreeState();
+    loadSessions();
+  },
+  hideProject(path) {
+    if (hiddenProjects.has(path)) hiddenProjects.delete(path);
+    else hiddenProjects.add(path);
+    saveTreeState();
+    loadSessions();
+  },
+  newSession(path) { newSessionIn(path); },
+  open(path, key) {
+    const g = sessionGroups.find(x => x.path === path);
+    const s = g && (g.sessions || []).find(x => x.id === key);
+    if (s) openSession(s.cwd || path, s);
+  },
+  askDelete(path, key) {
+    const g = sessionGroups.find(x => x.path === path);
+    const s = g && (g.sessions || []).find(x => x.id === key);
+    if (s) askDeleteSession(s);
+  },
+  loadMore(path) {
+    expandedProjects.add(path);
+    saveTreeState();
+    loadSessions();
+  },
+};
+try {
+  sessionTree = mountSessionTree(sessionTreeHost);
+} catch (e) {
+  debugNote('sidebar svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Resultados da busca global em Svelte (Fase 3c): snapshot dos itens acumulados
+   + ações. `loadMore` repete `runSearch(true)` (append no mesmo offset). */
+const searchResultsHost = {
+  snapshot: () => searchSnapshot(searchItems, { total: searchTotal, offset: searchOffset }),
+  open(key) {
+    const r = searchItems.find(x => x && x.id === key);
+    if (r) openSession(r.cwd, r);
+  },
+  loadMore() { runSearch(true); },
+};
+try {
+  searchResults = mountSearchResults(searchResultsHost);
+} catch (e) {
+  debugNote('search svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Painel Plano em Svelte (Fase 4a): snapshot dos planos + abertura do markdown. */
+const plansHost = {
+  snapshot: () => plansSnapshot(plansData, plansError),
+  async open(file) {
+    try { await inv('open_file', { cwd: current && current.cwd, path: file }); }
+    catch (e) { plansError = 'abrir: ' + String(e); renderPlans(); }
+  },
+};
+try {
+  plansPane = mountPlansPane(plansHost);
+} catch (e) {
+  debugNote('plans svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Painel Missões em Svelte (Fase 4b): snapshot read-only + detalhe no overlay. */
+const missionsHost = {
+  snapshot: () => missionsSnapshot(missionsList, missionsError),
+  open(key) {
+    const m = missionsList.find(x => String(x.id || '') === key);
+    if (m) openMission(m);
+  },
+};
+try {
+  missionsPane = mountMissionsPane(missionsHost);
+} catch (e) {
+  debugNote('missions svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Painel Git em Svelte (Fase 4c): snapshot (repo/branch/totais/arquivos/seleção)
+   + ações de escrita. `gitSel`/`gitMsg`/toggles seguem no main (fonte única). */
+const gitHost = {
+  snapshot: () => gitSnapshot(gitData, {
+    error: gitError,
+    cwd: current && current.cwd,
+    sel: gitSel,
+    msg: gitMsg,
+    amend: gitAmend,
+    lease: gitLease,
+    note: gitNote,
+    noteErr: gitNoteErr,
+  }),
+  reload: () => loadGit(),
+  discard: () => gitDiscardSelected(),
+  stash: () => gitStash(),
+  stashPop: () => gitStashPop(),
+  pull: () => gitPull(),
+  toggleSel(path) {
+    if (gitSel.has(path)) gitSel.delete(path);
+    else gitSel.add(path);
+    renderGit();
+  },
+  openDiff: (path) => openGitDiff(path),
+  setMsg(v) { gitMsg = v; },
+  setFlag(which, on) {
+    if (which === 'amend') gitAmend = !!on;
+    else gitLease = !!on;
+    renderGit();
+  },
+  commit: (push) => gitCommit(push),
+  push: () => gitPush(),
+};
+try {
+  gitPane = mountGitPane(gitHost);
+} catch (e) {
+  debugNote('git svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Painel Subagents em Svelte (Fase 4d): snapshot (live + histórico de disco) e
+   abertura do child. `snapshot(now)` recalcula os tempos a cada tique do painel. */
+const subsHost = {
+  snapshot: (now) => subsSnapshot(
+    lastSnap && lastSnap.runs,
+    lastDiskList,
+    { now, warn: caps.subagents === false, emptyLabel: noSubsMessage() },
+  ),
+  openChild(id) {
+    const c = (lastDiskList || []).find(x => String(x.id) === id);
+    if (c) openChild(c);
+  },
+};
+try {
+  subsPane = mountSubsPane(subsHost);
+} catch (e) {
+  debugNote('subs svelte: mount falhou — usando o render legado (' + e + ')');
+}
 $('debugbtn').onclick = () => openDebug();
 // Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
 $('healthchip').onclick = () => openDebug();

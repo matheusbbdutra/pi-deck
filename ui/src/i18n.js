@@ -41,7 +41,7 @@ export function setLang(lang) {
 function fmt(tpl, vars) {
   let s = String(tpl == null ? '' : tpl);
   if (!vars) return s;
-  for (const k of Object.keys(vars)) s = s.split('{' + k + '}').join(String(vars[k]));
+  for (const k of Object.keys(vars)) s = s.split(`{${k}}`).join(String(vars[k]));
   return s;
 }
 
@@ -193,6 +193,11 @@ export const STRINGS = {
 
     'theme.restored': "tema padrão restaurado (localStorage['theme'] removido)",
     'theme.paste_note': 'cole um JSON de tokens (--bg, --accent, …) e clique em aplicar',
+    'theme.presets': 'Presets',
+    'theme.custom': 'Personalizado (JSON)',
+    'theme.use_preset': 'usar {name}',
+    'theme.active': 'ativo',
+    'theme.exported': 'exportado',
 
     'about.body': 'O sightdeck é um cliente desktop para o pi — ele não instala nem atualiza o pi sozinho: os botões de atualização chamam pi update.',
 
@@ -260,6 +265,7 @@ export const STRINGS = {
     'sess.renamed': 'sessão renomeada',
 
     'search.total': '{n} sessão(ões)',
+    'search.none': 'nada encontrado',
     'search.capped': 'teto de leitura atingido',
     'search.showing': 'mostrando {n}',
     'search.matches': '{id} · {n} trecho(s)',
@@ -324,6 +330,7 @@ export const STRINGS = {
     'fork.restored': ' (texto restaurado no composer)',
     'fork.failed': 'fork falhou',
     'fork.cancelled': 'fork cancelado',
+    'fork.header': 'fork a partir de… · cria sessão nova · a original é preservada',
 
     'stats.note': 'sessão: {msgs} mensagens · {tokens} tokens{cost}',
 
@@ -542,6 +549,11 @@ export const STRINGS = {
 
     'theme.restored': "default theme restored (localStorage['theme'] removed)",
     'theme.paste_note': 'paste a JSON of tokens (--bg, --accent, …) and click apply',
+    'theme.presets': 'Presets',
+    'theme.custom': 'Custom (JSON)',
+    'theme.use_preset': 'use {name}',
+    'theme.active': 'active',
+    'theme.exported': 'exported',
 
     'about.body': 'sightdeck is a desktop client for pi — it never installs or updates pi by itself: the update buttons call pi update.',
 
@@ -609,6 +621,7 @@ export const STRINGS = {
     'sess.renamed': 'session renamed',
 
     'search.total': '{n} session(s)',
+    'search.none': 'nothing found',
     'search.capped': 'read cap reached',
     'search.showing': 'showing {n}',
     'search.matches': '{id} · {n} match(es)',
@@ -673,6 +686,7 @@ export const STRINGS = {
     'fork.restored': ' (text restored to the composer)',
     'fork.failed': 'fork failed',
     'fork.cancelled': 'fork cancelled',
+    'fork.header': 'fork from… · creates a new session · the original is preserved',
 
     'stats.note': 'session: {msgs} messages · {tokens} tokens{cost}',
 
@@ -749,8 +763,10 @@ export const STRINGS = {
 export function t(key, vars) {
   const lang = getLang();
   const dict = STRINGS[lang] || {};
-  const fb = STRINGS.pt || {};
-  const tpl = (key in dict) ? dict[key] : (key in fb ? fb[key] : key);
+  const pt = STRINGS.pt || {};
+  let tpl = key;
+  if (key in dict) tpl = dict[key];
+  else if (key in pt) tpl = pt[key];
   return fmt(tpl, vars);
 }
 

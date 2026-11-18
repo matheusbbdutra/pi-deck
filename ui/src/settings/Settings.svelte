@@ -5,13 +5,18 @@
      escrita passa por `host.setSetting` / `host.setLang`. */
   let { host } = $props();
 
+  /* Snapshot intencional: espelho local de `uiSettings`; a escrita volta por
+     `host.setSetting`. Não é reativo a troca de `host`. */
+  // svelte-ignore state_referenced_locally
   let flags = $state({ ...host.uiSettings });
+  // svelte-ignore state_referenced_locally
   let lang = $state(host.getLangPref());
 
   /* Ler `lang` dentro do helper registra a dependência: trocar o idioma
-     re-renderiza também os rótulos, não só o <select>. */
+     re-renderiza também os rótulos, não só o <select>.
+     `void` evita o warning de expressão solta sem mudar a dependência. */
   function tr(key) {
-    lang;
+    void lang;
     return host.t(key);
   }
 
@@ -76,5 +81,3 @@
   }
   .group:first-child { margin-top: 0; }
 </style>
-
-<!-- revalidar diagnóstico do LS após ajustar svelte.config.js -->
