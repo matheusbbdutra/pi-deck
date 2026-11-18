@@ -514,12 +514,13 @@ async function loadSessions() {
       if (!t.cwd || groups.some(g => g.path === t.cwd)) continue;
       groups.push({ path: t.cwd, name: t.cwd.split('/').pop() || t.cwd, sessions: [] });
     }
-    const side = $('sessions');
-    clear(side);
-
     const visible = groups.filter(g => !hiddenProjects.has(g.path) || uiSettings.showHidden);
     sessionGroups = visible;
-    if (!visible.length) { setEmpty(side, t('sidebar.no_sessions')); return; }
+    if (!visible.length) {
+      treeError = '';
+      if (sessionTree) sessionTree.sync();
+      return;
+    }
 
     // Títulos ficam em cache: a aba aberta mostra o mesmo nome da lista.
     let titlesChanged = false;
@@ -5302,7 +5303,7 @@ const sessionTreeHost = {
 try {
   sessionTree = mountSessionTree(sessionTreeHost);
 } catch (e) {
-  debugNote('sidebar svelte: mount falhou — usando o render legado (' + e + ')');
+  debugNote('sidebar svelte: mount falhou (' + e + ')');
 }
 
 /* Resultados da busca global em Svelte (Fase 3c): snapshot dos itens acumulados
