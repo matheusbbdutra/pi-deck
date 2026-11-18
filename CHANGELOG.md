@@ -5,6 +5,16 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-11-17
+
+### Fixed
+- **"abrir" num plano/spec não abria nada**: a aba Plano manda o caminho relativo (`docs/spec/x.md`) e o `open_file` canonicalizava esse relativo contra o cwd **do processo** (a pasta do app), não o da sessão — daí o `docs/spec/x.md: Arquivo ou diretório inexistente (os error 2)`. Alvo relativo agora é resolvido a partir do `cwd` e o confinamento ao projeto continua valendo (`../` segue barrado). Mesma correção em `revert_hunk`, que recebe o path do tool call (`src/a.rs`).
+- **Subagent novo só aparecia ao trocar de aba**: o snapshot ao vivo (`PI_SUBAGENT_ASYNC_JSON`) é emitido só pelo tracker de jobs **async**, então run em primeiro plano não manda nada — e a lista do disco só era relida no `agent_settled`/troca de aba. Durante o turno o painel passa a reler `list_children`, só com a aba Subagents à vista, e a repintar apenas quando muda `id|estado` (repintura a cada poll zerava o scroll).
+- **`<select>` ilegível no tema escuro**: o WebKitGTK pintava o campo com o tema do UA (fundo branco, borda e seta nativas) e ignorava `background`/`color` da classe — texto claro em cima de branco no `Idioma` e no `compactar em`. `appearance:none` + chevron em gradiente devolvem o desenho ao CSS.
+
+### Added
+- **Dispensar aviso de extensão**: `✕` em ⚙ → Debug → "Avisos de extensão" silencia o aviso e o chip `⚠ N` cai na hora; `restaurar` traz de volta. A chave é global (`localStorage['muted-health']`) porque a mesma frase volta em toda sessão — por sessão o aviso reaparecia a cada aba.
+
 ## [0.2.3] — 2026-11-17
 
 ### Fixed
