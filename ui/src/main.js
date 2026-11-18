@@ -13,7 +13,7 @@ import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from '
 import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
 import { mountSettings } from './settings/mount.js';
 import { mountTheme } from './settings/theme/mount.js';
-import { mountModelPop, mountCtxPop, mountForkPop, mountAttachments } from './composer/mount.js';
+import { mountModelPop, mountCtxPop, mountForkPop, mountAttachments, mountPalette, mountCmdkList } from './composer/mount.js';
 import { mountTabBar } from './tabs/mount.js';
 import { mountSessionTree } from './sidebar/mount.js';
 import { mountSearchResults } from './sidebar/search-mount.js';
@@ -97,6 +97,12 @@ let tabs = [];
 let modelPop = null, ctxPop = null, forkPop = null;
 /* Anexos do composer em Svelte (Fase 5a): instância montada ou null (fallback). */
 let attachmentsPane = null;
+/* Palette de comandos em Svelte (Fase 5b): instância montada ou null (fallback). */
+let palettePane = null;
+/* Palette global Ctrl+K em Svelte (Fase 5c): instância montada ou null (fallback). */
+let cmdkPane = null;
+/* Grupos crus do cmdk (labels + rows) para o snapshot do componente. */
+let cmdkGroups = [];
 /* Barra de abas em Svelte (Fase 3): instância montada ou null (fallback legado). */
 let tabBar = null;
 /* Árvore de sessões em Svelte (Fase 3b): grupos crus para os callbacks + instância. */
@@ -4418,6 +4424,19 @@ function hidePalette() {
   $('palette').classList.add('hidden');
 }
 
+/** Snapshot puro da palette de `/` (Svelte + testes). */
+export function paletteSnapshot(items, index) {
+  return {
+    rows: (items || []).map((c, i) => ({
+      idx: i,
+      name: '/' + c.name,
+      desc: c.description || '',
+      src: c.app ? 'pi' : (c.source || ''),
+      sel: i === index,
+    })),
+  };
+}
+
 function renderPalette() {
   const tok = slashToken();
   if (!tok) { hidePalette(); return; }
@@ -4457,6 +4476,11 @@ function renderPalette() {
   palette.open = true;
   if (palette.index >= items.length) palette.index = 0;
 
+  $('palette').classList.remove('hidden');
+  // Palette `/` e cmdk dividem o overlay: a lista visível é a da palette.
+  $('cmdklist').classList.add('hidden');
+  $('palettelist').classList.remove('hidden');
+  if (palettePane) { palettePane.sync(); return; }
   const host = $('palettelist');
   clear(host);
   items.forEach((c, i) => {
@@ -4467,8 +4491,6 @@ function renderPalette() {
     row.onclick = () => { palette.index = i; applyPaletteItem(false); };
     host.appendChild(row);
   });
-
-  $('palette').classList.remove('hidden');
 }
 
 function applyPaletteItem(run) {
@@ -4499,7 +4521,21 @@ function cmdkCandidates() {
   return out;
 }
 
-function openCmdk() {
+/** Snapshot puro do cmdk (Svelte + testes): grupos com linhas e seleção plana. */
+export function cmdkSnapshot(groups, index) {
+  let k = 0;
+  const out = (groups || []).map(g => ({
+    label: g.label || '',
+    rows: (g.rows || []).map(it => {
+      const idx = k++;
+      return { idx, title: it.title, desc: it.desc || '', src: it.src || '', sel: idx === index };
+    }),
+  }));
+  const total = out.reduce((n, g) => n + g.rows.length, 0);
+  return { groups: out, empty: total === 0, emptyLabel: t('palette.empty') };
+}
+
+export function openCmdk() {
   cmdk.open = true;
   cmdk.index = 0;
   palette.open = false;
@@ -4514,9 +4550,11 @@ function openCmdk() {
   $('cmdkinput').focus();
 }
 
-function closeCmdk() {
+export function closeCmdk() {
   cmdk.open = false;
   $('cmdkbar').classList.add('hidden');
+  $('cmdklist').classList.add('hidden');
+  $('palettelist').classList.remove('hidden');
   $('palettefoot').textContent = '↑↓ selecionar · Tab completar · Enter executar · Esc fechar';
   $('palette').classList.add('hidden');
   if (document.activeElement === $('cmdkinput')) $('input').focus();
@@ -4575,7 +4613,13 @@ function renderCmdk() {
   }
   cmdk.items = groups.flatMap(g => g.rows);
   if (cmdk.index >= cmdk.items.length) cmdk.index = 0;
-  const host = $('palettelist');
+  cmdkGroups = groups;
+  // O cmdk tem container próprio: `#palettelist` é do componente Svelte da
+  // palette `/` e `clear()` nele destruiria os nós dele.
+  $('palettelist').classList.add('hidden');
+  $('cmdklist').classList.remove('hidden');
+  if (cmdkPane) { cmdkPane.sync(); return; }
+  const host = $('cmdklist');
   clear(host);
   if (!cmdk.items.length) {
     host.appendChild(el('div', 'model-empty', t('palette.empty')));
@@ -5757,6 +5801,32 @@ try {
   attachmentsPane = mountAttachments(attachmentsHost);
 } catch (e) {
   debugNote('attachments svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Palette de comandos em Svelte (Fase 5b): snapshot das linhas + escolher.
+   A navegação por teclado segue no main (muta `palette.index` e re-renderiza). */
+const paletteHost = {
+  snapshot: () => paletteSnapshot(palette.items, palette.index),
+  pick(idx) {
+    palette.index = idx;
+    applyPaletteItem(false);
+  },
+};
+try {
+  palettePane = mountPalette(paletteHost);
+} catch (e) {
+  debugNote('palette svelte: mount falhou — usando o render legado (' + e + ')');
+}
+
+/* Palette global Ctrl+K em Svelte (Fase 5c): grupos RECENTES/COMANDOS/MODELOS. */
+const cmdkHost = {
+  snapshot: () => cmdkSnapshot(cmdkGroups, cmdk.index),
+  pick(idx) { runCmdkItem(idx); },
+};
+try {
+  cmdkPane = mountCmdkList(cmdkHost);
+} catch (e) {
+  debugNote('cmdk svelte: mount falhou — usando o render legado (' + e + ')');
 }
 for (const id of ['modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy']) {
   const n = $(id);

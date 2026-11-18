@@ -1,5 +1,34 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, Fase 5c Svelte aplicada: palette global Ctrl+K)
+
+- **Fase 5c**: cmdk em Svelte (`ui/src/composer/CmdkList.svelte`). Builder puro
+  `cmdkSnapshot(groups, index)` exportado (índice achatado entre grupos,
+  RECENTES/COMANDOS/MODELOS, `sel`). `renderCmdk()` ganhou early-path
+  `cmdkPane.sync()`; navegação por teclado segue no main. `openCmdk`/`closeCmdk`
+  exportados para teste.
+- **Bug real corrigido (introduzido na 5b)**: `renderCmdk` fazia
+  `clear($('palettelist'))` — o mesmo nó do componente Palette, e `clear()`
+  remove nós (shared.js:32), destruindo o Svelte. Criado container próprio
+  `#cmdklist` no `index.html`; cmdk e palette agora alternam visibilidade.
+  Teste de regressão em `tests/ui.test.mjs` ("abrir o cmdk não destrói o
+  componente da palette").
+- Wiring: `#cmdklist` ✓, mount `main.js:5827`, early-path `main.js:4621`;
+  única escrita legada em `#palettelist` é `main.js:4484` (só sem mount).
+- Verificado: `test:ui` **141/141**, `build:ui` ✓ (415 ms), oxlint exit 0.
+- Commits desta série: `fc7b925` (Fases 0-4 + 5a) + lote 5b/5c.
+
+## Onde estamos (2026-11-18, Fase 5b Svelte aplicada: palette de comandos)
+
+- **Fase 5b**: lista da palette `/` em Svelte (`ui/src/composer/Palette.svelte`).
+  Builder puro `paletteSnapshot(items, index)` exportado (linha `/nome`,
+  descrição, origem, `sel`). `renderPalette()` faz `hidden` + early-path
+  `palettePane.sync()`; navegação por teclado segue no main (muta
+  `palette.index` e re-renderiza → sync). Ação via host: `pick(idx)`.
+- Wiring: `#palettelist` ✓, mount `main.js:5787`, early-path `main.js:4476`.
+- Verificado: `test:ui` **138/138**, `build:ui` ✓ (396 ms), oxlint exit 0.
+- Commit anterior desta série: `fc7b925` (Fases 0-4 + 5a). 5b ainda não commitada.
+
 ## Onde estamos (2026-11-18, Fase 5a Svelte aplicada: anexos do composer)
 
 - **Fase 5a**: linha de anexos `#attachrow` em Svelte

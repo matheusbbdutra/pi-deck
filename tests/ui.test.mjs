@@ -25,6 +25,8 @@ import MissionsPane from '../ui/src/panels/MissionsPane.svelte';
 import GitPane from '../ui/src/panels/GitPane.svelte';
 import SubsPane from '../ui/src/panels/SubsPane.svelte';
 import Attachments from '../ui/src/composer/Attachments.svelte';
+import Palette from '../ui/src/composer/Palette.svelte';
+import CmdkList from '../ui/src/composer/CmdkList.svelte';
 
 vi.mock('../ui/src/terminal.js', () => ({ initTerminal: () => {}, reconcileTerminal: () => {} }));
 vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor: () => null }));
@@ -71,6 +73,10 @@ let missionsSnapshot;
 let gitSnapshot;
 let subsSnapshot;
 let attachmentsSnapshot;
+let paletteSnapshot;
+let cmdkSnapshot;
+let openCmdk;
+let closeCmdk;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -99,7 +105,7 @@ beforeAll(async () => {
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
-     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot } = await import('../ui/src/main.js'));
+     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -1270,6 +1276,84 @@ describe('anexos do composer (Fase 5a)', () => {
     expect(removed).toEqual([0]);
     unmount(inst);
     target.remove();
+  });
+});
+
+describe('palette de comandos (Fase 5b)', () => {
+  it('paletteSnapshot marca a seleção e monta rótulos', () => {
+    const snap = paletteSnapshot([
+      { name: 'compact', description: 'compacta', source: 'builtin' },
+      { name: 'model', app: true },
+    ], 1);
+    expect(snap.rows.length).toBe(2);
+    expect(snap.rows[0]).toEqual({ idx: 0, name: '/compact', desc: 'compacta', src: 'builtin', sel: false });
+    expect(snap.rows[1]).toEqual({ idx: 1, name: '/model', desc: '', src: 'pi', sel: true });
+    expect(paletteSnapshot([], 0).rows).toEqual([]);
+  });
+
+  it('Palette monta e escolhe pelo índice', async () => {
+    const picked = [];
+    const host = {
+      snapshot: () => paletteSnapshot([{ name: 'a' }, { name: 'b' }], 0),
+      pick: (i) => { picked.push(i); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(Palette, { target, props: { host } });
+    expect(target.querySelectorAll('.palette-row').length).toBe(2);
+    expect(target.querySelectorAll('.palette-row.sel').length).toBe(1);
+    target.querySelectorAll('.palette-row')[1].click();
+    expect(picked).toEqual([1]);
+    unmount(inst);
+    target.remove();
+  });
+});
+
+describe('palette global Ctrl+K (Fase 5c)', () => {
+  it('cmdkSnapshot achata o índice entre grupos e marca a seleção', () => {
+    const snap = cmdkSnapshot([
+      { label: 'RECENTES', rows: [{ title: '/a', desc: 'A', src: 's' }] },
+      { label: 'COMANDOS', rows: [{ title: '/b' }, { title: '/c' }] },
+    ], 1);
+    expect(snap.empty).toBe(false);
+    expect(snap.groups[0].rows[0]).toEqual({ idx: 0, title: '/a', desc: 'A', src: 's', sel: false });
+    expect(snap.groups[1].rows[0]).toMatchObject({ idx: 1, title: '/b', sel: true });
+    expect(snap.groups[1].rows[1]).toMatchObject({ idx: 2, title: '/c', sel: false });
+    expect(cmdkSnapshot([], 0).empty).toBe(true);
+  });
+
+  it('CmdkList monta grupos e escolhe pelo índice', async () => {
+    const picked = [];
+    const host = {
+      snapshot: () => cmdkSnapshot([{ label: 'COMANDOS', rows: [{ title: '/x' }, { title: '/y' }] }], 0),
+      pick: (i) => { picked.push(i); },
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(CmdkList, { target, props: { host } });
+    expect(target.querySelectorAll('.palette-group').length).toBe(1);
+    expect(target.querySelectorAll('.palette-row').length).toBe(2);
+    target.querySelectorAll('.palette-row')[1].click();
+    expect(picked).toEqual([1]);
+    unmount(inst);
+    target.remove();
+  });
+
+  it('abrir o cmdk não destrói o componente da palette (container próprio)', () => {
+    const target = document.getElementById('palettelist');
+    const inst = mount(Palette, {
+      target,
+      props: { host: { snapshot: () => paletteSnapshot([{ name: 'x' }], 0), pick: () => {} } },
+    });
+    expect(target.querySelectorAll('.palette-row').length).toBe(1);
+    openCmdk();
+    // Regressão: `clear(#palettelist)` destruiria os nós do Svelte.
+    expect(target.querySelectorAll('.palette-row').length).toBe(1);
+    expect(document.getElementById('cmdklist').childElementCount).toBeGreaterThan(0);
+    expect(target.classList.contains('hidden')).toBe(true);
+    closeCmdk();
+    expect(target.classList.contains('hidden')).toBe(false);
+    unmount(inst);
   });
 });
 

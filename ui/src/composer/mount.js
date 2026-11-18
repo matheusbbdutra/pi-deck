@@ -3,6 +3,8 @@ import ModelPop from './ModelPop.svelte';
 import CtxPop from './CtxPop.svelte';
 import ForkPop from './ForkPop.svelte';
 import Attachments from './Attachments.svelte';
+import Palette from './Palette.svelte';
+import CmdkList from './CmdkList.svelte';
 
 /** Monta o pop de modelo no container do composer.
  *  `host` injeta o que o componente precisa — o componente não importa
@@ -33,4 +35,18 @@ export function mountAttachments(host) {
   const target = document.getElementById('attachrow');
   if (!target) return null;
   return mount(Attachments, { target, props: { host } });
+}
+
+/** Monta a lista da palette de comandos no container `#palettelist`. */
+export function mountPalette(host) {
+  const target = document.getElementById('palettelist');
+  if (!target) return null;
+  return mount(Palette, { target, props: { host } });
+}
+
+/** Monta a lista do cmdk (Ctrl+K) no container `#cmdklist` (mesmo contrato). */
+export function mountCmdkList(host) {
+  const target = document.getElementById('cmdklist');
+  if (!target) return null;
+  return mount(CmdkList, { target, props: { host } });
 }
