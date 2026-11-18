@@ -109,8 +109,12 @@ E no config: `bundle.createUpdaterArtifacts: true`.
   cifrada: sem `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` o build morre em
   `failed to decode secret key: incorrect updater private key password`. Senha **vazia** só funciona
   para chave **sem** senha (`-p ""`). Escolha uma das duas e registre no Bitwarden.
-- **Senha com espaço/quebra no fim** dá o mesmo erro. Para blindar:
-  `printf '%s' '<senha>' > /tmp/pw && gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < /tmp/pw && rm -f /tmp/pw`.
+- **Valor do secret com um caractere a mais** dá o mesmo erro de senha. Causa real observada
+  (2026-11-18): digitar a senha entre aspas no terminal deixou um caractere extra no valor; o
+  `gh secret set <NOME>` interativo (cola no prompt, sem aspas) resolvou. Para blindar contra
+  espaço/quebra no fim: `printf '%s' '<senha>' > /tmp/pw && gh secret set <NOME> < /tmp/pw && rm -f /tmp/pw`.
+  GitHub Secrets são write-only: não há como ler de volta para conferir — se o build falhar, re-setar
+  é o caminho, não tentar "adivinhar" o valor.
 - **Não confie em `grep KDF` no arquivo da chave** para saber se é cifrada: minisign é base64 e o
   marcador (`rsign encrypted secret key`) só aparece decodificado. Teste real: `tauri signer sign`.
 - **Verificação antes de publicar** (rascunho já criado): grepar o log do build por
