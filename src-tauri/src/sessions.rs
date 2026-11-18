@@ -668,9 +668,12 @@ pub fn open_file(cwd: String, path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Valida o alvo sem abrir: contido no projeto e arquivo real.
+/// Valida o alvo sem abrir: contido no projeto e arquivo real. `path` relativo é
+/// resolvido a partir de `cwd` — a aba Plano manda `docs/spec/x.md` e
+/// `canonicalize` de um relativo usaria o cwd do processo, não o do projeto
+/// (bug: `docs/spec/x.md: Arquivo ou diretório inexistente (os error 2)`).
 fn open_file_in(cwd: &Path, path: &Path) -> Result<PathBuf, String> {
-    let target = contained_in(path, cwd)?;
+    let target = contained_in(&cwd.join(path), cwd)?;
     if !target.is_file() {
         return Err(format!("não é arquivo: {}", target.display()));
     }
@@ -730,7 +733,9 @@ fn revert_hunk_in(cwd: &Path, file: &Path, hunk: &str) -> Result<String, String>
         );
     }
     // Sem isso, um path vindo do webview reescreve qualquer arquivo legível.
-    let target = contained_in(file, cwd)?;
+    // Relativo vale a partir de `cwd` (a aba Arquivos manda o path do tool call,
+    // ex. `src/a.rs`; `canonicalize` solto usaria o cwd do processo).
+    let target = contained_in(&cwd.join(file), cwd)?;
     if !target.is_file() {
         return Err(format!("não é arquivo: {}", target.display()));
     }
@@ -2766,6 +2771,14 @@ mod tests {
         let err = open_file_in(&t.at("proj"), &outside).unwrap_err();
         assert!(err.contains("fora do diretório"), "{err}");
         assert!(open_file_in(&t.at("proj"), &t.at("proj/naoexiste.txt")).is_err());
+        // Relativo vale a partir do `cwd` da sessão (plans_list devolve `docs/spec/x.md`).
+        t.file("proj/docs/spec/x.md", "x");
+        assert!(open_file_in(&t.at("proj"), Path::new("docs/spec/x.md")).is_ok());
+        assert!(open_file_in(&t.at("proj"), Path::new("docs/spec/naoexiste.md")).is_err());
+        // Relativo que escapa do projeto continua barrado.
+        t.file("fora/y.md", "x");
+        let esc = open_file_in(&t.at("proj"), Path::new("../fora/y.md")).unwrap_err();
+        assert!(esc.contains("fora do diretório"), "{esc}");
     }
 
     // ---------- revert_hunk: desfaz UM hunk do patch exibido ----------
@@ -2812,6 +2825,17 @@ mod tests {
         let err = revert_hunk_in(&t.at("proj"), &victim, hunk).unwrap_err();
         assert!(err.contains("fora do diretório permitido"), "{err}");
         assert!(victim.exists(), "arquivo fora do cwd não pode ser tocado");
+    }
+
+    #[test]
+    fn revert_hunk_aceita_caminho_relativo_ao_cwd() {
+        let t = Tmp::new("revrel");
+        let cwd = t.at("proj");
+        t.file("proj/src/a.txt", "a\nB\nc\n");
+        let hunk = "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c";
+        let out = revert_hunk_in(&cwd, Path::new("src/a.txt"), hunk).unwrap();
+        assert!(out.contains("hunk desfeito"), "{out}");
+        assert_eq!(fs::read_to_string(t.at("proj/src/a.txt")).unwrap(), "a\nb\nc\n");
     }
 
     #[test]
