@@ -129,6 +129,12 @@ export const STRINGS = {
     'settings.lang_pt': 'Português',
     'settings.lang_en': 'English',
     'settings.lang_auto': 'Auto (navegador)',
+    'settings.group_transcript': 'Transcript',
+    'settings.group_notify': 'Notificações',
+    'settings.group_project': 'Projeto',
+    'settings.group_appearance': 'Aparência',
+    'settings.group_tools': 'Ferramentas',
+    'settings.group_maintenance': 'Manutenção',
 
     'common.loading': 'carregando…',
     'common.updating': 'Atualizar',
@@ -352,6 +358,7 @@ export const STRINGS = {
     'health.chip': '{n} aviso(s) de extensão · clique para abrir o Diagnóstico',
     'health.dismiss': 'dispensar: não conta mais no ⚠ (dá para restaurar depois)',
 
+    'git.no_repo': 'sem repositório git em {path}',
     'git.hint_reload': 'relê o git status',
     'git.hint_discard': 'git restore dos selecionados (só rastreados)',
     'git.hint_stash': 'git stash push --include-untracked (tudo, com untracked)',
@@ -471,6 +478,12 @@ export const STRINGS = {
     'settings.lang_pt': 'Português',
     'settings.lang_en': 'English',
     'settings.lang_auto': 'Auto (browser)',
+    'settings.group_transcript': 'Transcript',
+    'settings.group_notify': 'Notifications',
+    'settings.group_project': 'Project',
+    'settings.group_appearance': 'Appearance',
+    'settings.group_tools': 'Tools',
+    'settings.group_maintenance': 'Maintenance',
 
     'common.loading': 'loading…',
     'common.updating': 'Update',
@@ -694,6 +707,7 @@ export const STRINGS = {
     'health.chip': '{n} extension warning(s) · click to open Diagnostics',
     'health.dismiss': 'dismiss: no longer counts toward ⚠ (restorable later)',
 
+    'git.no_repo': 'no git repository in {path}',
     'git.hint_reload': 're-read git status',
     'git.hint_discard': 'git restore of selected (tracked only)',
     'git.hint_stash': 'git stash push --include-untracked (all, with untracked)',
@@ -775,7 +789,9 @@ export function applyStaticI18n() {
   set('updExt', t('settings.update_ext'));
   set('updPi', t('settings.update_pi'));
   try {
-    const sel = document.getElementById('langsel');
+    // `langsel` pertence ao componente Svelte (ele mesmo traduz as opções);
+    // aqui só o select do markup legado (fallback).
+    const sel = document.getElementById('langsellegacy');
     if (sel && sel.options.length >= 3) {
       sel.options[0].textContent = t('settings.lang_auto');
       sel.options[1].textContent = t('settings.lang_pt');

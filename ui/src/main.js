@@ -11,6 +11,7 @@ import { diffView, setDiffView, splitHunk } from './diffview.js';
 import { initTerminal, reconcileTerminal } from './terminal.js';
 import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from './theme.js';
 import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
+import { mountSettings } from './settings/mount.js';
 
 /* E2E: o plugin do WebdriverIO só entra no bundle de teste (`--mode e2e`).
  * `__WDIO_E2E__` é definido pelo vite config; no vitest/produção fica false.
@@ -1745,18 +1746,20 @@ function renderGit() {
   clear(host);
   if (gitError) { host.appendChild(el('div', 'empty', gitError)); return; }
   if (!repo) {
-    host.appendChild(el('div', 'empty', cwdTxt ? 'sem repositório git em ' + cwdTxt : 'nenhuma sessão aberta'));
+    host.appendChild(el('div', 'empty', cwdTxt ? t('git.no_repo', { path: cwdTxt }) : t('composer.no_session')));
     return;
   }
-  const t = gitData.totals || {};
+  // NÃO chamar de `t`: sombreia o `t()` de i18n e o render do painel Git quebra
+  // com "t is not a function" (aconteceu ao migrar os rótulos para `t('git.*')`).
+  const tot = gitData.totals || {};
   const head = el('div', 'history-head');
   const branch = String(gitData.branch || '') || (gitData.detached ? '(detached)' : '—');
   head.appendChild(el('span', null, branch));
   head.appendChild(el('span', null, ' · ↑' + (Number(gitData.ahead) || 0) + ' ↓' + (Number(gitData.behind) || 0)));
   head.appendChild(el('span', null, ' · ' + list.length + ' arquivo(s) '));
-  head.appendChild(el('span', 'git-add', '+' + (Number(t.add) || 0)));
+  head.appendChild(el('span', 'git-add', '+' + (Number(tot.add) || 0)));
   head.appendChild(el('span', null, ' '));
-  head.appendChild(el('span', 'git-del', '−' + (Number(t.del) || 0)));
+  head.appendChild(el('span', 'git-del', '−' + (Number(tot.del) || 0)));
   host.appendChild(head);
   // Caminho e estado limpo explícitos: sem isso, repo sem mudanças e "nada carregou"
   // ficam idênticos na tela (bug reportado 2026-11-16).
@@ -3278,8 +3281,8 @@ function handleResponse(rec) {
       const last = back.at(-1);
       $('input').value = last;
       autosizeInput();
-      const t = tabs.find(x => x.key === current.key);
-      if (t) t.draft = last;
+      const qtab = tabs.find(x => x.key === current.key);
+      if (qtab) qtab.draft = last;
       break;
     }
     case 'get_fork_messages': {
@@ -3896,8 +3899,8 @@ const APP_COMMANDS = [
   { name: 'name', description: t('cmd.name'), app: true, needsRpc: true,
     run: (a) => {
       if (!a) return note(t('cmd.name_usage'));
-      const t = tabs.find(x => current && x.key === current.key);
-      if (t) { t.label = a; renderTabs(); }
+      const named = tabs.find(x => current && x.key === current.key);
+      if (named) { named.label = a; renderTabs(); }
       sendCommand({ type: 'set_session_name', name: a });
     } },
   { name: 'session', description: t('cmd.session'), app: true, needsRpc: true,
@@ -4312,7 +4315,9 @@ function applySubsWarning() {
   host.insertBefore(el('div', 'warn-banner', noSubsMessage()), host.firstChild);
 }
 
-async function loadPkgs(highlight) {
+/* Cada aba carrega só o que precisa. Antes `openPkgs` pagava `pi_list` (241 ms)
+ * + `pi_mcp_list` (1519 ms) em série mesmo abrindo "Instalados". */
+async function loadInstalled() {
   $('pkglist').textContent = 'carregando…';
   try {
     const text = String(await inv('pi_list'));
@@ -4321,18 +4326,34 @@ async function loadPkgs(highlight) {
   } catch (e) {
     $('pkglist').textContent = String(e);
   }
+  if (catalogObjects) renderCatalog();
+}
 
+/* `pi mcp list --json` custa ~1,5 s: guarda o resultado por 30 s e só relê ao
+ * trocar para a aba MCP (ou depois de add/remove, que chamam `invalidateMcp`). */
+const MCP_TTL_MS = 30_000;
+let mcpCache = { at: 0, servers: null, raw: '' };
+
+function invalidateMcp() { mcpCache = { at: 0, servers: null, raw: '' }; }
+
+async function loadMcp(highlight, force) {
+  const fresh = !force && mcpCache.servers && Date.now() - mcpCache.at < MCP_TTL_MS;
+  if (fresh) {
+    $('mcpjson').textContent = mcpCache.raw;
+    renderMCP(mcpCache.servers, highlight);
+    return;
+  }
   try {
     const raw = String(await inv('pi_mcp_list'));
     let parsed = null;
     try { parsed = JSON.parse(raw); } catch { /* veio texto de erro */ }
+    const servers = parsed && Array.isArray(parsed.servers) ? parsed.servers : [];
     $('mcpjson').textContent = parsed ? JSON.stringify(parsed, null, 2) : raw;
-    renderMCP(parsed && Array.isArray(parsed.servers) ? parsed.servers : [], highlight);
+    mcpCache = { at: Date.now(), servers, raw: parsed ? JSON.stringify(parsed, null, 2) : raw };
+    renderMCP(servers, highlight);
   } catch (e) {
     setEmpty($('mcplist'), String(e));
   }
-
-  if (catalogObjects) renderCatalog();
 }
 
 /* ---------- quais pacotes já estão instalados ---------- */
@@ -4582,7 +4603,8 @@ function mcpAdd() {
     $('mcpout').textContent = 'executando…';
     try {
       $('mcpout').textContent = String(await inv('pi_mcp_add', { name, url, argv, env, headers: [], local }));
-      await loadPkgs(name);
+      invalidateMcp();
+      await loadMcp(name, true);
     } catch (e) {
       $('mcpout').textContent = String(e);
     }
@@ -4596,7 +4618,8 @@ function mcpRemove() {
   confirmRun('pi mcp remove ' + name + (local ? ' -l' : ''), async () => {
     try {
       $('mcpout').textContent = String(await inv('pi_mcp_remove', { name, local }));
-      await loadPkgs();
+      invalidateMcp();
+      await loadMcp(null, true);
     } catch (e) {
       $('mcpout').textContent = String(e);
     }
@@ -4646,7 +4669,12 @@ function switchPkgPane(name) {
   }
   if (hooksTimer) { clearInterval(hooksTimer); hooksTimer = null; }
 
-  if (name === 'catalog' && !catalogObjects) loadCatalog(false);
+  if (name === 'installed') loadInstalled();
+  if (name === 'catalog') {
+    if (!catalogObjects) loadCatalog(false);
+    else renderCatalog();
+  }
+  if (name === 'mcp') loadMcp();
   if (name === 'hooks') {
     loadHooks();
     refreshHooksStatus();
@@ -4657,8 +4685,8 @@ function switchPkgPane(name) {
 function openPkgs() {
   $('settingspop').classList.add('hidden');
   $('pkgs').classList.remove('hidden');
+  // `switchPkgPane('installed')` já dispara `loadInstalled()` — sem `pi mcp list`.
   switchPkgPane('installed');
-  loadPkgs();
   if (!$('mcpenvrows').childElementCount) addEnvRow();
 }
 
@@ -4687,9 +4715,14 @@ async function openAbout() {
   };
   clear(host);
   add('sightdeck', appVersion || '?');
-  try { add('pi', String(await inv('pi_version'))); } catch { add('pi', '?'); }
-  let info = null;
-  try { info = JSON.parse(await inv('app_info')); } catch { info = null; }
+  // Os dois IPC são independentes (cada um sobe um processo): em paralelo o
+  // overlay abre em ~1 chamada em vez de somar as duas latências.
+  const [piV, appInfo] = await Promise.all([
+    inv('pi_version').then(String).catch(() => '?'),
+    inv('app_info').then(JSON.parse).catch(() => null),
+  ]);
+  add('pi', piV);
+  const info = appInfo;
   if (info) {
     add(t('about.pi_bin'), info.piBin || '?');
     add('config do pi', info.agent || '?');
@@ -5110,14 +5143,17 @@ function loadSettings() {
     uiSettings.notifyDesktop = raw.notifyDesktop !== false;
     uiSettings.notifySound = raw.notifySound !== false;
   } catch { /* defaults */ }
-  $('setExpTools').checked = uiSettings.expandTools;
-  $('setExpThink').checked = uiSettings.expandThink;
-  $('setShowHidden').checked = uiSettings.showHidden;
-  $('setNotifyDesktop').checked = uiSettings.notifyDesktop;
-  $('setNotifySound').checked = uiSettings.notifySound;
+  // Caminho novo (Svelte) lê os valores ao montar; o legado (fallback) precisa dos
+  // próprios controles sincronizados. Guardo por existência: um dos dois pode não estar.
+  const setChecked = (id, v) => { const n = $(id); if (n) n.checked = v; };
+  setChecked('setExpTools', uiSettings.expandTools);
+  setChecked('setExpThink', uiSettings.expandThink);
+  setChecked('setShowHidden', uiSettings.showHidden);
+  setChecked('setNotifyDesktop', uiSettings.notifyDesktop);
+  setChecked('setNotifySound', uiSettings.notifySound);
+  const legacySel = $('langsellegacy');
+  if (legacySel) legacySel.value = getLangPref();
   try {
-    const sel = $('langsel');
-    if (sel) sel.value = getLangPref();
     document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en';
   } catch { /* sem DOM */ }
   applyStaticI18n();
@@ -5134,27 +5170,51 @@ $('settingsbtn').onclick = (e) => {
   e.stopPropagation();
   $('settingspop').classList.toggle('hidden');
 };
-$('setExpTools').onchange = (e) => { uiSettings.expandTools = e.target.checked; saveSettings(); };
-$('setExpThink').onchange = (e) => { uiSettings.expandThink = e.target.checked; saveSettings(); };
-$('setShowHidden').onchange = (e) => {
-  uiSettings.showHidden = e.target.checked;
-  saveSettings();
-  loadSessions();
+/* Host do componente Svelte de Configurações: passa `t`/estado e recebe as
+   mudanças, sem o componente importar este módulo (evita ciclo). */
+const settingsHost = {
+  uiSettings,
+  t,
+  getLangPref,
+  setSetting(key, value) {
+    uiSettings[key] = value;
+    saveSettings();
+    if (key === 'showHidden') loadSessions();
+  },
+  setLang(pref) {
+    setLang(pref);
+    applyStaticI18n();
+    for (const c of APP_COMMANDS) if (CMD_KEYS[c.name]) c.description = t(CMD_KEYS[c.name]);
+    loadSessions();
+    // Overlay de estado vazio só é repintada se já estava visível: com sessão
+    // aberta ela é opaca e cobriria o transcript.
+    if (current && !$('emptystate').classList.contains('hidden')) {
+      setEmptyState(true, current.file ? 'newsession' : 'nosession');
+    }
+    syncStopButton(!!(current && current.working));
+  },
 };
-$('setNotifyDesktop').onchange = (e) => { uiSettings.notifyDesktop = e.target.checked; saveSettings(); };
-$('setNotifySound').onchange = (e) => { uiSettings.notifySound = e.target.checked; saveSettings(); };
-$('langsel').onchange = (e) => {
-  setLang(e.target.value);
-  applyStaticI18n();
-  for (const c of APP_COMMANDS) if (CMD_KEYS[c.name]) c.description = t(CMD_KEYS[c.name]);
-  loadSessions();
-  // Overlay de estado vazio só é repintada se já estava visível: com sessão
-  // aberta ela é opaca e cobriria o transcript.
-  if (current && !$('emptystate').classList.contains('hidden')) {
-    setEmptyState(true, current.file ? 'newsession' : 'nosession');
-  }
-  syncStopButton(!!(current && current.working));
-};
+
+/* Tela nova e tela antiga convivem: monta o Svelte e só esconde o markup legado
+   quando o mount funciona. Sem Svelte, o popover continua funcionando como hoje. */
+let settingsMounted = null;
+try {
+  settingsMounted = mountSettings(settingsHost);
+} catch (e) {
+  debugNote('settings svelte: mount falhou — usando o markup legado (' + e + ')');
+}
+const legacySettings = $('settings-legacy');
+if (legacySettings) legacySettings.classList.toggle('hidden', !!settingsMounted);
+
+/* Handlers do caminho legado: só valem quando o Svelte não montou, mas ficam
+   ligados (idempotentes) porque os controles seguem no DOM como fallback. */
+const legacyBind = (id, fn) => { const n = $(id); if (n) n.onchange = fn; };
+legacyBind('setExpTools', (e) => settingsHost.setSetting('expandTools', e.target.checked));
+legacyBind('setExpThink', (e) => settingsHost.setSetting('expandThink', e.target.checked));
+legacyBind('setShowHidden', (e) => settingsHost.setSetting('showHidden', e.target.checked));
+legacyBind('setNotifyDesktop', (e) => settingsHost.setSetting('notifyDesktop', e.target.checked));
+legacyBind('setNotifySound', (e) => settingsHost.setSetting('notifySound', e.target.checked));
+legacyBind('langsellegacy', (e) => settingsHost.setLang(e.target.value));
 
 async function runUpdate(scope) {
   const out = $('updOut');
