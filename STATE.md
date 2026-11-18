@@ -1,5 +1,20 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, Fase 7b aplicada — FIM DA MIGRAÇÃO)
+
+- **Fase 7b**: guard-rail de integridade em `tests/ui.test.mjs`: (a) todo wrapper
+  legacy (`settings/theme/modelpop/ctxpop/forkpop/typing-legacy`) precisa estar
+  `hidden` no boot quando o mount funciona — regressão real da Fase 5d; (b) os 16
+  containers Svelte precisam existir no HTML. Auditoria: 16 mounts chamados 1×,
+  12 early-paths, 6 wrappers — nenhum órfão.
+- **Números finais**: `ui/index.html` **359** linhas; `ui/src/main.js` **6136**
+  (cresceu de 5368: builders puros + hosts + monts + fallbacks mantidos);
+  **16 componentes Svelte**.
+- **Decisão pendente do usuário (Fase 7c)**: os renders legados foram mantidos
+  como fallback de mount. Removê-los cortaria ~700 linhas do `main.js`, mas
+  elimina a rede de segurança se o mount falhar no runtime Tauri.
+- Verificado: `test:ui` **146/146**, `build:ui` ✓ (383 ms).
+
 ## Onde estamos (2026-11-18, Fase 6 decidida + Fase 7a aplicada)
 
 - **Fase 6 NÃO migrada — decisão técnica com evidência**:

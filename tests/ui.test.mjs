@@ -1398,6 +1398,27 @@ describe('indicador de digitação (Fase 5d)', () => {
   });
 });
 
+describe('integridade da migracao Svelte (Fase 7b)', () => {
+  it('todo wrapper legacy fica escondido quando o mount funciona', () => {
+    // Regressão real (Fase 5d): o markup legado do #typing ficou visível ao lado
+    // do componente e aparecia com o painel oculto. Cada wrapper precisa ser
+    // escondido no boot quando o mount correspondente funciona.
+    for (const id of ['settings-legacy', 'theme-legacy', 'modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy', 'typing-legacy']) {
+      const n = document.getElementById(id);
+      if (!n) continue;
+      expect({ id, hidden: n.classList.contains('hidden') }).toEqual({ id, hidden: true });
+    }
+  });
+
+  it('os containers Svelte existem no HTML (montagem previsivel)', () => {
+    for (const id of ['settings-general', 'theme-svelte', 'modelpop-svelte', 'ctxpop-svelte',
+      'forkpop-svelte', 'typing-svelte', 'attachrow', 'palettelist', 'cmdklist',
+      'tabs', 'sessions', 'searchresults', 'plans', 'missions', 'git', 'subs']) {
+      expect({ id, present: !!document.getElementById(id) }).toEqual({ id, present: true });
+    }
+  });
+});
+
 describe('Esc interrompe o turno', () => {
   it('aborta com turno trabalhando e foco no composer', () => {
     expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: true })).toBe(true);
