@@ -712,6 +712,17 @@
   .mfield:focus { border-color:var(--accent); }
   .mfield.checkbox { display:flex; align-items:center; gap:8px; background:none; border:none;
                      color:var(--dim); padding:2px 0; }
+  /* <select> nativo: o WebKitGTK desenha o campo com o tema do UA (fundo branco,
+     borda e seta nativas) e ignora background/border da classe — o texto claro do
+     tema ficava ilegível sobre branco. `appearance:none` devolve o desenho ao CSS;
+     a seta vira chevron de dois gradientes (var() não vale dentro de url()). */
+  select.mfield, select.ctx-sel { -webkit-appearance:none; appearance:none;
+    padding-right:20px; background-repeat:no-repeat;
+    background-image:linear-gradient(45deg, transparent 50%, var(--dim) 50%),
+                     linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+    background-position:calc(100% - 13px) calc(50% + 1px), calc(100% - 9px) calc(50% + 1px);
+    background-size:5px 5px, 5px 5px; }
+  select.mfield option, select.ctx-sel option { background:var(--bg-0); color:var(--fg); }
   .confirm-bar { position:fixed; left:0; right:0; bottom:0; z-index:60;
                  display:flex; align-items:center; gap:10px; padding:9px 16px;
                  border-top:1px solid var(--line-strong); background:var(--bg-2); }

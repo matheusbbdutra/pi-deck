@@ -1029,7 +1029,14 @@ const CHILD_STATE = {
 };
 
 function renderChildren(list) {
-  lastDiskList = Array.isArray(list) ? list : [];
+  const next = Array.isArray(list) ? list : [];
+  // Poll de 2 s durante o turno relê o disco: repintar sem mudança zera o scroll do
+  // painel. `mtime` fica fora da chave (o filho escreve o tempo todo e o relógio do
+  // disco nem é atualizado); `id|state` muda quando o run nasce, anda ou termina.
+  const key = next.map(c => c.id + '|' + c.state).join(',');
+  if (key === lastDiskKey && lastDiskList) return;
+  lastDiskKey = key;
+  lastDiskList = next;
   paintSubs();
 }
 
@@ -1966,6 +1973,7 @@ export function elapsedFor(run, now) {
 
 let lastSnap = null; // último widget ao vivo (runs em andamento), por sessão em foco
 let lastDiskList = null; // último histórico do disco, da sessão em foco
+let lastDiskKey = ''; // id/estado da última lista pintada: poll igual não repinta
 
 function liveRunBox(run, now) {
   const state = String(run.state || '?');
@@ -2085,6 +2093,14 @@ export function renderSubs(snap) {
   paintSubs();
 }
 
+/** Painel de Subagents à vista? Clicar na aba já recarrega do disco; com o painel
+ *  escondido, reler a cada tique é I/O à toa (`list_children` abre cada child). */
+function subsPaneVisible() {
+  const pane = $('subs');
+  return !!pane && !pane.classList.contains('hidden')
+    && !document.body.classList.contains('no-subs');
+}
+
 /** Enquanto um turno roda, o chip de contexto/tokens só mudava no `agent_settled`
  *  (ou seja, "depois de um tempo"). O pi expõe `get_session_stats` a qualquer
  *  momento: poll curto mantém tokens, custo e % do contexto em tempo real. */
@@ -2099,6 +2115,10 @@ function ensureStatsPoll() {
       statsPoll = null;
       return;
     }
+    // Run novo de subagent nasce no disco: o snapshot ao vivo é só do widget
+    // `subagent-async` (jobs async) — run em primeiro plano não emite nada. Sem
+    // esta releitura o painel só mostrava o run ao trocar de aba ou no fim do turno.
+    if (current.childrenDir && subsPaneVisible()) loadChildren(current.childrenDir);
     // Aba sem processo vivo não aceita RPC: poll falharia e encheria o log de erro.
     if (!t.connected) return;
     sendCommand({ type: 'get_session_stats' });
@@ -2253,11 +2273,44 @@ function healthMapFor(sessionKey) {
   return map;
 }
 
+/** Avisos dispensados pelo usuário (`localStorage['muted-health']`). A chave é o `id`
+ *  do aviso, global e não por sessão: a mesma frase volta em toda sessão nova — sem
+ *  isso o chip reaparecia a cada aba aberta (lsp inativo, MCP "fetch failed"). */
+const MUTED_KEY = 'muted-health';
+let mutedHealth = null;
+function mutedIds() {
+  if (mutedHealth) return mutedHealth;
+  mutedHealth = new Set();
+  try {
+    for (const id of JSON.parse(localStorage.getItem(MUTED_KEY) || '[]')) mutedHealth.add(String(id));
+  } catch { /* sem storage: fica vazio */ }
+  return mutedHealth;
+}
+
+/** Dispensa um aviso: sai de todas as sessões abertas e não conta mais no chip. */
+export function muteHealth(id) {
+  const key = String(id || '');
+  if (!key) return;
+  mutedIds().add(key);
+  try { localStorage.setItem(MUTED_KEY, JSON.stringify([...mutedIds()])); } catch { /* sem storage */ }
+  for (const map of healthBySession.values()) map.delete(key);
+  renderHealthChip();
+}
+
+/** Traz os dispensados de volta: o mesmo `id` volta a contar quando o pi repetir. */
+export function unmuteHealth() {
+  mutedIds().clear();
+  try { localStorage.removeItem(MUTED_KEY); } catch { /* sem storage */ }
+  renderHealthChip();
+}
+
 /** Registra a linha no mapa (dedup por `id`) e devolve o `kind` reconhecido, ou `null`.
  *  Acima de `HEALTH_MAX` avisos o mais antigo sai: o chip mostra a contagem, não a lista. */
 export function noteHealth(map, line) {
   const hit = classifyHealthLine(line);
-  if (!hit || !(map instanceof Map)) return hit ? hit.kind : null;
+  if (!hit) return null;
+  if (mutedIds().has(hit.id)) return null; // dispensado: não conta nem repinta o chip
+  if (!(map instanceof Map)) return hit.kind;
   if (!map.has(hit.id)) {
     map.set(hit.id, hit.kind);
     while (map.size > HEALTH_MAX) map.delete(map.keys().next().value);
@@ -2314,8 +2367,21 @@ export function renderHealthList(map = current ? healthBySession.get(current.key
     const row = el('div', 'file-row');
     row.appendChild(el('span', 'file-name', id));
     row.appendChild(el('span', 'file-count', kind));
+    const off = el('button', 'tiny', '✕');
+    off.title = 'dispensar: não conta mais no ⚠ (dá para restaurar depois)';
+    off.onclick = () => muteHealth(id);
+    row.appendChild(off);
     host.appendChild(row);
   }
+  const muted = mutedIds().size;
+  if (!muted) return;
+  const foot = el('div', 'file-row');
+  foot.appendChild(el('span', 'file-name', muted + ' aviso(s) dispensado(s)'));
+  const back = el('button', 'tiny', 'restaurar');
+  back.title = 'volta a contar os avisos dispensados';
+  back.onclick = () => unmuteHealth();
+  foot.appendChild(back);
+  host.appendChild(foot);
 }
 
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
@@ -5060,7 +5126,7 @@ $('healthchip').onclick = () => openDebug();
 $('aboutbtn').onclick = () => openAbout();
 $('aboutback').onclick = () => $('about').classList.add('hidden');
 $('debugback').onclick = () => $('debug').classList.add('hidden');
-$('debugrefresh').onclick = () => { loadMissions(); renderDiag(); };
+$('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };
 $('checkupdate').onclick = () => checkUpdate(true);
 $('updatebtn').onclick = () => {
   const u = $('updatebar').dataset.url;

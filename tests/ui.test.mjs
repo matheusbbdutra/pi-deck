@@ -30,6 +30,8 @@ let classifyHealthLine;
 let noteHealth;
 let healthChipState;
 let renderHealthList;
+let muteHealth;
+let unmuteHealth;
 let normalizeRowText;
 let answerAlreadyRendered;
 let isLiveRun;
@@ -65,7 +67,7 @@ beforeAll(async () => {
   });
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, logHasText, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
-     healthChipState, renderHealthList, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
+     healthChipState, renderHealthList, muteHealth, unmuteHealth, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView } = await import('../ui/src/main.js'));
 });
@@ -330,6 +332,16 @@ describe('noteHealth / healthChipState', () => {
     const map = new Map();
     expect(noteHealth(map, 'turno pronto')).toBe(null);
     expect(map.size).toBe(0);
+  });
+
+  it('aviso dispensado não conta nem entra no mapa, e volta ao restaurar', () => {
+    const map = new Map();
+    muteHealth('extensão LSP inactive');
+    expect(noteHealth(map, 'extensão LSP inactive')).toBe(null);
+    expect(map.size).toBe(0);
+    unmuteHealth();
+    expect(noteHealth(map, 'extensão LSP inactive')).toBe('lsp');
+    expect(map.size).toBe(1);
   });
 });
 
