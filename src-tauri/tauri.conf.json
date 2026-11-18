@@ -30,13 +30,15 @@
         "https://github.com/matheusbbdutra/sightdeck/releases/latest/download/latest.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxOEY2QkY0QkFEOTg2QTEKUldTaGh0bTY5R3VQd1RUUk5zeDZ1ZlRxeFZjU2xScVY2WDVHb0MrQkxGZkpCQnMvclFVYStrcXgK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQwMkJCMUVCRUUyNDdEODYKUldTR2ZTVHU2N0VyUUVkUExNRXNDdTdqamx5NlI3RG1lcGQyRVRCL3R0dTlUNzdqd1kwbExiL0MK"
     }
   },
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["deb"],
+    "targets": [
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
