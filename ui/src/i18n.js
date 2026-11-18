@@ -234,6 +234,159 @@ export const STRINGS = {
     'term.new': 'Novo terminal',
     'term.restart': 'reiniciar',
     'term.close': 'Fechar o terminal (Ctrl+`)',
+    'term.no_session': 'abra uma sessão para o terminal herdar a pasta',
+    'term.open_fail': 'não foi possível abrir o terminal: {e}',
+    'term.resize': 'arraste para redimensionar',
+
+    'theme.invalid_json': 'JSON inválido: {e}',
+
+    'empty.plus_new': '+ Nova',
+    'empty.new_hint': 'Nova sessão sem projeto (inicia em ~)',
+    'empty.new_folder': '+ Pasta',
+    'empty.folder_hint': 'Abrir uma pasta como projeto',
+
+    'proj.new_here': 'Nova sessão neste projeto ({path})',
+    'proj.show': 'Mostrar projeto',
+    'proj.hide': 'Ocultar projeto (não apaga nada)',
+
+    'sess.badge_runs': 'subagent runs desta sessão',
+    'sess.trash': 'Mover esta sessão para a lixeira',
+    'sess.renamed': 'sessão renomeada',
+
+    'search.total': '{n} sessão(ões)',
+    'search.capped': 'teto de leitura atingido',
+    'search.showing': 'mostrando {n}',
+    'search.matches': '{id} · {n} trecho(s)',
+
+    'missions.empty': 'nenhuma missão no disco',
+    'missions.count': '{n} missão(ões)',
+    'missions.detail_fallback': 'missão',
+    'missions.detail_head': '{status} · {runs} run(s)',
+
+    'subs.history': 'histórico · {n} run(s)',
+
+    'plan.open_in_app': 'clique abre no app padrão',
+
+    'diag.count': '{n} linha(s) (máx {max})',
+
+    'tools.omitted': '… {n} linha(s) omitida(s)',
+
+    'custom.label': 'extensão',
+
+    'ctx.window': 'Context window',
+    'ctx.percent_used': '{pct}% usado',
+    'ctx.tokens_of': '{used} / {win} tokens',
+    'ctx.alert_full': 'Contexto quase cheio ({pct}%) — rode /compact agora',
+    'ctx.alert_warn': 'Contexto em {pct}% — considere /compact',
+    'ctx.auto': 'Auto-compactação',
+    'ctx.on': 'ligada',
+    'ctx.off': 'desligada',
+    'ctx.compact_at': 'Compactar em',
+    'ctx.limit_default': 'padrão do pi',
+    'ctx.limit_pct': '{p}% · reserva {r}',
+    'ctx.limit_custom': 'custom · reserva {r}',
+    'ctx.limit_title': 'Em que ponto do contexto o pi compacta. Vale ao reiniciar o pi (↻).',
+    'ctx.limit_saved_default': 'compactação: padrão do pi (aplica ao reiniciar ↻)',
+    'ctx.limit_saved': 'compactação em {pct}% do contexto · reserva {r} (aplica ao reiniciar ↻)',
+    'ctx.limit_fail': 'falha ao salvar o limite de compactação: {e}',
+    'ctx.cache': 'Prompt cache (sessão)',
+    'ctx.cache_value': 'read {r} · write {w}',
+    'ctx.io': 'Input / Output',
+    'ctx.live': 'Turno em andamento',
+    'ctx.live_value': '+{b} tokens · +{c} no contexto',
+    'ctx.cost': 'Custo',
+    'ctx.messages': 'Mensagens',
+    'ctx.sess_one': '{n} sessão',
+    'ctx.sess_many': '{n} sessões',
+    'ctx.agg': '{tok} · {cost} · {n} msg',
+    'ctx.unavailable': 'contexto indisponível',
+    'ctx.chip_title': '{used} / {win} tokens ({pct}%)',
+    'ctx.chip_live': ' · +{b} em voo',
+    'ctx.chip_more': ' — clique para detalhes',
+    'ctx.compact_now': 'Compactar agora (resume o histórico)',
+    'ctx.open': 'Contexto',
+
+    'queue.restored': 'fila devolvida: {n} mensagem(ns)',
+    'queue.unqueue_hint': 'Desfazer fila: devolve as mensagens enfileiradas ao composer sem interromper o turno',
+
+    'fork.row_msg': 'fork a partir desta mensagem (nova sessão, original preservada)',
+    'fork.row_ans': 'fork daqui (nova sessão a partir do prompt anterior)',
+    'fork.title_suffix': 'fork cria uma sessão nova — a original é preservada',
+    'fork.empty': 'nada para fork',
+    'fork.no_match': 'não localizei a mensagem para fork — escolha na lista',
+    'fork.created': 'fork criado em nova sessão — a original foi preservada',
+    'fork.restored': ' (texto restaurado no composer)',
+    'fork.failed': 'fork falhou',
+    'fork.cancelled': 'fork cancelado',
+
+    'stats.note': 'sessão: {msgs} mensagens · {tokens} tokens{cost}',
+
+    'think.set': 'thinking: {level}',
+    'think.none': 'modelo sem níveis de thinking',
+
+    'model.none': 'nenhum modelo',
+    'model.not_found': 'modelo não encontrado para "{q}"',
+
+    'palette.empty': 'nenhum resultado',
+
+    'cmd.compact': 'Compactar o histórico (opcional: instruções)',
+    'cmd.model': 'Escolher o modelo: /model [busca]',
+    'cmd.thinking': 'Ciclar o nível de thinking',
+    'cmd.new': 'Nova sessão nesta pasta',
+    'cmd.name': 'Renomear a sessão: /name <nome>',
+    'cmd.name_usage': 'uso: /name <nome>',
+    'cmd.session': 'Info da sessão (tokens e custo)',
+    'cmd.copy': 'Copiar a última resposta',
+    'cmd.export': 'Exportar a sessão em HTML',
+    'cmd.abort': 'Interromper o turno atual',
+    'cmd.unqueue': 'Devolver a fila ao composer (sem interromper o turno)',
+    'cmd.fork': 'Criar fork (nova sessão) de mensagem anterior — a original é preservada',
+    'cmd.login': 'Escolher provedor e logar: /login [provider]',
+
+    'pkgs.per_month': '/mês',
+
+    'mcp.env_ph': 'valor ou nome da variável',
+
+    'about.pi_bin': 'binário do pi',
+
+    'health.chip': '{n} aviso(s) de extensão · clique para abrir o Diagnóstico',
+    'health.dismiss': 'dispensar: não conta mais no ⚠ (dá para restaurar depois)',
+
+    'git.hint_reload': 'relê o git status',
+    'git.hint_discard': 'git restore dos selecionados (só rastreados)',
+    'git.hint_stash': 'git stash push --include-untracked (tudo, com untracked)',
+    'git.hint_stash_pop': 'git stash pop (conflito aparece na linha de status)',
+    'git.hint_pull': 'git pull --ff-only (falha aparece na linha de status)',
+    'git.hint_amend': 'git commit --amend -m (troca a mensagem do último commit)',
+    'git.hint_lease': 'só liga `git push --force-with-lease`; pede confirmação com o comando literal',
+    'git.hint_commit': 'estágia os selecionados e commita (Ctrl+Enter)',
+    'git.discard_prompt': 'descartar {n} arquivo(s)?\n\n{files}\n\ngit restore -- (só rastreados; não tem desfazer)',
+
+    'sys.reload_hint': 'Reinicia o pi (recarrega extensões)',
+
+    'composer.attach_hint': 'Anexar arquivo como contexto (insere o caminho no texto)',
+    'composer.thinking_btn': 'thinking',
+
+    'panel.subs_hint': 'Subagents desta sessão',
+    'panel.plans_hint': 'planos de plans/ no projeto da sessão',
+    'panel.git_hint': 'Status do repositório git · commit, descartar, stash, push',
+
+    'debug.missions': 'Missões',
+    'debug.health': 'Avisos de extensão',
+    'debug.diag': 'Diagnóstico',
+
+    'update.available_have': 'Atualização disponível: {tag} (você tem v{ver})',
+    'update.latest_yes': 'atualização disponível',
+    'update.latest_no': 'já está atualizado',
+
+    'copy.done': 'resposta copiada ({n} caracteres)',
+    'model.set_fail': 'set_model: falhou',
+    'compact.done': 'contexto compactado',
+    'compact.fail': 'falha ao compactar',
+    'export.done': 'exportado: {x}',
+    'turn.interrupted': 'turno interrompido',
+    'health.more': '… +{n} aviso(s)',
+    'update.install': 'Baixar e instalar'
   },
   en: {
     'status.disconnected': 'disconnected',
@@ -423,6 +576,159 @@ export const STRINGS = {
     'term.new': 'New terminal',
     'term.restart': 'restart',
     'term.close': 'Close terminal (Ctrl+`)',
+    'term.no_session': 'open a session so the terminal inherits its folder',
+    'term.open_fail': 'could not open the terminal: {e}',
+    'term.resize': 'drag to resize',
+
+    'theme.invalid_json': 'Invalid JSON: {e}',
+
+    'empty.plus_new': '+ New',
+    'empty.new_hint': 'New session without a project (starts at ~)',
+    'empty.new_folder': '+ Folder',
+    'empty.folder_hint': 'Open a folder as a project',
+
+    'proj.new_here': 'New session in this project ({path})',
+    'proj.show': 'Show project',
+    'proj.hide': 'Hide project (deletes nothing)',
+
+    'sess.badge_runs': 'subagent runs of this session',
+    'sess.trash': 'Move this session to trash',
+    'sess.renamed': 'session renamed',
+
+    'search.total': '{n} session(s)',
+    'search.capped': 'read cap reached',
+    'search.showing': 'showing {n}',
+    'search.matches': '{id} · {n} match(es)',
+
+    'missions.empty': 'no missions on disk',
+    'missions.count': '{n} mission(s)',
+    'missions.detail_fallback': 'mission',
+    'missions.detail_head': '{status} · {runs} run(s)',
+
+    'subs.history': 'history · {n} run(s)',
+
+    'plan.open_in_app': 'click opens in the default app',
+
+    'diag.count': '{n} line(s) (max {max})',
+
+    'tools.omitted': '… {n} line(s) omitted',
+
+    'custom.label': 'extension',
+
+    'ctx.window': 'Context window',
+    'ctx.percent_used': '{pct}% used',
+    'ctx.tokens_of': '{used} / {win} tokens',
+    'ctx.alert_full': 'Context nearly full ({pct}%) — run /compact now',
+    'ctx.alert_warn': 'Context at {pct}% — consider /compact',
+    'ctx.auto': 'Auto-compaction',
+    'ctx.on': 'on',
+    'ctx.off': 'off',
+    'ctx.compact_at': 'Compact at',
+    'ctx.limit_default': 'pi default',
+    'ctx.limit_pct': '{p}% · reserve {r}',
+    'ctx.limit_custom': 'custom · reserve {r}',
+    'ctx.limit_title': 'Context point at which pi compacts. Applies when restarting pi (↻).',
+    'ctx.limit_saved_default': 'compaction: pi default (applies on restart ↻)',
+    'ctx.limit_saved': 'compaction at {pct}% of context · reserve {r} (applies on restart ↻)',
+    'ctx.limit_fail': 'failed to save the compaction limit: {e}',
+    'ctx.cache': 'Prompt cache (session)',
+    'ctx.cache_value': 'read {r} · write {w}',
+    'ctx.io': 'Input / Output',
+    'ctx.live': 'Turn in progress',
+    'ctx.live_value': '+{b} tokens · +{c} in context',
+    'ctx.cost': 'Cost',
+    'ctx.messages': 'Messages',
+    'ctx.sess_one': '{n} session',
+    'ctx.sess_many': '{n} sessions',
+    'ctx.agg': '{tok} · {cost} · {n} msg',
+    'ctx.unavailable': 'context unavailable',
+    'ctx.chip_title': '{used} / {win} tokens ({pct}%)',
+    'ctx.chip_live': ' · +{b} live',
+    'ctx.chip_more': ' — click for details',
+    'ctx.compact_now': 'Compact now (summarize history)',
+    'ctx.open': 'Context',
+
+    'queue.restored': 'queue returned: {n} message(s)',
+    'queue.unqueue_hint': 'Unqueue: return queued messages to the composer without interrupting the turn',
+
+    'fork.row_msg': 'fork from this message (new session, original preserved)',
+    'fork.row_ans': 'fork here (new session from the previous prompt)',
+    'fork.title_suffix': 'fork creates a new session — the original is preserved',
+    'fork.empty': 'nothing to fork',
+    'fork.no_match': 'could not locate the message to fork — pick from the list',
+    'fork.created': 'fork created in a new session — the original was preserved',
+    'fork.restored': ' (text restored to the composer)',
+    'fork.failed': 'fork failed',
+    'fork.cancelled': 'fork cancelled',
+
+    'stats.note': 'session: {msgs} messages · {tokens} tokens{cost}',
+
+    'think.set': 'thinking: {level}',
+    'think.none': 'model has no thinking levels',
+
+    'model.none': 'no models',
+    'model.not_found': 'no model found for "{q}"',
+
+    'palette.empty': 'no results',
+
+    'cmd.compact': 'Compact history (optional: instructions)',
+    'cmd.model': 'Pick the model: /model [query]',
+    'cmd.thinking': 'Cycle the thinking level',
+    'cmd.new': 'New session in this folder',
+    'cmd.name': 'Rename the session: /name <name>',
+    'cmd.name_usage': 'usage: /name <name>',
+    'cmd.session': 'Session info (tokens and cost)',
+    'cmd.copy': 'Copy the last answer',
+    'cmd.export': 'Export the session as HTML',
+    'cmd.abort': 'Interrupt the current turn',
+    'cmd.unqueue': 'Return the queue to the composer (without interrupting the turn)',
+    'cmd.fork': 'Create a fork (new session) from an earlier message — the original is preserved',
+    'cmd.login': 'Pick a provider and log in: /login [provider]',
+
+    'pkgs.per_month': '/mo',
+
+    'mcp.env_ph': 'value or variable name',
+
+    'about.pi_bin': 'pi binary',
+
+    'health.chip': '{n} extension warning(s) · click to open Diagnostics',
+    'health.dismiss': 'dismiss: no longer counts toward ⚠ (restorable later)',
+
+    'git.hint_reload': 're-read git status',
+    'git.hint_discard': 'git restore of selected (tracked only)',
+    'git.hint_stash': 'git stash push --include-untracked (all, with untracked)',
+    'git.hint_stash_pop': 'git stash pop (conflict shows on the status line)',
+    'git.hint_pull': 'git pull --ff-only (failure shows on the status line)',
+    'git.hint_amend': 'git commit --amend -m (change the last commit message)',
+    'git.hint_lease': 'only enables `git push --force-with-lease`; asks for confirmation with the literal command',
+    'git.hint_commit': 'stage selected and commit (Ctrl+Enter)',
+    'git.discard_prompt': 'discard {n} file(s)?\n\n{files}\n\ngit restore -- (tracked only; no undo)',
+
+    'sys.reload_hint': 'Restart pi (reload extensions)',
+
+    'composer.attach_hint': 'Attach a file as context (inserts its path into the text)',
+    'composer.thinking_btn': 'thinking',
+
+    'panel.subs_hint': 'Subagents of this session',
+    'panel.plans_hint': 'plans/ specs in the session project',
+    'panel.git_hint': 'Git repo status · commit, discard, stash, push',
+
+    'debug.missions': 'Missions',
+    'debug.health': 'Extension warnings',
+    'debug.diag': 'Diagnostics',
+
+    'update.available_have': 'Update available: {tag} (you have v{ver})',
+    'update.latest_yes': 'update available',
+    'update.latest_no': 'already up to date',
+
+    'copy.done': 'answer copied ({n} characters)',
+    'model.set_fail': 'set_model: failed',
+    'compact.done': 'context compacted',
+    'compact.fail': 'compaction failed',
+    'export.done': 'exported: {x}',
+    'turn.interrupted': 'turn interrupted',
+    'health.more': '… +{n} warning(s)',
+    'update.install': 'Download and install'
   },
 };
 
@@ -465,6 +771,7 @@ export function applyStaticI18n() {
   set('debugbtn', t('settings.debug'));
   set('aboutbtn', t('settings.about'));
   set('checkupdate', t('settings.check_update'));
+  set('updatebtn', t('update.install'));
   set('updExt', t('settings.update_ext'));
   set('updPi', t('settings.update_pi'));
   try {

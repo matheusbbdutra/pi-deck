@@ -1,6 +1,8 @@
 import './styles.css';
 
 import { inv, listen, PREFIX } from './rpc.js';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { $, el, stripAnsi, clear, setEmpty, scrollBottom, updateScrollBtn, uiSettings, caps, cards, pendingPromptRows } from './shared.js';
 import { setMarkdown, mdRow, copyText, extActivity } from './markdown.js';
 import { card, thinkBlock, applyToolResult, setDiffRenderer } from './tool-cards.js';
@@ -109,7 +111,7 @@ function setEmptyState(on, kind) {
       sub.append(t('empty.no_session_a'));
       sub.append(el('br'));
       sub.append(t('empty.no_session_b'));
-      const b = el('b', null, '+ Nova');
+      const b = el('b', null, t('empty.plus_new'));
       sub.append(b, ' / ');
       sub.append(el('b', null, '+'));
       sub.append(t('empty.no_session_c'));
@@ -402,7 +404,7 @@ async function loadSessions() {
     clear(side);
 
     const visible = groups.filter(g => !hiddenProjects.has(g.path) || uiSettings.showHidden);
-    if (!visible.length) { setEmpty(side, 'nenhuma sessão em ~/.pi/agent/sessions'); return; }
+    if (!visible.length) { setEmpty(side, t('sidebar.no_sessions')); return; }
 
     // Títulos ficam em cache: a aba aberta mostra o mesmo nome da lista.
     let titlesChanged = false;
@@ -429,18 +431,18 @@ async function loadSessions() {
       const head = el('div', 'group-head');
       head.appendChild(el('span', 'caret', isCollapsed ? '▸' : '▾'));
       const isHome = homeDir && g.path === homeDir;
-      const name = el('span', 'proj-name', isHome ? 'sem projeto' : (g.name || g.path));
+      const name = el('span', 'proj-name', isHome ? t('sidebar.no_project') : (g.name || g.path));
       name.title = g.path;
       head.appendChild(name);
       if (g.sessions.length) head.appendChild(el('span', 'proj-count', String(g.sessions.length)));
 
       const plus = el('button', 'tiny plus', '+');
-      plus.title = 'Nova sessão neste projeto (' + g.path + ')';
+      plus.title = t('proj.new_here', { path: g.path });
       plus.onclick = (e) => { e.stopPropagation(); newSessionIn(g.path); };
       head.appendChild(plus);
 
       const hide = el('button', 'tiny', hiddenProjects.has(g.path) ? '↺' : '⊘');
-      hide.title = hiddenProjects.has(g.path) ? 'Mostrar projeto' : 'Ocultar projeto (não apaga nada)';
+      hide.title = hiddenProjects.has(g.path) ? t('proj.show') : t('proj.hide');
       hide.onclick = (e) => {
         e.stopPropagation();
         if (hiddenProjects.has(g.path)) hiddenProjects.delete(g.path);
@@ -465,17 +467,17 @@ async function loadSessions() {
         row.dataset.key = s.id;
         row.title = (s.title || s.id) + '\n' + s.id;
 
-        const title = el('div', 'sess-title', s.title || 'sem título');
+        const title = el('div', 'sess-title', s.title || t('sidebar.untitled'));
         const meta = el('div', 'sess-meta');
         meta.appendChild(el('span', null, prettyId(s.id)));
         if (s.children > 0) {
           const b = el('span', 'badge', String(s.children));
-          b.title = 'subagent runs desta sessão';
+          b.title = t('sess.badge_runs');
           meta.appendChild(b);
         }
 
         const del = el('button', 'tiny', '×');
-        del.title = 'Mover esta sessão para a lixeira';
+        del.title = t('sess.trash');
         del.onclick = (e) => { e.stopPropagation(); askDeleteSession(s); };
         meta.appendChild(del);
 
@@ -486,7 +488,7 @@ async function loadSessions() {
       // Pasta com histórico longo: limita a leitura e libera sob demanda.
       const hiddenCount = g.sessions.length - shown.length;
       if (hiddenCount > 0) {
-        const more = el('button', 'sess-more', 'carregar mais (' + hiddenCount + ')');
+        const more = el('button', 'sess-more', t('sidebar.load_more', { n: hiddenCount }));
         more.onclick = (e) => { e.stopPropagation(); expandedProjects.add(g.path); saveTreeState(); loadSessions(); };
         list.appendChild(more);
       }
@@ -544,22 +546,22 @@ async function runSearch(append) {
       const row = el('div', 'sess');
       row.dataset.key = r.id;
       row.title = (r.title || r.id) + '\n' + r.file;
-      row.appendChild(el('div', 'sess-title', r.title || 'sem título'));
+      row.appendChild(el('div', 'sess-title', r.title || t('sidebar.untitled')));
       if (r.snippet) row.appendChild(el('div', 'snippet', r.snippet));
       const meta = el('div', 'sess-meta');
-      meta.appendChild(el('span', null, prettyId(r.id) + ' · ' + r.matches + ' trecho(s)'));
+      meta.appendChild(el('span', null, t('search.matches', { id: prettyId(r.id), n: r.matches })));
       if (r.tools && r.tools.length) meta.appendChild(el('span', 'badge', r.tools.slice(0, 3).join(',')));
-      if (r.hasError) meta.appendChild(el('span', 'badge', 'erro'));
+      if (r.hasError) meta.appendChild(el('span', 'badge', t('sidebar.error_badge')));
       row.append(meta);
       row.onclick = () => openSession(r.cwd, r);
       $('searchresults').appendChild(row);
     }
     searchOffset += items.length;
     const total = (res && res.total) || 0;
-    setSearchMeta(total + ' sessão(ões)' + (res && res.truncated ? ' · teto de leitura atingido' : '') + (searchOffset < total ? ' · mostrando ' + searchOffset : ''));
+    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
     // Paginação: o botão some quando tudo já está na tela.
     if (searchOffset < total) {
-      const more = el('button', 'sess-more', 'mostrar mais (' + (total - searchOffset) + ')');
+      const more = el('button', 'sess-more', t('sidebar.show_more', { n: total - searchOffset }));
       more.onclick = (e) => { e.stopPropagation(); runSearch(true); };
       $('searchresults').appendChild(more);
     }
@@ -952,7 +954,7 @@ function renderMessages(data, ctx, keepNote) {
 
     if (m.role === 'custom') {
       const node = el('div', 'row ext');
-      node.appendChild(el('b', null, 'extensão'));
+      node.appendChild(el('b', null, t('custom.label')));
       node.appendChild(el('span', null, ' ' + (m.customType || m.type || 'custom')));
       target.appendChild(node);
       continue;
@@ -971,7 +973,7 @@ function renderMessages(data, ctx, keepNote) {
       if (Number.isFinite(m.timestamp)) urow.dataset.at = String(m.timestamp);
       userTexts[userIdx] = text.trim();
       // Só no log principal: no transcript de child o fork valeria para outra sessão.
-      if (!ctx) urow.appendChild(forkRowBtn({ uindex: userIdx, utext: text.trim() }, 'fork a partir desta mensagem (nova sessão, original preservada)'));
+      if (!ctx) urow.appendChild(forkRowBtn({ uindex: userIdx, utext: text.trim() }, t('fork.row_msg')));
       imgs.forEach(b => urow.appendChild(thumb('data:' + (b.mimeType || 'image/png') + ';base64,' + b.data)));
       target.appendChild(urow);
       continue;
@@ -986,9 +988,15 @@ function renderMessages(data, ctx, keepNote) {
         } else if (b.type === 'text' && b.text && b.text.trim()) {
           const row = mdRow();
           setMarkdown(row.body, b.text.trim());
+          const speed = msgSpeed(m);
+          if (speed) {
+            const meta = el('div', 'msg-meta', speed);
+            if (m.model) meta.title = String(m.model);
+            row.root.appendChild(meta);
+          }
           // Fork daqui: ancora na user message que provocou esta resposta.
           // Só no log principal (ver comentário na user row).
-          if (!ctx) row.root.appendChild(forkRowBtn({ uindex: userIdx, utext: userTexts[userIdx] || '' }, 'fork daqui (nova sessão a partir do prompt anterior)'));
+          if (!ctx) row.root.appendChild(forkRowBtn({ uindex: userIdx, utext: userTexts[userIdx] || '' }, t('fork.row_ans')));
           target.appendChild(row.root);
         } else if (b.type === 'toolCall') {
           card(b.id, b.name, b.arguments, { target, store }, m.timestamp);
@@ -1063,9 +1071,9 @@ function renderDiag() {
   const host = $('diaglist');
   if (!host) return;
   const head = $('diaghead');
-  if (head) head.textContent = diagBuf.length + ' linha(s) (máx ' + DIAG_MAX + ')';
+  if (head) head.textContent = t('diag.count', { n: diagBuf.length, max: DIAG_MAX });
   clear(host);
-  if (!diagBuf.length) { host.appendChild(el('div', 'empty', 'sem linhas RPC ainda')); return; }
+  if (!diagBuf.length) { host.appendChild(el('div', 'empty', t('panel.no_lines'))); return; }
   for (const e of diagBuf.slice().reverse()) {
     const row = el('div', 'file-row' + (String(e.res || '').startsWith('falhou') ? ' err' : ''));
     row.title = (e.cmd || '') + (e.res ? '\n' + e.res : '');
@@ -1364,7 +1372,7 @@ async function openWorktreeDiff(path) {
   }
   if (seq !== viewSeq) return; // trocou de sessão durante a leitura
   clear(body);
-  if (!patch.trim()) { body.appendChild(el('div', 'empty', 'sem alterações no worktree')); return; }
+  if (!patch.trim()) { body.appendChild(el('div', 'empty', t('tools.no_changes'))); return; }
   renderPatch(body, patch, null, path);
 }
 
@@ -1423,7 +1431,7 @@ function renderPatch(node, patch, file, langPath) {
   clear(node);
   node.diffArgs = { patch, file, langPath };
   if (!text.trim()) {
-    node.appendChild(el('div', 'diff-line diff-meta', 'sem diff (arquivo novo ou conteúdo não registrado)'));
+    node.appendChild(el('div', 'diff-line diff-meta', t('tools.no_diff')));
     return;
   }
   const lang = langFor(langPath || file);
@@ -1516,7 +1524,7 @@ function renderPatch(node, patch, file, langPath) {
     }
   }
   if (lines.length > MAX) {
-    node.appendChild(el('div', 'diff-line diff-meta', '… ' + (lines.length - MAX) + ' linha(s) omitida(s)'));
+    node.appendChild(el('div', 'diff-line diff-meta', t('tools.omitted', { n: lines.length - MAX })));
   }
 }
 
@@ -1541,13 +1549,13 @@ function renderMissions() {
   clear(host);
   if (missionsError) { host.appendChild(el('div', 'empty', missionsError)); return; }
   if (!missionsList.length) {
-    host.appendChild(el('div', 'empty', 'nenhuma missão no disco')); return;
+    host.appendChild(el('div', 'empty', t('missions.empty'))); return;
   }
-  host.appendChild(el('div', 'history-head', missionsList.length + ' missão(ões)'));
+  host.appendChild(el('div', 'history-head', t('missions.count', { n: missionsList.length })) );
   for (const m of missionsList) {
     const row = el('div', 'file-row');
     row.title = String(m.cwd || m.project || '');
-    row.appendChild(el('span', 'file-name', String(m.title || m.id || 'sem título')));
+    row.appendChild(el('span', 'file-name', String(m.title || m.id || t('sidebar.untitled'))));
     row.appendChild(el('span', 'file-dir', String(m.status || '')));
     row.appendChild(el('span', 'file-count', String(m.runs || 0)));
     row.onclick = () => openMission(m);
@@ -1558,10 +1566,10 @@ function renderMissions() {
 /** Detalhe da missão no mesmo painel dos diffs (só mostra, não executa). */
 function openMission(m) {
   const host = $('detaillog');
-  $('detailtitle').textContent = String(m.title || m.id || 'missão');
+  $('detailtitle').textContent = String(m.title || m.id || t('missions.detail_fallback'));
   clear(host);
   host.appendChild(el('div', 'history-head',
-    String(m.status || '?') + ' · ' + String(m.runs || 0) + ' run(s)'));
+    t('missions.detail_head', { status: m.status || '?', runs: m.runs || 0 })));
   for (const [k, v] of [['projeto', m.cwd || m.project], ['id', m.id], ['atualizada', m.updatedAt]]) {
     host.appendChild(el('div', 'row note', k + ': ' + (v || '—')));
   }
@@ -1642,29 +1650,28 @@ async function gitAct(label, call, opts) {
 async function gitDiscardSelected() {
   const paths = [...gitSel];
   if (!paths.length) return;
-  const ok = confirm('descartar ' + paths.length + ' arquivo(s)?\n\n' + paths.join('\n')
-    + '\n\ngit restore -- (só rastreados; não tem desfazer)');
+  const ok = confirm(t('git.discard_prompt', { n: paths.length, files: paths.join('\n') }));
   if (!ok) return;
-  await gitAct('descartar', (cwd) => inv('git_discard', { cwd, paths }), { clearSel: true });
+  await gitAct(t('git.discard'), (cwd) => inv('git_discard', { cwd, paths }), { clearSel: true });
 }
 
 function gitStash() {
-  return gitAct('stash', (cwd) => inv('git_stash', { cwd }), { clearSel: true });
+  return gitAct(t('git.stash'), (cwd) => inv('git_stash', { cwd }), { clearSel: true });
 }
 
 function gitStashPop() {
-  return gitAct('stash pop', (cwd) => inv('git_stash_pop', { cwd }), { clearSel: true });
+  return gitAct(t('git.stash_pop'), (cwd) => inv('git_stash_pop', { cwd }), { clearSel: true });
 }
 
 /** `pull` só fast-forward: sem upstream ou non-fast-forward o stderr do git vai
     para a linha de status; não há confirmação porque nada local é descartado. */
 function gitPull() {
-  return gitAct('pull', (cwd) => inv('git_pull', { cwd }));
+  return gitAct(t('git.pull'), (cwd) => inv('git_pull', { cwd }));
 }
 
 /** Confirma o comando literal do force (só existe atrás do toggle). */
 function gitConfirmLease(cwd) {
-  return confirm('git push --force-with-lease\n\nno repositório ' + cwd + '?');
+  return confirm(t('git.push_force_confirm', { cwd }));
 }
 
 /** `commit` (ou `commit & push`): estágia os marcados e commita; com push, uma
@@ -1763,16 +1770,16 @@ function renderGit() {
     bar.appendChild(b);
     return b;
   };
-  btn('atualizar', 'relê o git status', () => loadGit());
-  const discardBtn = btn('descartar', 'git restore dos selecionados (só rastreados)', gitDiscardSelected);
+  btn(t('git.reload'), t('git.hint_reload'), () => loadGit());
+  const discardBtn = btn(t('git.discard'), t('git.hint_discard'), gitDiscardSelected);
   discardBtn.disabled = !gitSel.size;
-  btn('stash', 'git stash push --include-untracked (tudo, com untracked)', gitStash);
-  btn('stash pop', 'git stash pop (conflito aparece na linha de status)', gitStashPop);
-  btn('pull', 'git pull --ff-only (falha aparece na linha de status)', gitPull);
+  btn(t('git.stash'), t('git.hint_stash'), gitStash);
+  btn(t('git.stash_pop'), t('git.hint_stash_pop'), gitStashPop);
+  btn(t('git.pull'), t('git.hint_pull'), gitPull);
   host.appendChild(bar);
 
   if (!list.length) {
-    host.appendChild(el('div', 'empty', 'repositório limpo — nenhuma mudança no worktree'));
+    host.appendChild(el('div', 'empty', t('panel.git_clean')));
   }
   for (const c of list) {
     const path = String(c.path || '');
@@ -1825,10 +1832,10 @@ function renderGit() {
   comp.appendChild(ta);
 
   const cbar = el('div', 'git-bar');
-  cbar.appendChild(gitCheck('amend', gitAmend, 'git commit --amend -m (troca a mensagem do último commit)',
+  cbar.appendChild(gitCheck('amend', gitAmend, t('git.hint_amend'),
     (on) => { gitAmend = on; }));
   cbar.appendChild(gitCheck('--force-with-lease', gitLease,
-    'só liga `git push --force-with-lease`; pede confirmação com o comando literal',
+    t('git.hint_lease'),
     (on) => { gitLease = on; }));
   const mkBtn = (label, title, onclick, cls) => {
     const b = el('button', cls || 'ghost', label);
@@ -1837,7 +1844,7 @@ function renderGit() {
     cbar.appendChild(b);
     return b;
   };
-  mkBtn('commit', 'estágia os selecionados e commita (Ctrl+Enter)', () => gitCommit(false), 'primary');
+  mkBtn('commit', t('git.hint_commit'), () => gitCommit(false), 'primary');
   mkBtn('commit & push', 'commit e depois push; se o push falhar o commit fica', () => gitCommit(true));
   mkBtn('push', 'git push (--force-with-lease se o toggle estiver ligado)', gitPush);
   comp.appendChild(cbar);
@@ -1879,13 +1886,13 @@ function renderPlans() {
   if (!host) return;
   clear(host);
   if (plansError) { host.appendChild(el('div', 'empty', plansError)); return; }
-  if (!plansData) { host.appendChild(el('div', 'empty', 'nenhum plano')); return; }
+  if (!plansData) { host.appendChild(el('div', 'empty', t('panel.no_plans'))); return; }
   if (plansData.repo !== true) {
-    host.appendChild(el('div', 'empty', 'nenhum plano encontrado (plans/, docs/spec, PLAN.md…)'));
+    host.appendChild(el('div', 'empty', t('panel.no_plans_found')));
     return;
   }
   const list = Array.isArray(plansData.plans) ? plansData.plans : [];
-  if (!list.length) { host.appendChild(el('div', 'empty', 'nenhum plano')); return; }
+  if (!list.length) { host.appendChild(el('div', 'empty', t('panel.no_plans'))); return; }
   const cwd = current && current.cwd;
   for (const p of list) {
     const file = String(p.file || '');
@@ -1896,14 +1903,14 @@ function renderPlans() {
     row.appendChild(el('span', 'file-name', String(p.name || file)));
     if (p.source) row.appendChild(el('span', 'plan-source', String(p.source)));
     if (p.current) row.appendChild(el('span', 'plan-current', String(p.current)));
-    row.appendChild(el('span', 'file-count', total ? done + '/' + total : 'sem checklist'));
+    row.appendChild(el('span', 'file-count', total ? done + '/' + total : t('panel.no_checklist')));
     item.appendChild(row);
     const bar = el('div', 'plan-bar');
     const fill = el('div', 'plan-bar-fill');
     fill.style.width = (total ? Math.min(100, Math.round((done / total) * 100)) : 0) + '%';
     bar.appendChild(fill);
     item.appendChild(bar);
-    item.title = file + ' · clique abre no app padrão';
+    item.title = file + ' · ' + t('plan.open_in_app');
     item.onclick = async () => {
       try { await inv('open_file', { cwd, path: file }); }
       catch (e) { plansError = 'abrir: ' + String(e); renderPlans(); }
@@ -2083,7 +2090,7 @@ function paintSubs(now = Date.now()) {
   for (const run of live) host.appendChild(liveRunBox(run, now));
   if (live.length) ensureSubsClock();
   if (disk.length) {
-    host.appendChild(el('div', 'history-head', 'histórico · ' + disk.length + ' run(s)'));
+    host.appendChild(el('div', 'history-head', t('subs.history', { n: disk.length })));
     for (const c of disk) host.appendChild(diskRunBox(c));
   }
 }
@@ -2149,17 +2156,62 @@ function markRow(entry, state) {
   else if (state === 'cancelled') queueTag(entry.row, '· cancelada', 'cancelled');
 }
 
+/** `clear_queue` em voo (`{key, at}`): enquanto ele não responde, sumir da lista não é
+ *  entrega. O pi emite `queue_update` com as listas vazias **antes** de devolver a
+ *  resposta (`agent-session.js: clearQueue` → `_emitQueueUpdate` → return), então sem
+ *  esta janela o desfazer fila marcava tudo como "· entregue" (a row já não estava
+ *  mais 'queued' quando a resposta chegava e o cancelamento não alcançava). */
+const QUEUE_CLEAR_WINDOW_MS = 10000;
+let queueClearing = null;
+
+function queueClearInFlight(key) {
+  if (!queueClearing || queueClearing.key !== key) return false;
+  if (Date.now() - queueClearing.at > QUEUE_CLEAR_WINDOW_MS) { queueClearing = null; return false; }
+  return true;
+}
+
+/** Manda `clear_queue` marcando a janela: quem some da fila agora foi cancelado, não
+ *  entregue. Usado pelo desfazer fila e pelo abort (que também esvazia a fila). */
+function clearQueueNow(tabKey) {
+  queueClearing = { key: tabKey, at: Date.now() };
+  sendCommand({ type: 'clear_queue' });
+}
+
 function syncQueue(key, texts) {
   const t = tabs.find(x => x.key === key);
   if (!t) return;
   const left = texts.slice();
   t.queue = texts;
+  const clearing = queueClearInFlight(key);
   for (const entry of t.localRows || []) {
     if (entry.state !== 'queued') continue;
     const i = left.findIndex(s => s === entry.text || s.includes(entry.text) || entry.text.includes(s));
     if (i >= 0) left.splice(i, 1);
-    else markRow(entry, 'delivered');
+    else markRow(entry, clearing ? 'cancelled' : 'delivered');
   }
+  // Fila repovoada com o clear ainda em voo: a janela perdeu o efeito.
+  if (clearing && texts.length) queueClearing = null;
+}
+
+/** Tira do transcript as rows em fila que o `clear_queue` devolveu (desfazer fila /
+ *  abort). Nada disso foi entregue — o texto voltou para o composer — e
+ *  `restoreLocalRows` reinsere toda row local cujo texto o disco não tem, ou seja,
+ *  elas ficariam para sempre na tela. 'cancelled' entra junto: o `queue_update` do
+ *  pi chega antes da resposta, então as rows já foram marcadas canceladas quando o
+ *  `clear_queue` responde. */
+export function dropQueuedRows(t) {
+  if (!t || !Array.isArray(t.localRows)) return 0;
+  const keep = [];
+  for (const entry of t.localRows) {
+    if (entry && (entry.state === 'queued' || entry.state === 'cancelled')) {
+      if (entry.row && typeof entry.row.remove === 'function') entry.row.remove();
+      continue;
+    }
+    keep.push(entry);
+  }
+  const dropped = t.localRows.length - keep.length;
+  t.localRows = keep;
+  return dropped;
 }
 
 /* Posição cronológica dentro do log. Insere antes da 1ª row mais nova que `at`;
@@ -2327,11 +2379,11 @@ export function healthChipState(map) {
   for (const [, kind] of entries) if (!kinds.includes(kind)) kinds.push(kind);
   if (!entries.length) return { count: 0, kinds, title: '' };
   const lines = entries.slice(0, HEALTH_TITLE_MAX).map(([id, kind]) => kind + ': ' + id);
-  if (entries.length > HEALTH_TITLE_MAX) lines.push('… +' + (entries.length - HEALTH_TITLE_MAX) + ' aviso(s)');
+  if (entries.length > HEALTH_TITLE_MAX) lines.push(t('health.more', { n: entries.length - HEALTH_TITLE_MAX }));
   return {
     count: entries.length,
     kinds,
-    title: [entries.length + ' aviso(s) de extensão · clique para abrir o Diagnóstico', ...lines].join('\n'),
+    title: [t('health.chip', { n: entries.length }), ...lines].join('\n'),
   };
 }
 
@@ -2360,7 +2412,7 @@ export function renderHealthList(map = current ? healthBySession.get(current.key
   const entries = map instanceof Map ? Array.from(map.entries()) : [];
   clear(host);
   if (!entries.length) {
-    host.appendChild(el('div', 'empty', 'nenhum aviso nesta sessão'));
+    host.appendChild(el('div', 'empty', t('panel.no_warnings')));
     return;
   }
   for (const [id, kind] of entries) {
@@ -2368,7 +2420,7 @@ export function renderHealthList(map = current ? healthBySession.get(current.key
     row.appendChild(el('span', 'file-name', id));
     row.appendChild(el('span', 'file-count', kind));
     const off = el('button', 'tiny', '✕');
-    off.title = 'dispensar: não conta mais no ⚠ (dá para restaurar depois)';
+    off.title = t('health.dismiss');
     off.onclick = () => muteHealth(id);
     row.appendChild(off);
     host.appendChild(row);
@@ -2566,6 +2618,17 @@ listen('rpc-line', (ev) => {
         // Sem processo vivo o RPC falharia e a nota de erro cairia no transcript.
         if (et && et.connected) sendCommand({ type: 'get_session_stats' });
         scheduleStatsRefresh();
+        // Velocidade da mensagem que acabou de persistir: o stream em voo (mdRow
+        // sem meta) vira a row final sem recarregar o transcript.
+        try {
+          const speed = msgSpeed(rec.message);
+          if (speed && stream && stream.node && stream.node.parentElement
+              && !stream.node.parentElement.querySelector('.msg-meta')) {
+            const meta = el('div', 'msg-meta', speed);
+            if (rec.message.model) meta.title = String(rec.message.model);
+            stream.node.parentElement.appendChild(meta);
+          }
+        } catch { /* speed é decorativo */ }
       }
       break;
 
@@ -2777,7 +2840,7 @@ function renderModelList(filter) {
       host.appendChild(row);
     }
   }
-  if (!host.childElementCount) host.appendChild(el('div', 'model-empty', 'nenhum modelo'));
+  if (!host.childElementCount) host.appendChild(el('div', 'model-empty', t('model.none')));
 }
 
 function fillLevels(levels) {
@@ -2844,6 +2907,20 @@ export function liveTurnTokens(message) {
   return Math.max(used, estimateMessageTokens(message));
 }
 
+/** Velocidade de geração de uma mensagem do assistente: `output/durationMs`.
+ *  Devolve `52 tok/s · 142 out · 2,7s` ou `null` sem `usage`/`durationMs` válidos. */
+export function msgSpeed(m) {
+  const u = m && m.usage;
+  const out = u ? Number(u.output) : NaN;
+  const ms = m ? Number(m.durationMs) : NaN;
+  if (!Number.isFinite(out) || !Number.isFinite(ms) || ms <= 0 || out <= 0) return null;
+  const secs = ms / 1000;
+  const tps = out / secs;
+  const tpsTxt = tps >= 100 ? String(Math.round(tps)) : tps.toFixed(1).replace('.', ',');
+  const secsTxt = (secs >= 10 ? secs.toFixed(0) : secs.toFixed(1)).replace('.', ',');
+  return tpsTxt + ' tok/s · ' + out + ' out · ' + secsTxt + 's';
+}
+
 /** Stats do RPC + parcial em voo, sem tocar no cache por aba. */
 export function liveStatsView(data, live) {
   const stats = data || {};
@@ -2896,12 +2973,12 @@ function renderCtxPop() {
     // Sem stats da sessão atual: ainda mostra o agregado das abas que já têm.
     clear(host);
     renderSessAggregate(host, null);
-    if (!host.childElementCount) setEmpty(host, 'sem estatísticas ainda');
+    if (!host.childElementCount) setEmpty(host, t('panel.no_stats'));
     return;
   }
 
   const cu = st.contextUsage || {};
-  const t = st.tokens || {};
+  const tok = st.tokens || {};
   clear(host);
 
   const row = (k, v, dim) => {
@@ -2911,30 +2988,30 @@ function renderCtxPop() {
     host.appendChild(r);
   };
 
-  row('Context window',
-    (cu.percent != null ? Math.round(cu.percent) + '% usado · ' : '') +
-    fmtTokens(cu.tokens) + ' / ' + fmtTokens(cu.contextWindow) + ' tokens');
+  row(t('ctx.window'),
+    (cu.percent != null ? t('ctx.percent_used', { pct: Math.round(cu.percent) }) + ' · ' : '') +
+    t('ctx.tokens_of', { used: fmtTokens(cu.tokens), win: fmtTokens(cu.contextWindow) }));
   // Alerta por % do contexto: mesmo limiar do chip (70/90).
   if (cu.percent != null && Math.round(cu.percent) >= 70) {
     const pct = Math.round(cu.percent);
     host.appendChild(el('div', 'ctx-alert ' + (pct >= 90 ? 'danger' : 'warn'),
       pct >= 90
-        ? 'Contexto quase cheio (' + pct + '%) — rode /compact agora'
-        : 'Contexto em ' + pct + '% — considere /compact'));
+        ? t('ctx.alert_full', { pct })
+        : t('ctx.alert_warn', { pct })));
   }
-  row('Auto-compactação', sessionState && sessionState.autoCompactionEnabled ? 'ligada' : 'desligada', true);
+  row(t('ctx.auto'), sessionState && sessionState.autoCompactionEnabled ? t('ctx.on') : t('ctx.off'), true);
   const limRow = el('div', 'ctx-row');
-  limRow.appendChild(el('div', 'k', 'Compactar em'));
+  limRow.appendChild(el('div', 'k', t('ctx.compact_at')));
   limRow.appendChild(renderLimitSelect(cu.contextWindow || ctxWindow()));
   host.appendChild(limRow);
-  row('Prompt cache (sessão)',
-    'read ' + fmtTokens(t.cacheRead) + ' · write ' + fmtTokens(t.cacheWrite), true);
-  row('Input / Output', fmtTokens(t.input) + ' / ' + fmtTokens(t.output));
+  row(t('ctx.cache'),
+    t('ctx.cache_value', { r: fmtTokens(tok.cacheRead), w: fmtTokens(tok.cacheWrite) }), true);
+  row(t('ctx.io'), fmtTokens(tok.input) + ' / ' + fmtTokens(tok.output));
   if (view.billed || view.ctxDelta) {
-    row('Turno em andamento', '+' + fmtTokens(view.billed) + ' tokens · +' + fmtTokens(view.ctxDelta) + ' no contexto');
+    row(t('ctx.live'), t('ctx.live_value', { b: fmtTokens(view.billed), c: fmtTokens(view.ctxDelta) }));
   }
-  row('Custo', fmtCost(st.cost));
-  row('Mensagens', String(st.totalMessages || 0), true);
+  row(t('ctx.cost'), fmtCost(st.cost));
+  row(t('ctx.messages'), String(st.totalMessages || 0), true);
   renderSessAggregate(host, current && current.key);
 }
 
@@ -2949,8 +3026,8 @@ function renderSessAggregate(host, curKey) {
     totMsg += Number(x.stats.totalMessages) || 0;
   }
   const tot = el('div', 'ctx-total');
-  tot.appendChild(el('span', null, rows.length + (rows.length === 1 ? ' sessão' : ' sessões')));
-  tot.appendChild(el('span', null, fmtTokens(totTok) + ' · ' + fmtCost(totCost) + ' · ' + totMsg + ' msg'));
+  tot.appendChild(el('span', null, rows.length === 1 ? t('ctx.sess_one', { n: rows.length }) : t('ctx.sess_many', { n: rows.length })));
+  tot.appendChild(el('span', null, t('ctx.agg', { tok: fmtTokens(totTok), cost: fmtCost(totCost), n: totMsg })));
   host.appendChild(tot);
   const ordered = rows.slice().sort((a, b) => {
     const pa = (a.stats.contextUsage && a.stats.contextUsage.percent) || 0;
@@ -2977,16 +3054,16 @@ function renderCtxChip() {
   const cu = view.stats.contextUsage;
   if (!cu || cu.percent == null) {
     btn.textContent = '—';
-    btn.title = 'contexto indisponível';
+    btn.title = t('ctx.unavailable');
     btn.classList.remove('warn', 'danger');
     if (!$('ctxpop').classList.contains('hidden')) renderCtxPop();
     return;
   }
   const pct = Math.round(cu.percent);
   btn.textContent = pct + '% · ' + fmtTokens(cu.tokens) + '/' + fmtTokens(cu.contextWindow);
-  btn.title = (cu.tokens == null ? '?' : cu.tokens) + ' / ' + cu.contextWindow + ' tokens (' + pct + '%)'
-    + (view.billed ? ' · +' + view.billed + ' em voo' : '')
-    + ' — clique para detalhes';
+  btn.title = t('ctx.chip_title', { used: cu.tokens == null ? '?' : cu.tokens, win: cu.contextWindow, pct })
+    + (view.billed ? t('ctx.chip_live', { b: view.billed }) : '')
+    + t('ctx.chip_more');
   btn.classList.toggle('warn', pct >= 70 && pct < 90);
   btn.classList.toggle('danger', pct >= 90);
   if (!$('ctxpop').classList.contains('hidden')) renderCtxPop();
@@ -3035,7 +3112,7 @@ function forkRowBtn(anchor, title) {
 /** Fork a partir de uma linha: resolve o entryId via get_fork_messages (ordem + texto).
     Cai para o picker (openForkPop) quando não há match exato — nunca chuta entryId. */
 function forkFromAnchor(anchor) {
-  if (!current) return note('sem sessão aberta');
+  if (!current) return note(t('composer.no_session'));
   if (!current.connected) return note('sessão somente leitura — conecte para forkar');
   pendingForkAnchor = { uindex: anchor.uindex, utext: anchor.utext, key: current.key };
   sendCommand({ type: 'get_fork_messages' });
@@ -3060,12 +3137,12 @@ function resolveForkAnchor(msgs) {
 
 /** Envia `clear_queue` sem `abort`: a fila volta ao composer, o turno continua. */
 async function desfazerFila() {
-  if (!current) return note('sem sessão aberta');
+  if (!current) return note(t('composer.no_session'));
   if (!current.connected && !(await ensureRpc())) return;
   const t = tabs.find(x => current && x.key === current.key);
   const empty = !(t && t.queue && t.queue.length) && !localRows(t).some(e => e.state === 'queued');
   if (empty) return note('nada na fila para desfazer');
-  sendCommand({ type: 'clear_queue' });
+  clearQueueNow(current.key);
 }
 
 function closeForkPop() { $('forkpop').classList.add('hidden'); }
@@ -3075,13 +3152,13 @@ function openForkPop(messages) {
   const host = $('forklist');
   clear(host);
   const items = (messages || []).filter(m => m && m.entryId);
-  if (!items.length) { host.appendChild(el('div', 'model-empty', 'nada para fork')); $('forkpop').classList.remove('hidden'); return; }
+  if (!items.length) { host.appendChild(el('div', 'model-empty', t('fork.empty'))); $('forkpop').classList.remove('hidden'); return; }
   for (const m of items) {
     const row = el('div', 'model-row');
-    const label = String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 120) || '(sem texto)';
+    const label = String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 120) || t('composer.notext');
     row.appendChild(el('span', 'model-name', label));
     row.appendChild(el('span', 'model-ctx', String(m.entryId).slice(0, 8)));
-    row.title = (m.text || '') + '\nfork cria uma sessão nova — a original é preservada';
+    row.title = (m.text || '') + '\n' + t('fork.title_suffix');
     row.onclick = () => { closeForkPop(); sendCommand({ type: 'fork', entryId: m.entryId }); };
     host.appendChild(row);
   }
@@ -3104,22 +3181,22 @@ function renderLimitSelect(win) {
   const sel = document.createElement('select');
   sel.id = 'ctxlimit';
   sel.className = 'ctx-sel';
-  sel.title = 'Em que ponto do contexto o pi compacta. Vale ao reiniciar o pi (↻).';
+  sel.title = t('ctx.limit_title');
   const opt = (v, label) => {
     const o = document.createElement('option');
     o.value = v;
     o.textContent = label;
     sel.appendChild(o);
   };
-  opt('', 'padrão do pi');
+  opt('', t('ctx.limit_default'));
   let matched = '';
   for (const p of LIMIT_PRESETS) {
     const reserve = win ? Math.round(win * (100 - p) / 100) : 0;
-    opt(String(p), p + '%' + (reserve ? ' · reserva ' + fmtTokens(reserve) : ''));
+    opt(String(p), reserve ? t('ctx.limit_pct', { p, r: fmtTokens(reserve) }) : p + '%');
     if (compactReserve != null && reserve &&
         Math.abs(compactReserve - reserve) <= Math.max(1, win * 0.004)) matched = String(p);
   }
-  if (compactReserve != null && !matched) opt('custom', 'custom · reserva ' + fmtTokens(compactReserve));
+  if (compactReserve != null && !matched) opt('custom', t('ctx.limit_custom', { r: fmtTokens(compactReserve) }));
   sel.value = compactReserve == null ? '' : (matched || 'custom');
   sel.disabled = !(sessionState && sessionState.model && current) || !(win > 0);
   sel.onchange = () => saveLimit(sel, win);
@@ -3142,10 +3219,10 @@ async function saveLimit(sel, win) {
     const st = JSON.parse(String(raw));
     compactReserve = typeof st.reserveTokens === 'number' ? st.reserveTokens : null;
     note(pct == null
-      ? 'compactação: padrão do pi (aplica ao reiniciar ↻)'
-      : 'compactação em ' + pct + '% do contexto · reserva ' + fmtTokens(compactReserve) + ' (aplica ao reiniciar ↻)');
+      ? t('ctx.limit_saved_default')
+      : t('ctx.limit_saved', { pct, r: fmtTokens(compactReserve) }));
   } catch (e) {
-    note('falha ao salvar o limite de compactação: ' + e);
+    note(t('ctx.limit_fail', { e }));
   }
   renderCtxPop();
 }
@@ -3189,12 +3266,15 @@ function handleResponse(rec) {
       // Devolve o que estava enfileirado: a última volta para o composer.
       const back = [].concat(data.steering || [], data.followUp || []);
       const ct = tabs.find(x => current && x.key === current.key);
+      queueClearing = null; // resposta chegou: o próximo queue_update volta a valer como entrega
       if (ct) {
         ct.queue = [];
-        for (const entry of ct.localRows || []) if (entry.state === 'queued') markRow(entry, 'cancelled');
+        // Nada disso foi entregue: a fila voltou para o composer, então as rows em
+        // fila saem do transcript em vez de ficarem presas como "entregue".
+        dropQueuedRows(ct);
       }
       if (!back.length) break;
-      note('fila devolvida: ' + back.length + ' mensagem(ns)');
+      note(t('queue.restored', { n: back.length }));
       const last = back.at(-1);
       $('input').value = last;
       autosizeInput();
@@ -3211,17 +3291,17 @@ function handleResponse(rec) {
         const akey = pendingForkAnchor.key;
         if (!current || current.key !== akey) { pendingForkAnchor = null; break; }
         if (resolveForkAnchor(msgs)) break;
-        note('não localizei a mensagem para fork — escolha na lista');
+        note(t('fork.no_match'));
       }
-      if (!msgs.length) { note('nada para fork: sem mensagens do usuário nesta sessão'); break; }
+      if (!msgs.length) { note(t('composer.nothing_fork')); break; }
       openForkPop(msgs);
       break;
     }
     case 'fork': {
       // Criação, não desfazer: o pi troca o RPC para o arquivo novo (rebindSession)
       // e a original continua no disco. Posição "before": o texto volta ao composer.
-      if (rec.success === false) { note('fork falhou'); break; }
-      if (data.cancelled) { note('fork cancelado'); break; }
+      if (rec.success === false) { note(t('fork.failed')); break; }
+      if (data.cancelled) { note(t('fork.cancelled')); break; }
       const ft = data.text || '';
       if (ft) {
         $('input').value = ft;
@@ -3229,7 +3309,7 @@ function handleResponse(rec) {
         const ft0 = tabs.find(x => current && x.key === current.key);
         if (ft0) ft0.draft = ft;
       }
-      note('fork criado em nova sessão — a original foi preservada' + (ft ? ' (texto restaurado no composer)' : ''));
+      note(t('fork.created') + (ft ? t('fork.restored') : ''));
       pendingForkReload = true;
       sendCommand({ type: 'get_state' });
       break;
@@ -3287,20 +3367,20 @@ function handleResponse(rec) {
         statsNoteRequested = false;
         const c = typeof data.cost === 'number' ? ' · US$ ' + data.cost.toFixed(2) : '';
         $('log').appendChild(el('div', 'row note',
-          'sessão: ' + data.totalMessages + ' mensagens · ' + data.tokens.total + ' tokens' + c));
+          t('stats.note', { msgs: data.totalMessages, tokens: data.tokens.total, cost: c })));
       }
       break;
     case 'get_last_assistant_text': {
       const text = (data && (data.text || data.content)) || '';
-      if (!text) { $('log').appendChild(el('div', 'row note', 'nenhuma resposta para copiar')); break; }
+      if (!text) { $('log').appendChild(el('div', 'row note', t('composer.no_answer'))); break; }
       inv('copy_text', { text })
-        .then(() => $('log').appendChild(el('div', 'row note', 'resposta copiada (' + text.length + ' caracteres)')))
-        .catch((e) => $('log').appendChild(el('div', 'row note', 'falha ao copiar: ' + e)));
+        .then(() => $('log').appendChild(el('div', 'row note', t('copy.done', { n: text.length }))))
+        .catch((e) => $('log').appendChild(el('div', 'row note', t('composer.copy_fail', { e }))));
       break;
     }
     case 'cycle_thinking_level':
       $('log').appendChild(el('div', 'row note',
-        data && data.level ? 'thinking: ' + data.level : 'modelo sem níveis de thinking'));
+        data && data.level ? t('think.set', { level: data.level }) : t('think.none')));
       if (data && data.level) {
         sessionState = { ...(sessionState || {}), thinkingLevel: data.level };
         if (current) { const tb = tabs.find(x => x.key === current.key); if (tb) tb.thinkingLevel = data.level; }
@@ -3314,20 +3394,20 @@ function handleResponse(rec) {
         sendCommand({ type: 'get_available_thinking_levels' });
         sendCommand({ type: 'get_state' });
       } else {
-        $('log').appendChild(el('div', 'row note', 'set_model: falhou'));
+        $('log').appendChild(el('div', 'row note', t('model.set_fail')));
       }
       break;
     case 'compact':
-      endCompact(rec.success ? 'contexto compactado' : 'falha ao compactar');
+      endCompact(rec.success ? t('compact.done') : t('compact.fail'));
       break;
     case 'export_html':
-      $('log').appendChild(el('div', 'row note', 'exportado: ' + ((data && (data.path || data.outputPath)) || 'ok')));
+      $('log').appendChild(el('div', 'row note', t('export.done', { x: ((data && (data.path || data.outputPath)) || 'ok') })));
       break;
     case 'set_session_name':
-      $('log').appendChild(el('div', 'row note', 'sessão renomeada'));
+      $('log').appendChild(el('div', 'row note', t('sess.renamed')));
       break;
     case 'abort':
-      $('log').appendChild(el('div', 'row note', 'turno interrompido'));
+      $('log').appendChild(el('div', 'row note', t('turn.interrupted')));
       setStatus('pronto');
       setTurn(current && current.key, false);
       setState('ready');
@@ -3355,7 +3435,7 @@ function handleResponse(rec) {
 }
 
 function sendCommand(payload) {
-  if (!current) { note('sem sessão aberta'); return; }
+  if (!current) { note(t('composer.no_session')); return; }
   payload.id = 'ui-' + (++seq);
   // Diagnóstico: marca o envio para medir a latência na resposta.
   try { diagPending.set(payload.id, Date.now()); diagPush('\u2192 ' + (payload.type || '?'), '—', payload.id); } catch { /* ignora */ }
@@ -3799,41 +3879,49 @@ function reattachStream() {
  *  Esvazia a fila antes: o `abort` do pi continua mensagens enfileiradas
  *  (docs/rpc-commands.md §clear_queue), então sem isto o turno seguinte começaria sozinho. */
 function abortTurn() {
-  sendCommand({ type: 'clear_queue' });
+  if (current && current.key) clearQueueNow(current.key);
+  else sendCommand({ type: 'clear_queue' });
   sendCommand({ type: 'abort' });
 }
 
 const APP_COMMANDS = [
-  { name: 'compact', description: 'Compactar o histórico (opcional: instruções)', app: true, needsRpc: true,
+  { name: 'compact', description: t('cmd.compact'), app: true, needsRpc: true,
     run: (a) => sendCommand(a ? { type: 'compact', customInstructions: a } : { type: 'compact' }) },
-  { name: 'model', description: 'Escolher o modelo: /model [busca]', app: true,
+  { name: 'model', description: t('cmd.model'), app: true,
     run: (a) => runModelArg(a) },
-  { name: 'thinking', description: 'Ciclar o nível de thinking', app: true, needsRpc: true,
+  { name: 'thinking', description: t('cmd.thinking'), app: true, needsRpc: true,
     run: () => sendCommand({ type: 'cycle_thinking_level' }) },
-  { name: 'new', description: 'Nova sessão nesta pasta', app: true,
+  { name: 'new', description: t('cmd.new'), app: true,
     run: () => newSessionIn(current ? current.cwd : (homeDir || '/')) },
-  { name: 'name', description: 'Renomear a sessão: /name <nome>', app: true, needsRpc: true,
+  { name: 'name', description: t('cmd.name'), app: true, needsRpc: true,
     run: (a) => {
-      if (!a) return note('uso: /name <nome>');
+      if (!a) return note(t('cmd.name_usage'));
       const t = tabs.find(x => current && x.key === current.key);
       if (t) { t.label = a; renderTabs(); }
       sendCommand({ type: 'set_session_name', name: a });
     } },
-  { name: 'session', description: 'Info da sessão (tokens e custo)', app: true, needsRpc: true,
+  { name: 'session', description: t('cmd.session'), app: true, needsRpc: true,
     run: () => { statsNoteRequested = true; sendCommand({ type: 'get_session_stats' }); } },
-  { name: 'copy', description: 'Copiar a última resposta', app: true, needsRpc: true,
+  { name: 'copy', description: t('cmd.copy'), app: true, needsRpc: true,
     run: () => sendCommand({ type: 'get_last_assistant_text' }) },
-  { name: 'export', description: 'Exportar a sessão em HTML', app: true, needsRpc: true,
+  { name: 'export', description: t('cmd.export'), app: true, needsRpc: true,
     run: () => sendCommand({ type: 'export_html' }) },
-  { name: 'abort', description: 'Interromper o turno atual', app: true, needsRpc: true,
+  { name: 'abort', description: t('cmd.abort'), app: true, needsRpc: true,
     run: abortTurn },
-  { name: 'desfazer', description: 'Devolver a fila ao composer (sem interromper o turno)', app: true, needsRpc: true,
+  { name: 'desfazer', description: t('cmd.unqueue'), app: true, needsRpc: true,
     run: () => desfazerFila() },
-  { name: 'fork', description: 'Criar fork (nova sessão) de mensagem anterior — a original é preservada', app: true, needsRpc: true,
+  { name: 'fork', description: t('cmd.fork'), app: true, needsRpc: true,
     run: () => sendCommand({ type: 'get_fork_messages' }) },
-  { name: 'login', description: 'Escolher provedor e logar: /login [provider]', app: true,
+  { name: 'login', description: t('cmd.login'), app: true,
     run: (a) => (a ? startLogin(a) : openProvPicker()) },
 ];
+
+/* Nomes dos comandos do app → chave do catálogo. `description` acima congela no
+   idioma do boot; a troca de idioma (langsel) re-resolve via este mapa. */
+const CMD_KEYS = { compact: 'cmd.compact', model: 'cmd.model', thinking: 'cmd.thinking',
+  new: 'cmd.new', name: 'cmd.name', session: 'cmd.session', copy: 'cmd.copy',
+  export: 'cmd.export', abort: 'cmd.abort', desfazer: 'cmd.unqueue', fork: 'cmd.fork',
+  login: 'cmd.login' };
 
 function note(text) {
   $('log').appendChild(el('div', 'row note', String(text)));
@@ -3934,7 +4022,7 @@ function runModelArg(args) {
   if ($('modelpop').classList.contains('hidden')) $('modeltoggle').click();
   $('modelsearch').value = q;
   renderModelList(q);
-  if (!hits.length) note('modelo não encontrado para "' + q + '"');
+  if (!hits.length) note(t('model.not_found', { q }));
   else note(hits.length + ' modelos para "' + q + '" — escolha no seletor');
 }
 
@@ -4128,7 +4216,7 @@ function renderCmdk() {
   const host = $('palettelist');
   clear(host);
   if (!cmdk.items.length) {
-    host.appendChild(el('div', 'model-empty', 'nenhum resultado'));
+    host.appendChild(el('div', 'model-empty', t('palette.empty')));
   } else {
     let k = 0;
     for (const g of groups) {
@@ -4213,9 +4301,7 @@ function checkCommands(list) {
 }
 
 function noSubsMessage() {
-  return caps.subagents === false
-    ? 'pi-subagents não carregou nesta sessão (possível conflito de tool). Veja ⚙ → Pacotes e MCP.'
-    : 'nenhum subagent';
+  return caps.subagents === false ? t('panel.no_subs_ext') : t('panel.no_subs');
 }
 
 function applySubsWarning() {
@@ -4358,7 +4444,7 @@ function renderCatalog() {
     row.appendChild(el('span', 'cat-name', p.name));
     row.appendChild(el('span', 'cat-meta', 'v' + p.version));
     row.appendChild(el('span', 'cat-desc', p.description));
-    row.appendChild(el('span', 'cat-meta', p.downloads ? p.downloads + '/mês' : ''));
+    row.appendChild(el('span', 'cat-meta', p.downloads ? p.downloads + t('pkgs.per_month') : ''));
     if (installedSet.has(p.name)) {
       row.appendChild(el('span', 'cat-installed', 'instalado'));
       const rm = el('button', 'ghost', 'Remover');
@@ -4449,7 +4535,7 @@ function addEnvRow() {
   const key = el('input', 'mfield env-k');
   key.placeholder = 'KEY';
   const val = el('input', 'mfield env-v');
-  val.placeholder = 'valor ou nome da variável';
+  val.placeholder = t('mcp.env_ph');
   const del = el('button', 'ghost', '×');
   del.onclick = () => row.remove();
   row.append(key, val, del);
@@ -4605,7 +4691,7 @@ async function openAbout() {
   let info = null;
   try { info = JSON.parse(await inv('app_info')); } catch { info = null; }
   if (info) {
-    add('binário do pi', info.piBin || '?');
+    add(t('about.pi_bin'), info.piBin || '?');
     add('config do pi', info.agent || '?');
     add('sessões', info.sessions || '?');
     add('sistema', info.os || '?');
@@ -4721,59 +4807,34 @@ async function startLogin(provider) {
   }, 3000);
 }
 
-/* =============== atualização (release latest do GitHub) =============== */
-const UPDATE_KEY = 'update-check';
+/* =============== atualização (Tauri updater assinado) =============== */
 let appVersion = null;
-
-function cmpVersions(a, b) {
-  const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-  const pb = String(b).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d) return d;
-  }
-  return 0;
-}
-
-function applyUpdateInfo(data) {
-  const bar = $('updatebar');
-  if (!bar || !data || !data.tag || !appVersion) return;
-  if (cmpVersions(data.tag, appVersion) > 0) {
-    $('updatetext').textContent = 'Atualização disponível: ' + data.tag +
-      ' (você tem v' + appVersion + ')';
-    bar.dataset.url = data.url || '';
-    bar.classList.remove('hidden');
-  } else {
-    bar.classList.add('hidden');
-  }
-}
+let pendingUpdate = null;
 
 async function checkUpdate(manual) {
   if (!appVersion) return;
   if (manual) setStatus('verificando…');
   try {
-    const cached = JSON.parse(localStorage.getItem(UPDATE_KEY) || 'null');
-    if (!manual && cached && Date.now() - cached.at < 12 * 3600 * 1000) {
-      applyUpdateInfo(cached.data);
+    const update = await check();
+    if (!update) {
+      pendingUpdate = null;
+      $('updatebar').classList.add('hidden');
+      if (manual) setStatus(t('update.latest_no'));
       return;
     }
-
-    const res = await fetch('https://api.github.com/repos/matheusbbdutra/sightdeck/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' },
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rel = await res.json();
-    const data = { tag: rel.tag_name, url: rel.html_url };
-    try { localStorage.setItem(UPDATE_KEY, JSON.stringify({ at: Date.now(), data })); } catch { /* sem storage */ }
-    applyUpdateInfo(data);
-    if (manual) {
-      setStatus(cmpVersions(data.tag, appVersion) > 0 ? 'atualização disponível' : 'já está atualizado');
-    }
+    pendingUpdate = update;
+    $('updatetext').textContent = t('update.available_have', { tag: update.version, ver: appVersion });
+    const btn = $('updatebtn');
+    btn.textContent = t('update.install');
+    btn.disabled = false;
+    $('updatebar').classList.remove('hidden');
+    if (manual) setStatus(t('update.latest_yes'));
   } catch (e) {
-    if (manual) setStatus('falha ao verificar');
+    if (manual) setStatus(t('update.check_fail'));
     debugNote('update check falhou: ' + e);
   }
 }
+
 
 /* =============== wiring =============== */
 $('send').onclick = send;
@@ -4947,7 +5008,7 @@ $('unque').onclick = () => desfazerFila();
 $('forkbtn').onclick = async (e) => {
   e.stopPropagation();
   closeModelPop();
-  if (!current) return note('sem sessão aberta');
+  if (!current) return note(t('composer.no_session'));
   if (!current.connected && !(await ensureRpc())) return;
   sendCommand({ type: 'get_fork_messages' });
 };
@@ -5009,7 +5070,7 @@ function endCompact(text) {
 }
 
 $('compactnow').onclick = () => {
-  if (!current) return note('sem sessão aberta');
+  if (!current) return note(t('composer.no_session'));
   if (compactBusy) return;
   compactBusy = true;
   $('compactnow').classList.add('on');
@@ -5085,6 +5146,7 @@ $('setNotifySound').onchange = (e) => { uiSettings.notifySound = e.target.checke
 $('langsel').onchange = (e) => {
   setLang(e.target.value);
   applyStaticI18n();
+  for (const c of APP_COMMANDS) if (CMD_KEYS[c.name]) c.description = t(CMD_KEYS[c.name]);
   loadSessions();
   // Overlay de estado vazio só é repintada se já estava visível: com sessão
   // aberta ela é opaca e cobriria o transcript.
@@ -5118,7 +5180,7 @@ $('themeexport').onclick = () => {
 $('themereset').onclick = () => {
   resetTheme();
   $('themejson').value = '';
-  $('themenote').textContent = 'tema padrão restaurado (localStorage[\'theme\'] removido)';
+  $('themenote').textContent = t('theme.restored');
 };
 $('debugbtn').onclick = () => openDebug();
 // Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
@@ -5128,9 +5190,26 @@ $('aboutback').onclick = () => $('about').classList.add('hidden');
 $('debugback').onclick = () => $('debug').classList.add('hidden');
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };
 $('checkupdate').onclick = () => checkUpdate(true);
-$('updatebtn').onclick = () => {
-  const u = $('updatebar').dataset.url;
-  if (u) inv('open_external', { url: u }).catch(() => {});
+$('updatebtn').onclick = async () => {
+  const u = pendingUpdate;
+  if (!u) return;
+  const btn = $('updatebtn');
+  btn.disabled = true;
+  let downloaded = 0, total = 0;
+  try {
+    await u.downloadAndInstall((ev) => {
+      if (ev.event === 'Started') total = (ev.data && ev.data.contentLength) || 0;
+      else if (ev.event === 'Progress') {
+        downloaded += (ev.data && ev.data.chunkLength) || 0;
+        $('updatetext').textContent = t('update.install') + (total ? ' ' + Math.round((downloaded / total) * 100) + '%' : ' …');
+      } else if (ev.event === 'Finished') $('updatetext').textContent = t('update.install') + ' …';
+    });
+    await relaunch();
+  } catch (e) {
+    debugNote('update install falhou: ' + e);
+    btn.disabled = false;
+    $('updatetext').textContent = t('update.available_have', { tag: u.version, ver: appVersion });
+  }
 };
 $('updatedismiss').onclick = () => $('updatebar').classList.add('hidden');
 $('authchip').onclick = () => {

@@ -12,9 +12,13 @@ fn main() {
     #[cfg(feature = "e2e")]
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_wdio::init())
-        .plugin(tauri_plugin_wdio_webdriver::init());
+        .plugin(tauri_plugin_wdio_webdriver::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(not(feature = "e2e"))]
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
         .manage(rpc::RpcState::default())

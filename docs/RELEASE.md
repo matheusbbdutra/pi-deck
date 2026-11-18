@@ -3,16 +3,33 @@
 Procedimento de release e de gestão das chaves de assinatura. Escrito para ser
 seguido sem depender de memória.
 
-## 1. Fluxo atual (sem assinatura)
+## 1. Fluxo atual (com auto-update assinado)
 
-O app **não** tem auto-update. O que existe é uma checagem manual: `⚙ → Verificar
-atualização` consulta `https://api.github.com/repos/matheusbbdutra/sightdeck/releases/latest`
-e compara a tag com a versão embutida (`checkUpdate` em `ui/src/main.js`). Se houver
-versão maior, mostra "atualização disponível" com link para a release.
+O app **tem** auto-update pelo `tauri-plugin-updater`: `⚙ → Verificar atualização`
+chama `check()` (endpoint `plugins.updater.endpoints` = `latest.json` da última
+release) e, se houver versão maior, a barra mostra **Baixar e instalar** →
+`downloadAndInstall()` valida a assinatura minisign com `plugins.updater.pubkey` →
+`relaunch()`. `checkUpdate` em `ui/src/main.js`; nada é enviado ao GitHub além do
+GET do `latest.json`.
 
-Consequência prática: **não há chave de atualização para perder hoje**. Também não há
-assinatura de artefato — `.deb` não é verificado pelo dpkg, e o `msi`/`exe` do Windows
-sai sem Authenticode.
+Cobertura por formato:
+
+| Instalado via | Auto-update? | Chave no `latest.json` |
+|---|---|---|
+| `.deb` | sim (pede senha: `pkexec` → zenity/kdialog → `sudo dpkg -i`) | `linux-x86_64-deb` |
+| `.rpm` | sim (mesmo caminho, `rpm -U`) | `linux-x86_64-rpm` |
+| `.AppImage` | sim (substitui o próprio arquivo) | `linux-x86_64-appimage` |
+| `.msi` | sim | `windows-x86_64-msi` |
+| `.exe` (NSIS) | sim | `windows-x86_64-nsis` |
+
+O plugin resolve a chave por `{os}-{arch}-{installer}` e **só depois** cai para
+`{os}-{arch}` (`updater.rs` `get_urls`); o `installer` vem do próprio binário
+(`__TAURI_BUNDLE_TYPE` em `tauri-utils/src/platform.rs`). Por isso o manifesto não
+pode ter a chave sem sufixo: um `.deb` acabaria recebendo o AppImage.
+
+Não há assinatura de **instalador**: `.deb` não é verificado pelo dpkg e o `msi`/`exe`
+do Windows sai sem Authenticode. Quem assina é o **artefato de update**
+(`*.tar.gz`/`*.zip` + `.sig`), verificado pelo app na instalação.
 
 ### Passo a passo
 
@@ -37,8 +54,9 @@ sai sem Authenticode.
    git tag -a v<x.y.z> -m "sightdeck <x.y.z>" && git push origin main v<x.y.z>
    ```
 5. O workflow `release` (`.github/workflows/release.yml`) roda `test`, `test-windows`,
-   `clippy` e `build` (deb/rpm/AppImage, msi/nsis), cria uma release **draft** e anexa
-   os assets. Acompanhar:
+   `clippy` e `build` (deb/rpm/AppImage, msi/nsis) **assinando** os artefatos de update
+   com os secrets `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)`, gera `latest.json`
+   (`scripts/latest-json.mjs`), cria uma release **draft** e anexa os assets. Acompanhar:
    ```bash
    gh run list --limit 3
    gh release view v<x.y.z>          # deve estar draft com os assets
@@ -124,5 +142,10 @@ Nenhum dos três está implementado hoje; o README declara os binários como **u
 ```bash
 dpkg -i sightdeck_<x.y.z>_amd64.deb && sightdeck --version   # versão instalada
 sha256sum sightdeck_<x.y.z>_amd64.deb                        # conferir com o asset publicado
-gh release view v<x.y.z> --json assets --jq '.assets[].name' # 5 assets esperados (sem updater; com updater, +2)
+gh release view v<x.y.z> --json assets --jq '.assets[].name' # 5 instaladores + 5 .sig + latest.json
+gh release download v<x.y.z> --pattern latest.json -O - | jq .   # version + platforms
 ```
+
+> O `version` do `latest.json` recebe a **tag** (`v0.2.5`). O updater compara com
+> `Version::from_str(str.trim_start_matches('v'))`
+> (`tauri-plugin-updater/src/updater.rs:1889`), ou seja, o prefixo `v` é aceito.

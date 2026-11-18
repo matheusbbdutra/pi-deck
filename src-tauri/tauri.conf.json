@@ -23,8 +23,19 @@
       "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://registry.npmjs.org https://api.github.com; object-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/matheusbbdutra/sightdeck/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxOEY2QkY0QkFEOTg2QTEKUldTaGh0bTY5R3VQd1RUUk5zeDZ1ZlRxeFZjU2xScVY2WDVHb0MrQkxGZkpCQnMvclFVYStrcXgK"
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["deb"],
     "icon": [
       "icons/32x32.png",

@@ -1,5 +1,13 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, updater)
+
+- Updater Tauri em implementação: Rust pronto (`Cargo.toml`, `main.rs` 2 builders, `tauri.conf.json` pubkey/endpoints/`createUpdaterArtifacts`, capabilities `updater`+`process`). Falta: deps JS, UI via plugin, CI (`latest.json` + tar/zip). NÃO commitar/taggear sem pedido.
+
+## Onde estamos (2026-11-18, i18n)
+
+- Lote 1 i18n aplicado (25 trocas em `main.js` para `t()`, pt idêntico); lote 2 em curso: ~120 chaves novas pt+en em `i18n.js` + swaps (sidebar, ctx popover, APP_COMMANDS, git hints). NÃO commitar sem pedido. `vitest` 100/100, `build:ui` ok.
+
 ## Onde estamos (2026-11-18)
 
 - **v0.2.4 publicada** (5 assets: deb/AppImage/rpm/exe/msi). Release: run `44215135306`

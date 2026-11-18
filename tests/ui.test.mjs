@@ -32,6 +32,7 @@ let healthChipState;
 let renderHealthList;
 let muteHealth;
 let unmuteHealth;
+let dropQueuedRows;
 let normalizeRowText;
 let answerAlreadyRendered;
 let isLiveRun;
@@ -42,6 +43,7 @@ let renderedAnswerNode;
 let estimateMessageTokens;
 let liveTurnTokens;
 let liveStatsView;
+let msgSpeed;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -67,9 +69,9 @@ beforeAll(async () => {
   });
   ({ insertRowByAt, shouldRestoreLocalRow, appendCapped, logHasText, setZoom, shouldProbeTurn, shouldAbortOnEsc,
      clampWidth, clampColumns, syncStopButton, classifyHealthLine, noteHealth,
-     healthChipState, renderHealthList, muteHealth, unmuteHealth, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
+     healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
-     liveStatsView } = await import('../ui/src/main.js'));
+     liveStatsView, msgSpeed } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -580,6 +582,28 @@ describe('shouldRestoreLocalRow', () => {
   });
 });
 
+describe('dropQueuedRows (desfazer fila / abort)', () => {
+  it('tira as rows em fila do DOM e da lista, preservando o resto', () => {
+    let removed = 0;
+    const node = () => ({ remove: () => { removed++; } });
+    const t = { localRows: [
+      { text: 'a', state: 'queued', row: node() },
+      { text: 'b', state: 'delivered', row: node() },
+      { text: 'c', state: 'queued', row: node() },
+      { text: 'd', state: 'pending', row: node() },
+      { text: 'e', state: 'cancelled', row: node() },
+    ] };
+    expect(dropQueuedRows(t)).toBe(3);
+    expect(removed).toBe(3);
+    expect(t.localRows.map(e => e.text)).toEqual(['b', 'd']);
+  });
+
+  it('sem localRows não explode', () => {
+    expect(dropQueuedRows(null)).toBe(0);
+    expect(dropQueuedRows({})).toBe(0);
+  });
+});
+
 describe('tema por JSON', () => {
   afterEach(() => {
     resetTheme();
@@ -851,6 +875,16 @@ describe('tokens do turno em voo (mensagem ainda não persistida)', () => {
     const toolChars = tool.name.length + JSON.stringify(tool.arguments).length;
     expect(estimateMessageTokens({ content: [tool] })).toBe(Math.ceil(toolChars / 4));
     expect(estimateMessageTokens(null)).toBe(0);
+  });
+
+  it('velocidade por mensagem: output/durationMs, null sem dados válidos', () => {
+    expect(msgSpeed({ usage: { output: 142 }, durationMs: 2688 })).toBe('52,8 tok/s · 142 out · 2,7s');
+    expect(msgSpeed({ usage: { output: 308 }, durationMs: 3009 })).toBe('102 tok/s · 308 out · 3,0s');
+    expect(msgSpeed({ usage: { output: 160 }, durationMs: 2225 })).toBe('71,9 tok/s · 160 out · 2,2s');
+    expect(msgSpeed({})).toBe(null);
+    expect(msgSpeed({ usage: { output: 10 } })).toBe(null);
+    expect(msgSpeed({ usage: { output: 10 }, durationMs: 0 })).toBe(null);
+    expect(msgSpeed({ usage: { output: 0 }, durationMs: 1000 })).toBe(null);
   });
 
   it('usa usage do parcial quando o provider já informou; senão estima', () => {

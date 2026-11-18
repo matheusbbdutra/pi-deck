@@ -531,6 +531,8 @@
   .md-code-box { position:relative; }
   .md-code-box .code-copy { top:4px; right:6px; }
   .md-body > :first-child { margin-top:0; }
+  .msg-meta { color:var(--mute); font-family:var(--mono); font-size:9.5px;
+               text-align:right; padding:2px 4px 0; }
 
   /* header controls */
   .dim { color:var(--mute); }
