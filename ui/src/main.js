@@ -13,7 +13,7 @@ import { validateTheme, applyTheme, resetTheme, themeFromDom, bootTheme } from '
 import { t, getLang, getLangPref, setLang, applyStaticI18n } from './i18n.js';
 import { mountSettings } from './settings/mount.js';
 import { mountTheme } from './settings/theme/mount.js';
-import { mountModelPop, mountCtxPop, mountForkPop, mountAttachments, mountPalette, mountCmdkList } from './composer/mount.js';
+import { mountModelPop, mountCtxPop, mountForkPop, mountAttachments, mountPalette, mountCmdkList, mountTyping } from './composer/mount.js';
 import { mountTabBar } from './tabs/mount.js';
 import { mountSessionTree } from './sidebar/mount.js';
 import { mountSearchResults } from './sidebar/search-mount.js';
@@ -101,6 +101,10 @@ let attachmentsPane = null;
 let palettePane = null;
 /* Palette global Ctrl+K em Svelte (Fase 5c): instância montada ou null (fallback). */
 let cmdkPane = null;
+/* Indicador de digitação em Svelte (Fase 5d): instância + estado canônico. */
+let typingPane = null;
+let typingOn = false;
+let typingLabel = '';
 /* Grupos crus do cmdk (labels + rows) para o snapshot do componente. */
 let cmdkGroups = [];
 /* Barra de abas em Svelte (Fase 3): instância montada ou null (fallback legado). */
@@ -155,10 +159,18 @@ function setEmptyState(on, kind) {
 }
 
 /** Mostra/esconde o indicador de atividade do turno. */
-function setTyping(on, label) {
+/** Snapshot puro do indicador de digitação (Svelte + testes). */
+export function typingSnapshot(on, label) {
+  return { visible: !!on, label: label || t('status.thinking') };
+}
+
+export function setTyping(on, label) {
   const box = $('typing');
   if (!box) return;
   box.classList.toggle('hidden', !on);
+  typingOn = !!on;
+  if (label) typingLabel = label;
+  if (typingPane) { typingPane.sync(); return; }
   if (label) $('typinglabel').textContent = label;
 }
 
@@ -5828,6 +5840,18 @@ try {
 } catch (e) {
   debugNote('cmdk svelte: mount falhou — usando o render legado (' + e + ')');
 }
+
+/* Indicador de digitação em Svelte (Fase 5d): estado canônico no main. */
+const typingHost = {
+  snapshot: () => typingSnapshot(typingOn, typingLabel),
+};
+try {
+  typingPane = mountTyping(typingHost);
+} catch (e) {
+  debugNote('typing svelte: mount falhou — usando o render legado (' + e + ')');
+}
+const legacyTyping = $('typing-legacy');
+if (legacyTyping) legacyTyping.classList.toggle('hidden', !!typingPane);
 for (const id of ['modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy']) {
   const n = $(id);
   if (!n) continue;

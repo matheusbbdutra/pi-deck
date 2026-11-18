@@ -1,5 +1,23 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, Fase 5d Svelte aplicada: indicador de digitação)
+
+- **Fase 5d**: indicador `#typing` em Svelte (`ui/src/composer/TypingIndicator.svelte`).
+  Builder puro `typingSnapshot(on, label)` exportado (visible + label com
+  fallback `status.thinking`). `setTyping()` guarda `typingOn`/`typingLabel`
+  canônicos e ganhou early-path `typingPane.sync()`; exportado para teste.
+- **Bug real corrigido (achado pelo teste de integração)**: o markup legado do
+  `#typing` (`pensando…` no HTML) continuava no DOM ao lado do componente e
+  aparecia com o painel oculto. Criado `#typing-svelte` (mount) +
+  `#typing-legacy` (escondido quando o mount funciona), como no Tema/pops.
+- Wiring: `#typing-svelte`/`#typing-legacy` ✓, mount `main.js:5849`, legacy
+  toggle `main.js:5853`.
+- Verificado: `test:ui` **144/144**, `build:ui` ✓ (396 ms), oxlint exit 0.
+- Composer (textarea + barra de botões + fila) segue imperativo por decisão
+  técnica: `#input` concentra autosize/draft por aba/paste de imagem/Enter, e os
+  botões só disparam handlers do main — migrar seria mover 11 listeners sem
+  remover lógica.
+
 ## Onde estamos (2026-11-18, Fase 5c Svelte aplicada: palette global Ctrl+K)
 
 - **Fase 5c**: cmdk em Svelte (`ui/src/composer/CmdkList.svelte`). Builder puro

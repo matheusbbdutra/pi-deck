@@ -27,6 +27,7 @@ import SubsPane from '../ui/src/panels/SubsPane.svelte';
 import Attachments from '../ui/src/composer/Attachments.svelte';
 import Palette from '../ui/src/composer/Palette.svelte';
 import CmdkList from '../ui/src/composer/CmdkList.svelte';
+import TypingIndicator from '../ui/src/composer/TypingIndicator.svelte';
 
 vi.mock('../ui/src/terminal.js', () => ({ initTerminal: () => {}, reconcileTerminal: () => {} }));
 vi.mock('../ui/src/highlight.js', () => ({ appendHighlighted: () => {}, langFor: () => null }));
@@ -77,6 +78,8 @@ let paletteSnapshot;
 let cmdkSnapshot;
 let openCmdk;
 let closeCmdk;
+let typingSnapshot;
+let setTyping;
 
 function row(at, text) {
   const node = document.createElement('div');
@@ -105,7 +108,7 @@ beforeAll(async () => {
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
-     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk } = await import('../ui/src/main.js'));
+     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -1354,6 +1357,44 @@ describe('palette global Ctrl+K (Fase 5c)', () => {
     closeCmdk();
     expect(target.classList.contains('hidden')).toBe(false);
     unmount(inst);
+  });
+});
+
+describe('indicador de digitação (Fase 5d)', () => {
+  it('typingSnapshot: visível, label padrão e custom', () => {
+    expect(typingSnapshot(true, '')).toEqual({ visible: true, label: 'pensando…' });
+    expect(typingSnapshot(false, 'enviado…')).toEqual({ visible: false, label: 'enviado…' });
+    expect(typingSnapshot(true, null).label).toBe('pensando…');
+  });
+
+  it('TypingIndicator monta dots/label, atualiza e some', async () => {
+    let on = true;
+    let label = 'pensando…';
+    const host = { snapshot: () => typingSnapshot(on, label) };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const inst = mount(TypingIndicator, { target, props: { host } });
+    expect(target.querySelectorAll('.tdot').length).toBe(3);
+    expect(target.querySelector('.tlabel').textContent).toBe('pensando…');
+    label = 'lendo…';
+    inst.sync();
+    await tick();
+    expect(target.querySelector('.tlabel').textContent).toBe('lendo…');
+    on = false;
+    inst.sync();
+    await tick();
+    expect(target.querySelectorAll('.tdot').length).toBe(0);
+    unmount(inst);
+    target.remove();
+  });
+
+  it('setTyping sincroniza o componente montado no HTML real', async () => {
+    setTyping(true, 'integracao');
+    await tick();
+    expect(document.getElementById('typing-svelte').textContent).toContain('integracao');
+    setTyping(false);
+    await tick();
+    expect(document.getElementById('typing-svelte').textContent.trim()).toBe('');
   });
 });
 

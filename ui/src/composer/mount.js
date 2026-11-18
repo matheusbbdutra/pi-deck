@@ -5,6 +5,7 @@ import ForkPop from './ForkPop.svelte';
 import Attachments from './Attachments.svelte';
 import Palette from './Palette.svelte';
 import CmdkList from './CmdkList.svelte';
+import TypingIndicator from './TypingIndicator.svelte';
 
 /** Monta o pop de modelo no container do composer.
  *  `host` injeta o que o componente precisa — o componente não importa
@@ -49,4 +50,12 @@ export function mountCmdkList(host) {
   const target = document.getElementById('cmdklist');
   if (!target) return null;
   return mount(CmdkList, { target, props: { host } });
+}
+
+/** Monta o indicador de digitação no container `#typing-svelte` (mesmo contrato).
+ *  O markup legado fica em `#typing-legacy` e é escondido quando o mount funciona. */
+export function mountTyping(host) {
+  const target = document.getElementById('typing-svelte');
+  if (!target) return null;
+  return mount(TypingIndicator, { target, props: { host } });
 }
