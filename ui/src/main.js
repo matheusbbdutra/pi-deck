@@ -5234,15 +5234,7 @@ const typingHost = {
 try {
   typingPane = mountTyping(typingHost);
 } catch (e) {
-  debugNote('typing svelte: mount falhou — usando o render legado (' + e + ')');
-}
-const legacyTyping = $('typing-legacy');
-if (legacyTyping) legacyTyping.classList.toggle('hidden', !!typingPane);
-for (const id of ['modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy']) {
-  const n = $(id);
-  if (!n) continue;
-  const mounted = id === 'modelpop-legacy' ? modelPop : id === 'ctxpop-legacy' ? ctxPop : forkPop;
-  n.classList.toggle('hidden', !!mounted);
+  debugNote('typing svelte: mount falhou (' + e + ')');
 }
 
 /* Barra de abas em Svelte (Fase 3): o snapshot vem deste módulo e as ações
