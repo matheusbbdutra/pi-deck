@@ -343,6 +343,7 @@ export const STRINGS = {
 
     'model.none': 'nenhum modelo',
     'model.fav_toggle': 'Favoritar modelo (vai para o topo)',
+    'model.favs': 'FAVORITOS',
     'model.not_found': 'modelo não encontrado para "{q}"',
 
     'palette.empty': 'nenhum resultado',
@@ -704,6 +705,7 @@ export const STRINGS = {
 
     'model.none': 'no models',
     'model.fav_toggle': 'Favorite model (pins to top)',
+    'model.favs': 'FAVORITES',
     'model.not_found': 'no model found for "{q}"',
 
     'palette.empty': 'no results',

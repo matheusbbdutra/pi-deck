@@ -2745,24 +2745,33 @@ function loadCachedModels() {
 export function modelListSnapshot(providers, currentId, filter, favs) {
   const q = String(filter || '').toLowerCase();
   const favorite = favs instanceof Set ? favs : new Set(Array.isArray(favs) ? favs : []);
+  const hit = (m) => !q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q);
   const groups = [];
+  const favRows = [];
   for (const provider of [...providers.keys()].sort()) {
-    const rows = providers.get(provider)
-      .filter(m => m && m.id && (!q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)))
-      .sort((a, b) => {
-        // Favoritos primeiro; depois alfabético.
-        const fa = favorite.has(a.id) ? 0 : 1;
-        const fb = favorite.has(b.id) ? 0 : 1;
-        if (fa !== fb) return fa - fb;
-        return String(a.id).localeCompare(String(b.id));
-      })
+    const all = providers.get(provider).filter(m => m && m.id);
+    // Favoritos saem da lista principal e ganham seção própria (provider/modelo).
+    for (const m of all) {
+      if (!favorite.has(m.id) || !hit(m)) continue;
+      favRows.push({
+        id: m.id,
+        label: provider + '/' + (m.name || m.id),
+        ctx: contextLabel(m.contextWindow),
+        current: m.id === currentId,
+        fav: true,
+      });
+    }
+    const rows = all
+      .filter(m => !favorite.has(m.id) && hit(m))
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
       .map(m => ({
         id: m.id, name: m.name || m.id, ctx: contextLabel(m.contextWindow),
-        current: m.id === currentId, fav: favorite.has(m.id),
+        current: m.id === currentId, fav: false,
       }));
     if (rows.length) groups.push({ provider, rows });
   }
-  return { groups, empty: groups.length === 0 };
+  favRows.sort((a, b) => a.label.localeCompare(b.label));
+  return { groups, favs: favRows, empty: groups.length === 0 && favRows.length === 0 };
 }
 
 /** Snapshot puro do thinking (pop Svelte + testes): níveis, posição e se há slider. */

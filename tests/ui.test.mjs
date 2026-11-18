@@ -742,6 +742,23 @@ describe('snapshots dos pops (Fase 2)', () => {
     expect(modelListSnapshot(provs(), '', 'nada').empty).toBe(true);
   });
 
+  it('modelListSnapshot separa favoritos em seção própria (provider/modelo)', () => {
+    const snap = modelListSnapshot(provs(), 'a', '', new Set(['b']));
+    expect(snap.favs.length).toBe(1);
+    expect(snap.favs[0]).toMatchObject({ id: 'b', label: 'acme/Bravo', current: false, fav: true });
+    // o favorito sai da lista principal
+    expect(snap.groups[0].rows.map(r => r.id)).toEqual(['a']);
+    expect(snap.groups[0].rows[0].fav).toBe(false);
+  });
+
+  it('modelListSnapshot: favorito marcado como atual e busca filtra ambos', () => {
+    const cur = modelListSnapshot(provs(), 'b', '', new Set(['b']));
+    expect(cur.favs[0].current).toBe(true);
+    const filtrado = modelListSnapshot(provs(), '', 'bra', new Set(['b']));
+    expect(filtrado.favs.map(f => f.id)).toEqual(['b']);
+    expect(filtrado.groups.length).toBe(0);
+  });
+
   it('levelsSnapshot: vazio, único (sem slider) e múltiplo', () => {
     expect(levelsSnapshot([], 'x')).toEqual({ levels: [], at: 0, name: '', showSlider: false });
     expect(levelsSnapshot(['off'], 'off')).toMatchObject({ at: 0, name: 'off', showSlider: false });
