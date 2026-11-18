@@ -4,6 +4,7 @@
      `loadSessions`. Classes (.group, .sess…) vêm do `styles.css` global. */
   let { host } = $props();
 
+  // svelte-ignore state_referenced_locally: snapshot inicial; refresh via sync().
   // pi-lens-ignore: lint/correctness/noUnusedVariables — consumido no template
   let snap = $state(host.snapshot());
 

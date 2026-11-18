@@ -4,6 +4,7 @@
      Classes (.tab, .tab-dot…) vêm do `styles.css` global. */
   let { host } = $props();
 
+  // svelte-ignore state_referenced_locally: snapshot inicial; refresh via sync().
   // pi-lens-ignore: lint/correctness/noUnusedVariables — consumido no template ({#each items})
   let items = $state(host.snapshot());
 
