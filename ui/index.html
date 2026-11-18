@@ -42,13 +42,97 @@
   <div class="detail-head">
     <button id="settingsback" title="Fechar">×</button>
     <span class="detail-title">Configurações</span>
+    <span class="spacer"></span>
+    <button id="debugrefresh" class="ghost">Atualizar</button>
+  </div>
+  <div class="pkg-tabs" id="settings-tabs">
+    <button class="settings-tab active" data-pane="general">Geral</button>
+    <button class="settings-tab" data-pane="theme">Tema</button>
+    <button class="settings-tab" data-pane="pkgs">Pacotes</button>
+    <button class="settings-tab" data-pane="debug">Debug</button>
+    <button class="settings-tab" data-pane="about">Sobre</button>
   </div>
   <div class="overlay-body">
-    <div id="settings-general"></div>
-    <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
+    <div id="pane-general" class="pane">
+      <div id="settings-general"></div>
+      <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
+    </div>
+    <div id="pane-theme" class="pane hidden">
+      <div id="theme-svelte"></div>
+    </div>
+    <div id="pane-pkgs" class="pane hidden">
+      <div class="pkg-tabs">
+        <button class="pkg-tab active" data-pane="installed">Instalados</button>
+        <button class="pkg-tab" data-pane="catalog">Catálogo</button>
+        <button class="pkg-tab" data-pane="mcp">MCP</button>
+        <button class="pkg-tab" data-pane="hooks">Hooks</button>
+      </div>
+      <div id="pane-installed" class="pane">
+        <pre id="pkglist" class="pkgs-pre">…</pre>
+      </div>
+      <div id="pane-catalog" class="pane hidden">
+        <input id="catsearch" class="model-search cat-search" placeholder="filtrar o catálogo (npm keywords:pi-package)…" />
+        <div id="catlist" class="cat-list"><div class="model-empty">carregando…</div></div>
+      </div>
+      <div id="pane-mcp" class="pane hidden">
+        <div id="mcplist" class="mcp-list"><div class="model-empty">carregando…</div></div>
+        <details class="mcp-raw">
+          <summary>JSON cru</summary>
+          <pre id="mcpjson" class="pkgs-pre"></pre>
+        </details>
+        <h4>Adicionar servidor</h4>
+        <div class="mcp-form">
+          <select id="mcppreset" class="mfield">
+            <option value="">preset: personalizado…</option>
+            <option value="filesystem">filesystem — npx @modelcontextprotocol/server-filesystem</option>
+            <option value="memory">memory — npx @modelcontextprotocol/server-memory</option>
+            <option value="sequential-thinking">sequential-thinking — npx …server-sequential-thinking</option>
+          </select>
+          <input id="mcpname" class="mfield" placeholder="nome do servidor" />
+          <input id="mcptarget" class="mfield" placeholder="https://… (HTTP) ou comando: npx -y pacote" />
+          <input id="mcpargs" class="mfield" placeholder="argumentos extras (ex.: /home/usuario)" />
+          <div class="env-rows">
+            <div id="mcpenvrows"></div>
+            <button id="mcpenvadd" class="ghost">+ variável de ambiente</button>
+          </div>
+          <label class="mfield checkbox"><input type="checkbox" id="mcplocal" /> projeto (.pi/mcp.json)</label>
+          <div class="settings-actions">
+            <button id="mcpadd" class="primary">Adicionar e testar</button>
+            <button id="mcpremove" class="ghost">Remover pelo nome</button>
+          </div>
+          <p class="hint">O app não guarda segredo. Para token, informe o nome da variável de ambiente do seu shell em vez do valor.</p>
+          <pre id="mcpout" class="upd-out"></pre>
+        </div>
+      </div>
+      <div id="pane-hooks" class="pane hidden">
+        <div class="settings-actions" style="margin-bottom:8px">
+          <button id="hooksrefresh" class="ghost">Atualizar</button>
+          <span id="hooksstatus" class="hint"></span>
+        </div>
+        <pre id="hookslog" class="pkgs-pre">—</pre>
+        <p class="hint">O sightdeck não vê a invocação do hook pelo RPC. Esta aba mostra o log escrito pela extensão
+        <code>sightdeck-hooks</code> (uma linha por hook disparado). Ligue em ⚙ → Instrumentar hooks; sessões abertas
+        precisam de <code>/reload</code>.</p>
+      </div>
+    </div>
+    <div id="pane-debug" class="pane hidden">
+      <h4>Missões</h4>
+      <div id="missions"></div>
+      <h4>Avisos de extensão</h4>
+      <div id="healthlist"><div class="empty">nenhum aviso nesta sessão</div></div>
+      <h4>Diagnóstico</h4>
+      <div id="diag">
+        <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
+        <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
+      </div>
+    </div>
+    <div id="pane-about" class="pane hidden">
+      <div id="aboutlist"></div>
+      <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
+      atualiza o pi sozinho: os botões de atualização chamam <code>pi update</code>.</p>
+    </div>
   </div>
 </div>
-
 <aside id="sidebar">
   <div class="side-head">
     <span>Sessões</span>
@@ -183,115 +267,6 @@
       <span class="detail-title" id="detailtitle"></span>
     </div>
     <div class="detail-log" id="detaillog"></div>
-  </div>
-</div>
-
-<div id="debug" class="overlay hidden">
-  <div class="detail-head">
-    <button id="debugback">← voltar</button>
-    <span class="detail-title">Debug</span>
-    <span class="spacer"></span>
-    <button id="debugrefresh" class="ghost">Atualizar</button>
-  </div>
-  <div class="overlay-body">
-    <h4>Missões</h4>
-    <div id="missions"></div>
-    <h4>Avisos de extensão</h4>
-    <div id="healthlist"><div class="empty">nenhum aviso nesta sessão</div></div>
-    <h4>Diagnóstico</h4>
-    <div id="diag">
-      <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
-      <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
-    </div>
-  </div>
-</div>
-
-<div id="pkgs" class="overlay hidden">
-  <div class="detail-head">
-    <button id="pkgsback">← voltar</button>
-    <span class="detail-title">Pacotes</span>
-    <span class="spacer"></span>
-    <button id="pkgsrefresh" class="ghost">Atualizar</button>
-  </div>
-  <div class="pkg-tabs">
-    <button class="pkg-tab active" data-pane="installed">Instalados</button>
-    <button class="pkg-tab" data-pane="catalog">Catálogo</button>
-    <button class="pkg-tab" data-pane="mcp">MCP</button>
-    <button class="pkg-tab" data-pane="hooks">Hooks</button>
-  </div>
-  <div class="overlay-body">
-    <div id="pane-installed" class="pane">
-      <pre id="pkglist" class="pkgs-pre">…</pre>
-    </div>
-
-    <div id="pane-catalog" class="pane hidden">
-      <input id="catsearch" class="model-search cat-search" placeholder="filtrar o catálogo (npm keywords:pi-package)…" />
-      <div id="catlist" class="cat-list"><div class="model-empty">carregando…</div></div>
-    </div>
-
-    <div id="pane-mcp" class="pane hidden">
-      <div id="mcplist" class="mcp-list"><div class="model-empty">carregando…</div></div>
-      <details class="mcp-raw">
-        <summary>JSON cru</summary>
-        <pre id="mcpjson" class="pkgs-pre"></pre>
-      </details>
-      <h4>Adicionar servidor</h4>
-      <div class="mcp-form">
-        <select id="mcppreset" class="mfield">
-          <option value="">preset: personalizado…</option>
-          <option value="filesystem">filesystem — npx @modelcontextprotocol/server-filesystem</option>
-          <option value="memory">memory — npx @modelcontextprotocol/server-memory</option>
-          <option value="sequential-thinking">sequential-thinking — npx …server-sequential-thinking</option>
-        </select>
-        <input id="mcpname" class="mfield" placeholder="nome do servidor" />
-        <input id="mcptarget" class="mfield" placeholder="https://… (HTTP) ou comando: npx -y pacote" />
-        <input id="mcpargs" class="mfield" placeholder="argumentos extras (ex.: /home/usuario)" />
-        <div class="env-rows">
-          <div id="mcpenvrows"></div>
-          <button id="mcpenvadd" class="ghost">+ variável de ambiente</button>
-        </div>
-        <label class="mfield checkbox"><input type="checkbox" id="mcplocal" /> projeto (.pi/mcp.json)</label>
-        <div class="settings-actions">
-          <button id="mcpadd" class="primary">Adicionar e testar</button>
-          <button id="mcpremove" class="ghost">Remover pelo nome</button>
-        </div>
-        <p class="hint">O app não guarda segredo. Para token, informe o nome da variável de ambiente do seu shell em vez do valor.</p>
-        <pre id="mcpout" class="upd-out"></pre>
-      </div>
-    </div>
-
-    <div id="pane-hooks" class="pane hidden">
-      <div class="settings-actions" style="margin-bottom:8px">
-        <button id="hooksrefresh" class="ghost">Atualizar</button>
-        <span id="hooksstatus" class="hint"></span>
-      </div>
-      <pre id="hookslog" class="pkgs-pre">—</pre>
-      <p class="hint">O sightdeck não vê a invocação do hook pelo RPC. Esta aba mostra o log escrito pela extensão
-      <code>sightdeck-hooks</code> (uma linha por hook disparado). Ligue em ⚙ → Instrumentar hooks; sessões abertas
-      precisam de <code>/reload</code>.</p>
-    </div>
-  </div>
-</div>
-
-<div id="about" class="overlay hidden">
-  <div class="detail-head">
-    <button id="aboutback" title="Fechar">×</button>
-    <span class="detail-title">Sobre</span>
-  </div>
-  <div class="overlay-body">
-    <div id="aboutlist"></div>
-    <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
-    atualiza o pi sozinho: os botões de atualização chamam <code>pi update</code>.</p>
-  </div>
-</div>
-
-<div id="theme" class="overlay hidden">
-  <div class="detail-head">
-    <button id="themeback" title="Fechar">×</button>
-    <span class="detail-title">Tema</span>
-  </div>
-  <div class="overlay-body">
-    <div id="theme-svelte"></div>
   </div>
 </div>
 

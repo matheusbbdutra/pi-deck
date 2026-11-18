@@ -1,5 +1,27 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, modal único de configurações com abas)
+
+- **Modal único**: o ⚙ abre o popover (menu) e cada item abre `#settings` na aba
+  correspondente. Abas: **Geral** (toggles + idioma + hooks), **Tema**
+  (presets), **Pacotes** (instalados/catálogo/MCP/hooks), **Debug**
+  (missões/avisos/diagnóstico) e **Sobre**. Os overlays antigos
+  (`#theme`, `#pkgs`, `#debug`, `#about`) foram removidos; `#provpick` segue
+  como overlay próprio (login).
+- `switchSettingsTab(name)` alterna panes e só carrega o que a aba precisa
+  (`switchPkgPane('installed')`, `loadMissions/renderHealthList/renderDiag`,
+  `openAbout`). Abas usam classe própria `.settings-tab` para não colidir com o
+  seletor global `.pkg-tab` do `switchPkgPane`.
+- **Lista de modelos**: `.model-row` virou flex com `align-items:center`;
+  `.model-name` flex:1 com ellipsis; `.model-ctx` com `min-width:4em` e
+  alinhado à direita (coluna de contexto deixou de ficar fora de ordem);
+  estrela de favorito em 16px.
+- **Lição (regra global)**: reestruturar HTML por faixa de linhas com
+  `awk`/`sed -i N,M` engoliu o `<aside id="sidebar">` e duplicou IDs. Registrado
+  em `~/.pi/agent/AGENTS.md` §5: usar `edit` por conteúdo e validar com o parser.
+- Verificado: `test:ui` **145/145**, `build:ui` ✓ (376 ms), reload do dev sem
+  erros, zero handlers órfãos e zero IDs duplicados.
+
 ## Onde estamos (2026-11-18, ajustes do teste de runtime)
 
 Feedback do usuário na janela dev -> corrigido:

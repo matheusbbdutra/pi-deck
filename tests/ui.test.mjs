@@ -1477,7 +1477,8 @@ describe('avisos de extensão no Debug e overlay Sobre', () => {
   });
 
   it('todo id que o main.js consulta no Sobre/avisos existe no index.html', () => {
-    for (const id of ['about', 'aboutback', 'aboutlist', 'aboutbtn', 'healthlist', 'healthchip']) {
+    // Fase 7d: Sobre virou ABA do modal único (pane-about), não mais overlay próprio.
+    for (const id of ['aboutlist', 'aboutbtn', 'healthlist', 'healthchip', 'settings', 'settings-tabs', 'pane-about', 'pane-debug', 'pane-pkgs', 'pane-theme', 'pane-general']) {
       expect(document.getElementById(id), id).not.toBeNull();
     }
   });

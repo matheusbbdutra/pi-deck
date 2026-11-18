@@ -1111,7 +1111,7 @@ const diagPending = new Map(); // rpc id -> Date.now() do envio (para a latênci
 function diagPush(cmd, lat, res) {
   diagBuf.push({ t: Date.now(), cmd: String(cmd == null ? '' : cmd).slice(0, 220), lat: lat || '—', res: res || '' });
   if (diagBuf.length > DIAG_MAX) diagBuf.splice(0, diagBuf.length - DIAG_MAX);
-  if (!$('debug').classList.contains('hidden')) renderDiag();
+  if ($('pane-debug') && !$('pane-debug').classList.contains('hidden')) renderDiag();
 }
 
 function renderDiag() {
@@ -2313,7 +2313,7 @@ function renderHealthChip() {
   chip.textContent = st.count ? '⚠ ' + st.count : '';
   chip.title = st.title;
   // O chip só mostra a contagem; o overlay Debug é onde a lista vira legível.
-  if (!$('debug').classList.contains('hidden')) renderHealthList();
+  if ($('pane-debug') && !$('pane-debug').classList.contains('hidden')) renderHealthList();
   return st;
 }
 
@@ -4553,20 +4553,33 @@ function switchPkgPane(name) {
 }
 
 function openPkgs() {
-  $('settingspop').classList.add('hidden');
-  $('pkgs').classList.remove('hidden');
-  // `switchPkgPane('installed')` já dispara `loadInstalled()` — sem `pi mcp list`.
-  switchPkgPane('installed');
-  if (!$('mcpenvrows').childElementCount) addEnvRow();
+  openSettingsTab('pkgs');
 }
 
-/** Overlay Debug (⚙): Missões e Diagnóstico saíram do painel direito. */
+/** Aba Debug do modal único: Missões e Diagnóstico. */
 function openDebug() {
+  openSettingsTab('debug');
+}
+
+/** Abre o modal de configurações numa aba (menu do ⚙ chama isto). */
+function openSettingsTab(name) {
   $('settingspop').classList.add('hidden');
-  $('debug').classList.remove('hidden');
-  loadMissions();
-  renderHealthList();
-  renderDiag();
+  $('settings').classList.remove('hidden');
+  switchSettingsTab(name);
+}
+
+/** Alterna a aba visível; cada aba carrega o que precisa (sem RPC a toa). */
+function switchSettingsTab(name) {
+  for (const b of document.querySelectorAll('#settings-tabs .settings-tab')) {
+    b.classList.toggle('active', b.dataset.pane === name);
+  }
+  for (const p of ['general', 'theme', 'pkgs', 'debug', 'about']) {
+    const node = $('pane-' + p);
+    if (node) node.classList.toggle('hidden', p !== name);
+  }
+  if (name === 'pkgs') switchPkgPane('installed');
+  if (name === 'debug') { loadMissions(); renderHealthList(); renderDiag(); }
+  if (name === 'about') openAbout();
 }
 
 /* =============== sobre =============== */
@@ -4574,8 +4587,6 @@ function openDebug() {
 /** Overlay "Sobre": versão do app, do `pi` e os caminhos que o app usa de fato
  *  (`app_info` resolve o binário como `pi_bin()`; mostrar `pi` do PATH seria mentira). */
 async function openAbout() {
-  $('settingspop').classList.add('hidden');
-  $('about').classList.remove('hidden');
   const host = $('aboutlist');
   const add = (label, value) => {
     const row = el('div', 'file-row');
@@ -4615,8 +4626,7 @@ function themeNoteText(res, prefix) {
 }
 
 function openTheme() {
-  $('settingspop').classList.add('hidden');
-  $('theme').classList.remove('hidden');
+  openSettingsTab('theme');
 }
 
 /* =============== auth do provider (perto da versão do pi) =============== */
@@ -5005,10 +5015,7 @@ $('settingsbtn').onclick = (e) => {
   e.stopPropagation();
   $('settingspop').classList.toggle('hidden');
 };
-$('settingsopen').onclick = () => {
-  $('settingspop').classList.add('hidden');
-  $('settings').classList.remove('hidden');
-};
+$('settingsopen').onclick = () => openSettingsTab('general');
 $('settingsback').onclick = () => $('settings').classList.add('hidden');
 /* Host do componente Svelte de Configurações: passa `t`/estado e recebe as
    mudanças, sem o componente importar este módulo (evita ciclo). */
@@ -5057,7 +5064,6 @@ $('updExt').onclick = () => runUpdate('extensions');
 $('updPi').onclick = () => runUpdate('self');
 $('pkgbtn').onclick = () => openPkgs();
 $('themebtn').onclick = () => openTheme();
-$('themeback').onclick = () => $('theme').classList.add('hidden');
 
 /* Host do diálogo Svelte de Tema: presets + JSON usam o mesmo motor
    (`applyTheme`/`validateTheme`/`themeFromDom`/`resetTheme`), sem o componente
@@ -5401,8 +5407,6 @@ $('debugbtn').onclick = () => openDebug();
 // Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
 $('healthchip').onclick = () => openDebug();
 $('aboutbtn').onclick = () => openAbout();
-$('aboutback').onclick = () => $('about').classList.add('hidden');
-$('debugback').onclick = () => $('debug').classList.add('hidden');
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };
 $('checkupdate').onclick = () => checkUpdate(true);
 $('updatebtn').onclick = async () => {
@@ -5433,11 +5437,6 @@ $('authchip').onclick = () => {
 };
 $('provback').onclick = closeProvPicker;
 $('provsearch').oninput = (e) => renderProviders(e.target.value);
-$('pkgsback').onclick = () => $('pkgs').classList.add('hidden');
-$('pkgsrefresh').onclick = () => {
-  loadPkgs();
-  if (!$('pane-catalog').classList.contains('hidden')) loadCatalog(true);
-};
 $('confirmok').onclick = async () => {
   const action = pendingAction;
   closeConfirm();
@@ -5445,6 +5444,9 @@ $('confirmok').onclick = async () => {
 };
 $('confirmcancel').onclick = closeConfirm;
 document.querySelectorAll('.pkg-tab').forEach(t => { t.onclick = () => switchPkgPane(t.dataset.pane); });
+document.querySelectorAll('#settings-tabs .settings-tab').forEach(t => {
+  t.onclick = () => switchSettingsTab(t.dataset.pane);
+});
 $('catsearch').oninput = () => renderCatalog();
 $('hooksrefresh').onclick = () => { loadHooks(); refreshHooksStatus(); };
 $('setHooks').onchange = (e) => setHooksEnabled(e.target.checked);

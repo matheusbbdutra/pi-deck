@@ -104,10 +104,10 @@
   .fav {
     background: none;
     border: none;
-    padding: 0 2px;
+    padding: 0 3px;
     cursor: pointer;
     color: var(--mute);
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1;
     flex: none;
   }
