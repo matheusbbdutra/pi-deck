@@ -4685,6 +4685,18 @@ function themeNoteText(res, prefix) {
 let authProvider = null;
 let authTimer = null;
 let authProvidersCache = [];
+/* Providers ocultados pelo usuário na aba Providers (só esconde da lista; não
+   mexe em credencial — built-in do CLI não é removível). */
+let hiddenProviders = new Set();
+function loadHiddenProviders() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('hidden-providers') || '[]');
+    hiddenProviders = new Set(Array.isArray(raw) ? raw.filter(x => typeof x === 'string') : []);
+  } catch { hiddenProviders = new Set(); }
+}
+function saveHiddenProviders() {
+  try { localStorage.setItem('hidden-providers', JSON.stringify([...hiddenProviders])); } catch { /* sem storage */ }
+}
 
 async function openProvPicker() {
   $('provpick').classList.remove('hidden');
@@ -4817,9 +4829,13 @@ function renderProvidersTab() {
   clear(host);
   const q = String(($('provsearchtab') && $('provsearchtab').value) || '').toLowerCase().trim();
   const all = Array.isArray(authProvidersCache) ? authProvidersCache : [];
-  const list = all.filter(p => p && p.name && (!q || p.name.toLowerCase().includes(q)));
+  const visible = all.filter(p => p && p.name && !hiddenProviders.has(p.name));
+  const list = visible.filter(p => !q || p.name.toLowerCase().includes(q));
   if (!all.length) { setEmpty(host, 'nenhum provedor'); return; }
-  if (!list.length) { setEmpty(host, 'nenhum provedor para "' + q + '"'); return; }
+  if (!list.length) {
+    setEmpty(host, visible.length ? 'nenhum provedor para "' + q + '"' : 'todos ocultos (use Atualizar para voltar)');
+    return;
+  }
   for (const p of list) {
     if (!p || !p.name) continue;
     const row = el('div', 'cat-row prov-row');
@@ -4836,17 +4852,29 @@ function renderProvidersTab() {
     del.title = 'pi auth logout ' + p.name + ' (apaga a credencial de auth.json)';
     del.onclick = async () => {
       del.disabled = true;
+      const st = $('provstatus');
+      if (st) st.textContent = 'removendo ' + p.name + '…';
       try {
         await inv('auth_logout', { provider: p.name });
-        note('credencial de ' + p.name + ' removida');
+        if (st) st.textContent = 'credencial de ' + p.name + ' removida';
       } catch (e) {
-        // O CLI devolve Unknown provider quando não há credencial: o Rust
-        // converte isso em erro para não mentir "removida".
-        note('remover ' + p.name + ': ' + String(e));
+        // Provider built-in sem credencial responde exit 0 no CLI; o Rust
+        // converte em erro e o aviso aparece AQUI (o note() ia para o #log,
+        // escondido atrás do modal).
+        if (st) st.textContent = String(e);
       }
       await loadProvidersTab();
     };
     row.appendChild(del);
+
+    const hideBtn = el('button', 'ghost', 'ocultar');
+    hideBtn.title = 'ocultar ' + p.name + ' desta lista (não mexe em credencial)';
+    hideBtn.onclick = () => {
+      hiddenProviders.add(p.name);
+      saveHiddenProviders();
+      renderProvidersTab();
+    };
+    row.appendChild(hideBtn);
     host.appendChild(row);
   }
 }
@@ -5698,6 +5726,7 @@ loadTreeState();
 loadCachedModels();
 startMemMonitor();
 loadModelFavs();
+loadHiddenProviders();
 loadLastModel();
 loadCachedLevels();
 loadCachedCommands();
