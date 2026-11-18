@@ -1,5 +1,49 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, Fase 7c CONCLUÍDA: legado removido)
+
+- **Branch**: `sprint/svelte-migration`. Sem release/versão — sprint para teste.
+- **Removido nesta etapa**: corpos legados de `renderTabs`, `renderPlans`,
+  `renderMissions`, `paintSubs`, `renderGit`, `renderAttachments`, `setTyping`,
+  `renderPalette`, `renderCmdk`, `renderCtxPop`, `renderModelList`,
+  `fillLevels`, `openForkPop`, `loadSessions`, `runSearch`; helpers órfãos
+  (`liveRunBox`, `diskRunBox`, `rowTiming`, `tickSubsTimes`, `subsClock`,
+  `ensureSubsClock`, `applySubsWarning`, `gitCheck`, `appendAgg`,
+  `appendCtxBlock`, `renderLimitSelect`, `saveLimit`, `showThemeNote`);
+  handlers/DOM legados de Settings e Tema; e os 6 wrappers `*-legacy` do HTML.
+- **Contratos preservados fora dos componentes**: `#thinkbtn`, `#modelname`,
+  `#modelctx`, `#gitcnt`, `#searchmeta`, `#typing`/`#attachrow` (classe hidden),
+  `#palette`/`#cmdkbar`/`#palettefoot`.
+- **Bugs reais achados e corrigidos nesta fase**: (1) early-path do `renderCmdk`
+  pulava o `remove('hidden')` do overlay (Ctrl+K não abria); (2) `fillLevels`
+  não podia virar só sync — ele mantém o chip `#thinkbtn`, que vive fora do pop.
+- **Números**: `main.js` **5524** (de 6136 → −612), `i18n.js` **799** (de 801),
+  `index.html` **314** (de 359 → −45). `oxlint main.js`: 0 funções não usadas,
+  só warnings de estilo pré-existentes.
+- **Verificado**: `test:ui` **146/146**, `build:ui` ✓ (540 ms); teste de
+  integridade agora exige que os wrappers legacy **não existam**.
+
+## Onde estamos (2026-11-18, Fase 7c EM CURSO: remoção do legado)
+
+- **Branch**: `sprint/svelte-migration` (a `main` local tem os mesmos 5 commits;
+  nada foi para `origin`). **Sem release, sem bump de versão** — sprint separada.
+- **Decisão do usuário**: objetivo é migrar, então os fallbacks legados serão
+  REMOVIDOS (não mantidos). `main.js` deve encolher de verdade.
+- **Removido até aqui** (146/146 e build ✓ após cada lote):
+  `renderTabs`, `renderPlans`, `renderMissions`, `paintSubs` + `liveRunBox`,
+  `diskRunBox`, `rowTiming`, `tickSubsTimes`, `subsClock`, `ensureSubsClock`,
+  `applySubsWarning`, `renderGit` (corpo) + `gitCheck`, `renderAttachments`,
+  `setTyping`, `renderPalette` e `renderCmdk` (corpos).
+- **Bug real corrigido**: o early-path do `renderCmdk` retornava antes do
+  `$('palette').classList.remove('hidden')` — o Ctrl+K não abria o overlay.
+  Visibilidade movida para antes do return + asserção no teste de regressão.
+- `subsError` substitui o `setEmpty($('subs'))` legado (mostrado via snapshot).
+- `main.js`: **5829** linhas (era 6136 no início da 7c).
+- **Falta**: `renderCtxPop` + helpers (`appendCtxBlock`/`appendAgg`/
+  `renderLimitSelect`), `renderModelList`/`fillLevels`, `openForkPop`,
+  `loadSessions` legado, `runSearch` legado, handlers/DOM legados do Settings e
+  Tema, e os 6 wrappers `*-legacy` do `index.html`.
+
 ## Onde estamos (2026-11-18, Fase 7b aplicada — FIM DA MIGRAÇÃO)
 
 - **Fase 7b**: guard-rail de integridade em `tests/ui.test.mjs`: (a) todo wrapper

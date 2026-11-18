@@ -24,20 +24,6 @@
        montar; `main.js` injeta `t`/setters via `mountSettings`.
        Hooks fica aqui porque o estado vem de `hooks_status` (IPC assíncrono). -->
   <div id="settings-general"></div>
-  <!-- Fallback: markup antigo, escondido quando o componente Svelte monta.
-       Mantém o caminho de hoje vivo (ids diferentes no select para não duplicar). -->
-  <div id="settings-legacy" class="hidden">
-    <label><input type="checkbox" id="setExpTools" /> <span id="lblExpTools">Ferramentas expandidas</span></label>
-    <label><input type="checkbox" id="setExpThink" /> <span id="lblExpThink">Thinking expandido</span></label>
-    <label><input type="checkbox" id="setShowHidden" /> <span id="lblShowHidden">Mostrar projetos ocultos</span></label>
-    <label><input type="checkbox" id="setNotifyDesktop" /> <span id="lblNotifyDesktop">Notificar término em 2º plano</span></label>
-    <label><input type="checkbox" id="setNotifySound" /> <span id="lblNotifySound">Som ao terminar em 2º plano</span></label>
-    <label><span id="lblLang">Idioma</span> <select id="langsellegacy" class="mfield">
-      <option value="auto">Auto (navegador)</option>
-      <option value="pt">Português</option>
-      <option value="en">English</option>
-    </select></label>
-  </div>
   <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
   <div class="settings-sep"></div>
   <h5 class="settings-group" data-i18n="settings.group_tools">Ferramentas</h5>
@@ -103,10 +89,6 @@
   <button id="scrollbottom" class="scroll-bottom hidden" title="Ir para o fim (fim do transcript)">↓</button>
   <div id="typing" class="typing hidden">
     <div id="typing-svelte"></div>
-    <div id="typing-legacy">
-    <span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>
-    <span id="typinglabel" class="tlabel">pensando…</span>
-    </div>
   </div>
   <div id="imgview" class="img-view hidden"><img id="imgviewimg" alt="" /></div>
   <div class="composer">
@@ -139,27 +121,12 @@
       </div>
       <div id="modelpop" class="model-pop hidden">
         <div id="modelpop-svelte"></div>
-        <div id="modelpop-legacy">
-        <input id="modelsearch" class="model-search" placeholder="Search models…" autocomplete="off" />
-        <div id="modellist" class="model-list"></div>
-        <div id="thinkfoot" class="think-foot hidden">
-          <div class="think-foot-row"><span>Thinking</span><span id="thinkname"></span></div>
-          <input id="thinkslider" type="range" min="0" max="0" step="1" value="0" />
-        </div>
-        </div>
       </div>
       <div id="ctxpop" class="model-pop ctx-pop hidden">
         <div id="ctxpop-svelte"></div>
-        <div id="ctxpop-legacy">
-        <div id="ctxrows" class="ctx-rows"></div>
-        </div>
       </div>
       <div id="forkpop" class="model-pop hidden">
         <div id="forkpop-svelte"></div>
-        <div id="forkpop-legacy">
-        <div class="model-group">fork a partir de… · cria sessão nova · a original é preservada</div>
-        <div id="forklist" class="model-list"></div>
-        </div>
       </div>
     </div>
   </div>
@@ -314,21 +281,9 @@
   <div class="detail-head">
     <button id="themeback" title="Fechar">×</button>
     <span class="detail-title">Tema</span>
-    <span class="spacer"></span>
-    <button id="themeapply" class="ghost">aplicar</button>
-    <button id="themeexport" class="ghost">exportar atual</button>
-    <button id="themereset" class="ghost">resetar</button>
   </div>
   <div class="overlay-body">
     <div id="theme-svelte"></div>
-    <div id="theme-legacy">
-    <textarea id="themejson" class="theme-json" spellcheck="false"
-      placeholder='{"bg":"#0f1115","accent":"#7aa2f7"}'></textarea>
-    <div id="themenote" class="theme-note">cole um JSON de tokens (--bg, --accent, …) e clique em aplicar</div>
-    <p class="hint">Só as 46 chaves do tema valem; valor precisa ser <code>#rgb</code>, <code>#rrggbb</code>,
-    <code>#rrggbbaa</code>, <code>rgb()</code>, <code>rgba()</code>, <code>hsl()</code> ou <code>hsla()</code> —
-    o resto é ignorado. O tema fica em <code>localStorage['theme']</code> até <b>resetar</b>.</p>
-    </div>
   </div>
 </div>
 

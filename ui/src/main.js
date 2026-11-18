@@ -112,6 +112,10 @@ let tabBar = null;
 /* Árvore de sessões em Svelte (Fase 3b): grupos crus para os callbacks + instância. */
 let sessionGroups = [];
 let sessionTree = null;
+/* Erro transitório de `loadChildren` exibido pelo painel (substitui o setEmpty legado). */
+let subsError = '';
+/* Erro transitório de `loadSessions` exibido pela árvore (substitui o setEmpty legado). */
+let treeError = '';
 /* Resultados da busca global em Svelte (Fase 3c): itens acumulados + instância. */
 let searchItems = [];
 let searchTotal = 0;
@@ -170,8 +174,7 @@ export function setTyping(on, label) {
   box.classList.toggle('hidden', !on);
   typingOn = !!on;
   if (label) typingLabel = label;
-  if (typingPane) { typingPane.sync(); return; }
-  if (label) $('typinglabel').textContent = label;
+  if (typingPane) typingPane.sync();
 }
 
 /** Botão de parar do composer: aparece só com turno rodando.
@@ -383,12 +386,13 @@ const SESS_PAGE = 8;
 
 /** Opções do snapshot da árvore (estado de UI persistido). */
 function treeOpts() {
-  return { collapsed: collapsedProjects, expanded: expandedProjects, hidden: hiddenProjects, homeDir };
+  return { collapsed: collapsedProjects, expanded: expandedProjects, hidden: hiddenProjects, homeDir, error: treeError };
 }
 
 /** Snapshot puro da árvore de sessões (Svelte + testes). */
 export function sessionsSnapshot(groups, opts) {
   const o = opts || {};
+  if (o.error) return { emptyLabel: String(o.error), groups: [] };
   const collapsed = o.collapsed || new Set();
   const expanded = o.expanded || new Set();
   const hidden = o.hidden || new Set();
@@ -518,79 +522,11 @@ async function loadSessions() {
       try { localStorage.setItem('collapsed-initialized', '1'); } catch { /* sem storage */ }
     }
 
-    if (sessionTree) { sessionTree.sync(); return; }
-
-    const byPath = new Map(visible.map(g => [g.path, g]));
-    for (const grp of sessionsSnapshot(visible, treeOpts()).groups) {
-      const box = el('div', 'group' + (grp.collapsed ? ' collapsed' : ''));
-
-      const head = el('div', 'group-head');
-      head.appendChild(el('span', 'caret', grp.caret));
-      const name = el('span', 'proj-name', grp.name);
-      name.title = grp.path;
-      head.appendChild(name);
-      if (grp.count) head.appendChild(el('span', 'proj-count', String(grp.count)));
-
-      const plus = el('button', 'tiny plus', '+');
-      plus.title = grp.newTitle;
-      plus.onclick = (e) => { e.stopPropagation(); newSessionIn(grp.path); };
-      head.appendChild(plus);
-
-      const hide = el('button', 'tiny', grp.hideMark);
-      hide.title = grp.hideTitle;
-      hide.onclick = (e) => {
-        e.stopPropagation();
-        if (hiddenProjects.has(grp.path)) hiddenProjects.delete(grp.path);
-        else hiddenProjects.add(grp.path);
-        saveTreeState();
-        loadSessions();
-      };
-      head.appendChild(hide);
-
-      head.onclick = () => {
-        if (collapsedProjects.has(grp.path)) collapsedProjects.delete(grp.path);
-        else collapsedProjects.add(grp.path);
-        saveTreeState();
-        loadSessions();
-      };
-      box.appendChild(head);
-
-      const list = el('div', 'sess-list');
-      const group = byPath.get(grp.path);
-      for (const r of grp.rows) {
-        const s = group && group.sessions.find(x => x.id === r.key);
-        const row = el('div', 'sess');
-        row.dataset.key = r.key;
-        row.title = r.titleAttr;
-
-        const title = el('div', 'sess-title', r.title);
-        const meta = el('div', 'sess-meta');
-        meta.appendChild(el('span', null, r.meta));
-        if (r.children > 0) {
-          const b = el('span', 'badge', String(r.children));
-          b.title = r.childrenTitle;
-          meta.appendChild(b);
-        }
-
-        const del = el('button', 'tiny', '×');
-        del.title = r.trashTitle;
-        del.onclick = (e) => { e.stopPropagation(); if (s) askDeleteSession(s); };
-        meta.appendChild(del);
-
-        row.append(title, meta);
-        row.onclick = () => { if (s) openSession(s.cwd || grp.path, s); };
-        list.appendChild(row);
-      }
-      if (grp.hiddenCount > 0) {
-        const more = el('button', 'sess-more', grp.moreLabel);
-        more.onclick = (e) => { e.stopPropagation(); expandedProjects.add(grp.path); saveTreeState(); loadSessions(); };
-        list.appendChild(more);
-      }
-      box.appendChild(list);
-      side.appendChild(box);
-    }
+    treeError = '';
+    if (sessionTree) sessionTree.sync();
   } catch (e) {
-    setEmpty($('sessions'), String(e), 'empty err');
+    treeError = String(e);
+    if (sessionTree) sessionTree.sync();
   }
 }
 
@@ -664,30 +600,7 @@ async function runSearch(append) {
     const total = (res && res.total) || 0;
     searchTotal = total;
     setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
-    if (searchResults) { searchResults.sync(); return; }
-    if (!append) clear($('searchresults'));
-    $('searchresults').querySelectorAll('.sess-more').forEach(n => n.remove());
-    for (const r of items) {
-      const row = el('div', 'sess');
-      row.dataset.key = r.id;
-      row.title = (r.title || r.id) + '\n' + r.file;
-      row.appendChild(el('div', 'sess-title', r.title || t('sidebar.untitled')));
-      if (r.snippet) row.appendChild(el('div', 'snippet', r.snippet));
-      const meta = el('div', 'sess-meta');
-      meta.appendChild(el('span', null, t('search.matches', { id: prettyId(r.id), n: r.matches })));
-      if (r.tools && r.tools.length) meta.appendChild(el('span', 'badge', r.tools.slice(0, 3).join(',')));
-      if (r.hasError) meta.appendChild(el('span', 'badge', t('sidebar.error_badge')));
-      row.append(meta);
-      row.onclick = () => openSession(r.cwd, r);
-      $('searchresults').appendChild(row);
-    }
-    // Paginação: o botão some quando tudo já está na tela.
-    if (searchOffset < total) {
-      const more = el('button', 'sess-more', t('sidebar.show_more', { n: total - searchOffset }));
-      more.onclick = (e) => { e.stopPropagation(); runSearch(true); };
-      $('searchresults').appendChild(more);
-    }
-    if (!items.length && !append) setEmpty($('searchresults'), 'nada encontrado', 'empty');
+    if (searchResults) searchResults.sync();
   } catch (e) {
     setSearchMeta(String(e));
   }
@@ -741,7 +654,7 @@ async function start(cwd, key, refValue, refFlag, childrenDir) {
   // `+`, `+ Nova` e `+ Pasta` abrem sessão sem histórico; a overlay de estado
   // vazio é opaca e cobre o #log, então sem isto a sessão nova parece não ter aberto.
   setEmptyState(false);
-  setEmpty($('subs'), noSubsMessage());
+  if (subsPane) subsPane.sync();
   setStatus('iniciando… ' + prettyId(key));
 
   // Histórico vem do disco primeiro: não depende do RPC responder.
@@ -1159,6 +1072,7 @@ const CHILD_STATE = {
 };
 
 function renderChildren(list) {
+  subsError = '';
   const next = Array.isArray(list) ? list : [];
   // Poll de 2 s durante o turno relê o disco: repintar sem mudança zera o scroll do
   // painel. `mtime` fica fora da chave (o filho escreve o tempo todo e o relógio do
@@ -1684,23 +1598,7 @@ export function missionsSnapshot(list, err) {
 }
 
 function renderMissions() {
-  if (missionsPane) { missionsPane.sync(); return; }
-  const host = $('missions');
-  clear(host);
-  if (missionsError) { host.appendChild(el('div', 'empty', missionsError)); return; }
-  if (!missionsList.length) {
-    host.appendChild(el('div', 'empty', t('missions.empty'))); return;
-  }
-  host.appendChild(el('div', 'history-head', t('missions.count', { n: missionsList.length })) );
-  for (const m of missionsList) {
-    const row = el('div', 'file-row');
-    row.title = String(m.cwd || m.project || '');
-    row.appendChild(el('span', 'file-name', String(m.title || m.id || t('sidebar.untitled'))));
-    row.appendChild(el('span', 'file-dir', String(m.status || '')));
-    row.appendChild(el('span', 'file-count', String(m.runs || 0)));
-    row.onclick = () => openMission(m);
-    host.appendChild(row);
-  }
+  if (missionsPane) missionsPane.sync();
 }
 
 /** Detalhe da missão no mesmo painel dos diffs (só mostra, não executa). */
@@ -1850,17 +1748,6 @@ async function gitPush() {
 }
 
 /** Checkbox com rótulo (o `<label>` faz o texto também alternar a caixa). */
-function gitCheck(text, on, title, onchange) {
-  const lab = el('label', 'git-check');
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = !!on;
-  box.onchange = () => onchange(box.checked);
-  lab.appendChild(box);
-  lab.appendChild(el('span', null, text));
-  if (title) { lab.title = title; box.title = title; }
-  return lab;
-}
 
 /** Snapshot puro do painel Git (Svelte + testes). */
 export function gitSnapshot(data, ui) {
@@ -1922,9 +1809,7 @@ export function gitSnapshot(data, ui) {
 }
 
 function renderGit() {
-  if (gitPane) { gitPane.sync(); return; }
-  const host = $('git');
-  if (!host) return;
+  // Contador da aba e reset por sessão continuam fora do componente.
   const repo = !!gitData && gitData.repo === true;
   const list = repo && Array.isArray(gitData.changes) ? gitData.changes : [];
   const cnt = $('gitcnt');
@@ -1936,128 +1821,8 @@ function renderGit() {
     gitMsg = '';
     gitNote = '';
   }
-  // Re-render (loadGit roda a cada ação/edição) não pode roubar o cursor de quem
-  // está escrevendo a mensagem: guarda foco e posição e devolve no fim.
-  const prevMsgEl = document.getElementById('gitmsg');
-  const msgFocused = !!prevMsgEl && document.activeElement === prevMsgEl;
-  const msgCaret = msgFocused ? prevMsgEl.selectionStart : 0;
-
-  clear(host);
-  if (gitError) { host.appendChild(el('div', 'empty', gitError)); return; }
-  if (!repo) {
-    host.appendChild(el('div', 'empty', cwdTxt ? t('git.no_repo', { path: cwdTxt }) : t('composer.no_session')));
-    return;
-  }
-  // NÃO chamar de `t`: sombreia o `t()` de i18n e o render do painel Git quebra
-  // com "t is not a function" (aconteceu ao migrar os rótulos para `t('git.*')`).
-  const tot = gitData.totals || {};
-  const head = el('div', 'history-head');
-  const branch = String(gitData.branch || '') || (gitData.detached ? '(detached)' : '—');
-  head.appendChild(el('span', null, branch));
-  head.appendChild(el('span', null, ' · ↑' + (Number(gitData.ahead) || 0) + ' ↓' + (Number(gitData.behind) || 0)));
-  head.appendChild(el('span', null, ' · ' + list.length + ' arquivo(s) '));
-  head.appendChild(el('span', 'git-add', '+' + (Number(tot.add) || 0)));
-  head.appendChild(el('span', null, ' '));
-  head.appendChild(el('span', 'git-del', '−' + (Number(tot.del) || 0)));
-  host.appendChild(head);
-  // Caminho e estado limpo explícitos: sem isso, repo sem mudanças e "nada carregou"
-  // ficam idênticos na tela (bug reportado 2026-11-16).
-  if (cwdTxt) host.appendChild(el('div', 'file-dir', cwdTxt));
-
-  const bar = el('div', 'git-bar');
-  const btn = (label, title, onclick, cls) => {
-    const b = el('button', cls || 'ghost', label);
-    b.title = title;
-    b.onclick = onclick;
-    bar.appendChild(b);
-    return b;
-  };
-  btn(t('git.reload'), t('git.hint_reload'), () => loadGit());
-  const discardBtn = btn(t('git.discard'), t('git.hint_discard'), gitDiscardSelected);
-  discardBtn.disabled = !gitSel.size;
-  btn(t('git.stash'), t('git.hint_stash'), gitStash);
-  btn(t('git.stash_pop'), t('git.hint_stash_pop'), gitStashPop);
-  btn(t('git.pull'), t('git.hint_pull'), gitPull);
-  host.appendChild(bar);
-
-  if (!list.length) {
-    host.appendChild(el('div', 'empty', t('panel.git_clean')));
-  }
-  for (const c of list) {
-    const path = String(c.path || '');
-    const [name, dir] = splitPath(path);
-    const row = el('div', 'file-row');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.checked = gitSel.has(path);
-    box.title = 'selecionar para commit/descartar';
-    row.appendChild(box);
-    row.appendChild(el('span', 'file-name', name));
-    row.appendChild(el('span', 'file-dir', dir));
-    row.appendChild(el('span', 'file-count', String(c.status || '?')));
-    if (typeof c.add === 'number' || typeof c.del === 'number') {
-      row.appendChild(el('span', 'git-add', '+' + (Number(c.add) || 0)));
-      row.appendChild(el('span', 'git-del', '−' + (Number(c.del) || 0)));
-    }
-    const diffBtn = el('button', 'ghost', 'diff');
-    diffBtn.title = 'abrir o diff deste arquivo';
-    diffBtn.onclick = (e) => { e.stopPropagation(); openGitDiff(path); };
-    row.appendChild(diffBtn);
-    row.title = path + ' · ' + (c.untracked ? 'não rastreado' : (c.staged ? 'no índice' : 'no worktree'))
-      + ' · clique na row seleciona; `diff` abre o patch';
-    row.onclick = () => {
-      if (gitSel.has(path)) gitSel.delete(path); else gitSel.add(path);
-      box.checked = gitSel.has(path);
-      discardBtn.disabled = !gitSel.size;
-    };
-    host.appendChild(row);
-  }
-
-  // Linha de status da última ação: sem `alert`, dentro do painel. Só existe
-  // quando há algo a dizer (não há regra CSS genérica para `.hidden` aqui).
-  if (gitNote) {
-    const note = el('div', 'empty', gitNote);
-    note.id = 'gitnote';
-    if (gitNoteErr) note.style.color = 'var(--err)';
-    host.appendChild(note);
-  }
-
-  const comp = el('div', 'git-composer');
-  const ta = el('textarea');
-  ta.id = 'gitmsg';
-  ta.placeholder = 'mensagem do commit · Ctrl+Enter commita';
-  ta.value = gitMsg;
-  ta.oninput = () => { gitMsg = ta.value; };
-  ta.onkeydown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); gitCommit(false); }
-  };
-  comp.appendChild(ta);
-
-  const cbar = el('div', 'git-bar');
-  cbar.appendChild(gitCheck('amend', gitAmend, t('git.hint_amend'),
-    (on) => { gitAmend = on; }));
-  cbar.appendChild(gitCheck('--force-with-lease', gitLease,
-    t('git.hint_lease'),
-    (on) => { gitLease = on; }));
-  const mkBtn = (label, title, onclick, cls) => {
-    const b = el('button', cls || 'ghost', label);
-    b.title = title;
-    b.onclick = onclick;
-    cbar.appendChild(b);
-    return b;
-  };
-  mkBtn('commit', t('git.hint_commit'), () => gitCommit(false), 'primary');
-  mkBtn('commit & push', 'commit e depois push; se o push falhar o commit fica', () => gitCommit(true));
-  mkBtn('push', 'git push (--force-with-lease se o toggle estiver ligado)', gitPush);
-  comp.appendChild(cbar);
-  host.appendChild(comp);
-
-  if (msgFocused && ta) {
-    ta.focus();
-    try { ta.setSelectionRange(msgCaret, msgCaret); } catch { /* sem seleção no tipo */ }
-  }
+  if (gitPane) gitPane.sync();
 }
-
 /* =============== aba Plano (plans/ do projeto) =============== */
 let plansData = null;   // último `plans_list` da sessão em foco (null = ainda não leu)
 let plansError = '';
@@ -2110,42 +1875,7 @@ export function plansSnapshot(data, err) {
 }
 
 function renderPlans() {
-  if (plansPane) { plansPane.sync(); return; }
-  const host = $('plans');
-  if (!host) return;
-  clear(host);
-  if (plansError) { host.appendChild(el('div', 'empty', plansError)); return; }
-  if (!plansData) { host.appendChild(el('div', 'empty', t('panel.no_plans'))); return; }
-  if (plansData.repo !== true) {
-    host.appendChild(el('div', 'empty', t('panel.no_plans_found')));
-    return;
-  }
-  const list = Array.isArray(plansData.plans) ? plansData.plans : [];
-  if (!list.length) { host.appendChild(el('div', 'empty', t('panel.no_plans'))); return; }
-  const cwd = current && current.cwd;
-  for (const p of list) {
-    const file = String(p.file || '');
-    const done = Number(p.done) || 0;
-    const total = Number(p.total) || 0;
-    const item = el('div', 'plan-item');
-    const row = el('div', 'file-row');
-    row.appendChild(el('span', 'file-name', String(p.name || file)));
-    if (p.source) row.appendChild(el('span', 'plan-source', String(p.source)));
-    if (p.current) row.appendChild(el('span', 'plan-current', String(p.current)));
-    row.appendChild(el('span', 'file-count', total ? done + '/' + total : t('panel.no_checklist')));
-    item.appendChild(row);
-    const bar = el('div', 'plan-bar');
-    const fill = el('div', 'plan-bar-fill');
-    fill.style.width = (total ? Math.min(100, Math.round((done / total) * 100)) : 0) + '%';
-    bar.appendChild(fill);
-    item.appendChild(bar);
-    item.title = file + ' · ' + t('plan.open_in_app');
-    item.onclick = async () => {
-      try { await inv('open_file', { cwd, path: file }); }
-      catch (e) { plansError = 'abrir: ' + String(e); renderPlans(); }
-    };
-    host.appendChild(item);
-  }
+  if (plansPane) plansPane.sync();
 }
 
 async function loadChildren(dir) {
@@ -2161,7 +1891,8 @@ async function loadChildren(dir) {
     renderChildren(list);
   } catch (e) {
     if (seq !== viewSeq) return;
-    setEmpty($('subs'), String(e));
+    subsError = String(e);
+    if (subsPane) subsPane.sync();
   }
 }
 
@@ -2211,73 +1942,6 @@ let lastSnap = null; // último widget ao vivo (runs em andamento), por sessão 
 let lastDiskList = null; // último histórico do disco, da sessão em foco
 let lastDiskKey = ''; // id/estado da última lista pintada: poll igual não repinta
 
-function liveRunBox(run, now) {
-  const state = String(run.state || '?');
-  const box = el('div', 'run');
-  const head = el('div', 'run-head');
-  head.appendChild(el('span', 'run-label', String(run.label || run.kind || 'run')));
-  head.appendChild(el('span', 'state state-' + state, state));
-  head.appendChild(el('span', 'tool-right run-time', elapsedFor(run, now)));
-  box.dataset.state = state;
-  box.dataset.started = String(run.startedAt || '');
-  box.dataset.updated = String(run.updatedAt || '');
-  box.appendChild(head);
-
-  for (const ch of run.children || []) {
-    const line = el('div', 'child');
-    line.dataset.state = String(ch.state || '');
-    line.dataset.started = String(ch.startedAt || '');
-    line.dataset.updated = String(ch.updatedAt || '');
-    line.appendChild(el('b', null, String(ch.label || ch.agent || ch.id)));
-    line.appendChild(el('span', null, ' · ' + String(ch.state || '?')));
-    if (ch.model) line.appendChild(el('span', null, ' · ' + ch.model.split('/').pop()));
-    if (ch.thinking) line.appendChild(el('span', null, ' · ' + ch.thinking));
-    const took = elapsedFor(ch, now);
-    line.appendChild(el('span', 'child-time', took ? ' · ' + took : ''));
-    box.appendChild(line);
-  }
-  return box;
-}
-
-/** Tempo a partir do dataset da row: mantém o relógio sem repintar a lista toda
- *  (repintar a cada segundo resetava o scroll do painel e perdia o hover). */
-function rowTiming(node) {
-  return {
-    state: node.dataset.state || '',
-    startedAt: Number(node.dataset.started) || 0,
-    updatedAt: Number(node.dataset.updated) || 0,
-  };
-}
-
-function tickSubsTimes(now = Date.now()) {
-  const host = $('subs');
-  if (!host) return;
-  for (const box of host.querySelectorAll('.run')) {
-    const time = box.querySelector('.run-time');
-    if (time) time.textContent = elapsedFor(rowTiming(box), now);
-    for (const line of box.querySelectorAll('.child')) {
-      const ct = line.querySelector('.child-time');
-      if (!ct) continue;
-      const took = elapsedFor(rowTiming(line), now);
-      ct.textContent = took ? ' · ' + took : '';
-    }
-  }
-}
-
-function diskRunBox(c) {
-  const box = el('div', 'run clickable');
-  box.title = c.id;
-  box.onclick = () => openChild(c);
-  const head = el('div', 'run-head');
-  head.appendChild(el('span', 'run-label', c.label || c.id.slice(0, 8)));
-
-  const meta = CHILD_STATE[c.state] || CHILD_STATE.unknown;
-  head.appendChild(el('span', 'state ' + meta[1], meta[0]));
-  head.appendChild(el('span', 'tool-right', c.run + ' · ' + relTime(c.mtime)));
-  box.appendChild(head);
-  return box;
-}
-
 /* Dedupe conservador: só esconde o item do disco se o id for exatamente igual ao
    do run ao vivo. O formato de run.id do widget não é verificado (produtor é a
    extensão externa pi-subagents), então igualdade frouxa poderia sumir com item. */
@@ -2285,31 +1949,15 @@ function sameSub(r, c) {
   return !!r && !!c && r.id != null && c.id != null && String(r.id) === String(c.id);
 }
 
-/* Ao vivo e histórico se fundem: cada fonte atualiza só o seu estado e o paint
-   desenha as duas metades. Antes um apagava o outro — o snapshot do widget limpava
-   o histórico do disco a cada update ("aparece e depois fica só esse"). */
-/** Relógio de 1 s do painel: o snapshot só chega quando o run muda, então sem isto
- *  o tempo do run congelava no último update ("11m16" parado). */
-let subsClock = null;
-function ensureSubsClock() {
-  if (subsClock) return;
-  subsClock = setInterval(() => {
-    const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
-    // Run terminado não faz o relógio andar: sem nenhum ao vivo, o timer morre.
-    if (!live.some(isLiveRun)) {
-      clearInterval(subsClock);
-      subsClock = null;
-      return;
-    }
-    tickSubsTimes();
-  }, 1000);
-}
+/* Ao vivo e histórico se fundem: cada fonte atualiza só o seu estado e o snapshot
+   desenha as duas metades (o preview resolve os tempos no componente). */
 
 /** Snapshot puro do painel Subagents (Svelte + testes). `live` são os runs do
  *  widget; `disk` o histórico de `list_children` (deduplicado por id). */
 export function subsSnapshot(live, disk, opts) {
   const o = opts || {};
   const now = o.now || Date.now();
+  if (o.error) return { empty: true, emptyLabel: String(o.error), warn: false, runs: [], history: [], historyHead: '' };
   const liveList = Array.isArray(live) ? live : [];
   const diskList = (Array.isArray(disk) ? disk : []).filter(c => !liveList.some(r => sameSub(r, c)));
   const runs = liveList.map(run => ({
@@ -2346,24 +1994,8 @@ export function subsSnapshot(live, disk, opts) {
   };
 }
 
-function paintSubs(now = Date.now()) {
-  if (subsPane) { subsPane.sync(); return; }
-  const host = $('subs');
-  if (!host) return;
-  const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
-  const disk = (lastDiskList || []).filter(c => !live.some(r => sameSub(r, c)));
-  clear(host);
-  if (!live.length && !disk.length) {
-    setEmpty(host, noSubsMessage());
-    applySubsWarning();
-    return;
-  }
-  for (const run of live) host.appendChild(liveRunBox(run, now));
-  if (live.length) ensureSubsClock();
-  if (disk.length) {
-    host.appendChild(el('div', 'history-head', t('subs.history', { n: disk.length })));
-    for (const c of disk) host.appendChild(diskRunBox(c));
-  }
+function paintSubs() {
+  if (subsPane) subsPane.sync();
 }
 
 export function renderSubs(snap) {
@@ -3077,7 +2709,7 @@ function fillModels(models, currentModel) {
   const cur = (sessionState && sessionState.model) || currentModel;
   if (cur) updateModelButton(cur);
   // Montado (Svelte): o filtro vive no componente; undefined = só atualizar.
-  renderModelList(modelPop ? undefined : ($('modelsearch') ? $('modelsearch').value : ''));
+  renderModelList();
   try { localStorage.setItem('models-cache', JSON.stringify(models)); } catch { /* sem storage */ }
   debugNote('providers=' + modelsByProvider.size + ' models=' + allModels.length);
 }
@@ -3114,51 +2746,22 @@ export function levelsSnapshot(levels, thinkingLevel) {
 }
 
 function renderModelList(filter) {
-  if (modelPop) { modelPop.sync(filter); return; }
-  const snap = modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter);
-  const byId = new Map(allModels.filter(m => m && m.id).map(m => [m.id, m]));
-  const host = $('modellist');
-  if (!host) return;
-  clear(host);
-  for (const g of snap.groups) {
-    host.appendChild(el('div', 'model-group', g.provider.toUpperCase()));
-    for (const r of g.rows) {
-      const row = el('div', 'model-row' + (r.current ? ' current' : ''));
-      row.appendChild(el('span', 'model-name', r.name));
-      row.appendChild(el('span', 'model-ctx', r.ctx));
-      const m = byId.get(r.id);
-      if (m) row.onclick = () => applyModel(m);
-      host.appendChild(row);
-    }
-  }
-  if (snap.empty) host.appendChild(el('div', 'model-empty', t('model.none')));
+  if (modelPop) modelPop.sync(filter);
 }
 
 function fillLevels(levels) {
   if (Array.isArray(levels)) levelList = levels;
-  if (modelPop) { modelPop.sync(); return; }
   const snap = levelsSnapshot(levelList, sessionState && sessionState.thinkingLevel);
+  // `#thinkbtn` é o chip da barra do composer (fora do pop): continua sendo do main.
   const btn = $('thinkbtn');
-  const foot = $('thinkfoot');
-  const slider = $('thinkslider');
-  const name = $('thinkname');
-  if (!btn || !foot || !slider || !name) return;
-  if (!snap.levels.length) {
-    btn.textContent = 'thinking';
-    foot.classList.add('hidden');
-    return;
+  if (btn) {
+    if (!snap.levels.length) btn.textContent = 'thinking';
+    else {
+      btn.textContent = snap.name;
+      btn.title = 'thinking: ' + snap.name + ' — clique para escolher';
+    }
   }
-
-  btn.textContent = snap.name;
-  btn.title = 'thinking: ' + snap.name + ' — clique para escolher';
-  // Modelo sem reasoning devolve só ["off"]: sem slider.
-  if (!snap.showSlider) { foot.classList.add('hidden'); return; }
-  foot.classList.remove('hidden');
-  slider.min = '0';
-  slider.max = String(snap.levels.length - 1);
-  slider.value = String(snap.at);
-  name.textContent = snap.name;
-  debugNote('levels=' + snap.levels.length + ' selected=' + (sessionState && sessionState.thinkingLevel));
+  if (modelPop) modelPop.sync();
 }
 
 function fmtTokens(n) {
@@ -3344,58 +2947,8 @@ export function ctxSnapshot(view, opts) {
   return { empty: false, blocks };
 }
 
-function appendAgg(host, agg) {
-  if (!agg) return;
-  const tot = el('div', 'ctx-total');
-  tot.appendChild(el('span', null, agg.totalLabel));
-  tot.appendChild(el('span', null, agg.totalText));
-  host.appendChild(tot);
-  for (const r of agg.rows) {
-    const row = el('div', 'ctx-sess');
-    row.appendChild(el('span', 'n', r.n));
-    row.appendChild(el('span', 'm' + (r.cls ? ' ' + r.cls : ''), r.m));
-    row.title = r.title;
-    host.appendChild(row);
-  }
-}
-
-function appendCtxBlock(host, b) {
-  if (b.t === 'row') {
-    const r = el('div', 'ctx-row');
-    r.appendChild(el('div', 'k', b.k));
-    r.appendChild(el('div', 'v' + (b.dim ? ' dim' : ''), b.v));
-    host.appendChild(r);
-  } else if (b.t === 'alert') {
-    host.appendChild(el('div', 'ctx-alert ' + b.kind, b.text));
-  } else if (b.t === 'limit') {
-    const limRow = el('div', 'ctx-row');
-    limRow.appendChild(el('div', 'k', t('ctx.compact_at')));
-    limRow.appendChild(renderLimitSelect(b.win));
-    host.appendChild(limRow);
-  } else if (b.t === 'agg') {
-    appendAgg(host, b.agg);
-  }
-}
-
 function renderCtxPop() {
-  if (ctxPop) { ctxPop.sync(); return; }
-  const host = $('ctxrows');
-  if (!host) return;
-  const view = liveStatsView(sessionState && sessionState.stats, currentLive());
-  const snap = ctxSnapshot(view, {
-    autoOn: !!(sessionState && sessionState.autoCompactionEnabled),
-    tabs, curKey: current && current.key,
-    reserve: compactReserve, win: ctxWindow(),
-    canEdit: !!(sessionState && sessionState.model && current),
-  });
-  clear(host);
-  if (snap.empty) {
-    // Sem stats da sessão atual: ainda mostra o agregado das abas que já têm.
-    for (const b of snap.blocks) appendCtxBlock(host, b);
-    if (!snap.blocks.length) setEmpty(host, t('panel.no_stats'));
-    return;
-  }
-  for (const b of snap.blocks) appendCtxBlock(host, b);
+  if (ctxPop) ctxPop.sync();
 }
 
 /** Chip do contexto. O valor exibido soma o parcial do turno em voo (liveStatsView),
@@ -3512,20 +3065,8 @@ export function forkSnapshot(messages) {
 
 function openForkPop(messages) {
   closeModelPop();
-  if (forkPop) { forkPop.sync(messages); $('forkpop').classList.remove('hidden'); return; }
-  const snap = forkSnapshot(messages);
-  const host = $('forklist');
-  clear(host);
-  if (!snap.length) { host.appendChild(el('div', 'model-empty', t('fork.empty'))); $('forkpop').classList.remove('hidden'); return; }
-  for (const r of snap) {
-    const row = el('div', 'model-row');
-    row.appendChild(el('span', 'model-name', r.label));
-    row.appendChild(el('span', 'model-ctx', r.short));
-    row.title = r.title;
-    const id = r.entryId;
-    row.onclick = () => { closeForkPop(); sendCommand({ type: 'fork', entryId: id }); };
-    host.appendChild(row);
-  }
+  if (!forkPop) return;
+  forkPop.sync(messages);
   $('forkpop').classList.remove('hidden');
 }
 
@@ -3541,25 +3082,7 @@ function ctxWindow() {
   return (cu && cu.contextWindow) || (m && m.contextWindow) || 0;
 }
 
-function renderLimitSelect(win) {
-  const snap = limitSnapshot(win, compactReserve, !!(sessionState && sessionState.model && current));
-  const sel = document.createElement('select');
-  sel.id = 'ctxlimit';
-  sel.className = 'ctx-sel';
-  sel.title = snap.title;
-  for (const o of snap.options) {
-    const opt = document.createElement('option');
-    opt.value = o.value;
-    opt.textContent = o.label;
-    sel.appendChild(opt);
-  }
-  sel.value = snap.value;
-  sel.disabled = snap.disabled;
-  sel.onchange = () => saveLimit(sel, win);
-  return sel;
-}
-
-/** Núcleo do save do limite (legado + Svelte): IPC + `compactReserve` + texto p/ `note`. */
+/** Núcleo do save do limite (Svelte): IPC + `compactReserve` + texto p/ `note`. */
 async function applyLimitValue(value, win) {
   const model = sessionState && sessionState.model;
   if (!current || !model || !(win > 0) || value === 'custom') return null;
@@ -3582,14 +3105,6 @@ async function applyLimitValue(value, win) {
   }
 }
 
-async function saveLimit(sel, win) {
-  const model = sessionState && sessionState.model;
-  if (!current || !model || !(win > 0) || sel.value === 'custom') return;
-  sel.disabled = true;
-  const text = await applyLimitValue(sel.value, win);
-  if (text != null) note(text);
-  renderCtxPop();
-}
 
 async function refreshCompactLimit() {
   const model = sessionState && sessionState.model;
@@ -3998,22 +3513,7 @@ export function tabsSnapshot(list, active) {
 function renderTabs() {
   // Toda mutação de aba passa por aqui: persiste sem RPC novo.
   saveTabs();
-  if (tabBar) { tabBar.sync(); return; }
-  const host = $('tabs');
-  if (!host) return;
-  clear(host);
-  for (const t of tabsSnapshot(tabs, activeTab)) {
-    const tab = el('div', 'tab' + (t.active ? ' active' : ''));
-    tab.title = t.titleAttr;
-    tab.appendChild(el('span', 'tab-dot' + t.dot));
-    tab.appendChild(el('span', 'tab-proj', t.project));
-    tab.appendChild(el('span', 'tab-title', t.title));
-    const x = el('button', 'tab-close', '✕');
-    x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
-    tab.appendChild(x);
-    tab.onclick = () => switchTab(t.key);
-    host.appendChild(tab);
-  }
+  if (tabBar) tabBar.sync();
 }
 
 async function switchTab(key) {
@@ -4398,7 +3898,6 @@ function runModelArg(args) {
   const hits = findModels(q);
   if (hits.length === 1) { applyModel(hits[0]); return; }
   if ($('modelpop').classList.contains('hidden')) $('modeltoggle').click();
-  $('modelsearch').value = q;
   renderModelList(q);
   if (!hits.length) note(t('model.not_found', { q }));
   else note(hits.length + ' modelos para "' + q + '" — escolha no seletor');
@@ -4490,17 +3989,7 @@ function renderPalette() {
   // Palette `/` e cmdk dividem o overlay: a lista visível é a da palette.
   $('cmdklist').classList.add('hidden');
   $('palettelist').classList.remove('hidden');
-  if (palettePane) { palettePane.sync(); return; }
-  const host = $('palettelist');
-  clear(host);
-  items.forEach((c, i) => {
-    const row = el('div', 'palette-row' + (i === palette.index ? ' sel' : ''));
-    row.appendChild(el('span', 'pname', '/' + c.name));
-    row.appendChild(el('span', 'pdesc', c.description || ''));
-    row.appendChild(el('span', 'psrc', c.app ? 'pi' : (c.source || '')));
-    row.onclick = () => { palette.index = i; applyPaletteItem(false); };
-    host.appendChild(row);
-  });
+  if (palettePane) palettePane.sync();
 }
 
 function applyPaletteItem(run) {
@@ -4628,28 +4117,10 @@ function renderCmdk() {
   // palette `/` e `clear()` nele destruiria os nós dele.
   $('palettelist').classList.add('hidden');
   $('cmdklist').classList.remove('hidden');
-  if (cmdkPane) { cmdkPane.sync(); return; }
-  const host = $('cmdklist');
-  clear(host);
-  if (!cmdk.items.length) {
-    host.appendChild(el('div', 'model-empty', t('palette.empty')));
-  } else {
-    let k = 0;
-    for (const g of groups) {
-      if (!g.rows.length) continue;
-      if (g.label) host.appendChild(el('div', 'palette-group', g.label));
-      for (const it of g.rows) {
-        const i = k++;
-        const row = el('div', 'palette-row' + (i === cmdk.index ? ' sel' : ''));
-        row.appendChild(el('span', 'pname', it.title));
-        row.appendChild(el('span', 'pdesc', it.desc || ''));
-        row.appendChild(el('span', 'psrc', it.src || ''));
-        row.onclick = () => runCmdkItem(i);
-        host.appendChild(row);
-      }
-    }
-  }
+  // O overlay precisa ficar visível antes do early-path: no caminho Svelte o
+  // `return` antigo pulava este `remove('hidden')` e o Ctrl+K não abria.
   $('palette').classList.remove('hidden');
+  if (cmdkPane) cmdkPane.sync();
 }
 
 function runCmdkItem(i) {
@@ -4707,12 +4178,8 @@ document.addEventListener('keydown', (e) => {
 function checkCommands(list) {
   const has = list.some(c => String((c && c.sourceInfo && c.sourceInfo.source) || '').includes('pi-subagents'));
   caps.subagents = has;
-  if (has) {
-    const warn = $('subs').querySelector('.warn-banner');
-    if (warn) warn.remove();
-  } else {
-    applySubsWarning();
-  }
+  // Aviso de extensão agora é renderizado pelo componente (snapshot.warn).
+  if (subsPane) subsPane.sync();
   debugNote('pi-subagents carregado=' + has);
 }
 
@@ -4720,15 +4187,6 @@ function noSubsMessage() {
   return caps.subagents === false ? t('panel.no_subs_ext') : t('panel.no_subs');
 }
 
-function applySubsWarning() {
-  const host = $('subs');
-  // Com o painel em Svelte o banner é renderizado pelo componente (snapshot.warn).
-  if (subsPane) return;
-  // Só avisa quando a extensão de fato não carregou: sem esta condição o painel
-  // repetia "nenhum subagent" (banner + vazio) depois de cada setEmpty.
-  if (!host || caps.subagents !== false || host.querySelector('.warn-banner')) return;
-  host.insertBefore(el('div', 'warn-banner', noSubsMessage()), host.firstChild);
-}
 
 /* Cada aba carrega só o que precisa. Antes `openPkgs` pagava `pi_list` (241 ms)
  * + `pi_mcp_list` (1519 ms) em série mesmo abrindo "Instalados". */
@@ -5159,15 +4617,9 @@ function themeNoteText(res, prefix) {
   return parts.join(' · ');
 }
 
-/** Linha de status do overlay: quantas chaves entraram, quais foram ignoradas e o erro de parse. */
-function showThemeNote(res, prefix) {
-  $('themenote').textContent = themeNoteText(res, prefix);
-}
-
 function openTheme() {
   $('settingspop').classList.add('hidden');
   $('theme').classList.remove('hidden');
-  $('themejson').focus();
 }
 
 /* =============== auth do provider (perto da versão do pi) =============== */
@@ -5348,20 +4800,7 @@ export function attachmentsSnapshot(images) {
 function renderAttachments() {
   const row = $('attachrow');
   if (row) row.classList.toggle('hidden', pendingImages.length === 0);
-  if (attachmentsPane) { attachmentsPane.sync(); return; }
-  clear(row);
-  pendingImages.forEach((img, i) => {
-    const box = el('div', 'attach');
-    const im = document.createElement('img');
-    im.src = img.dataUrl;
-    im.alt = 'imagem colada';
-    const del = el('button', 'tiny', '×');
-    del.title = 'Remover imagem';
-    del.onclick = () => { pendingImages.splice(i, 1); renderAttachments(); };
-    box.append(im, del);
-    row.appendChild(box);
-  });
-  row.classList.toggle('hidden', pendingImages.length === 0);
+  if (attachmentsPane) attachmentsPane.sync();
 }
 
 /** Imagem enviada, exibida no transcript. */
@@ -5484,23 +4923,9 @@ $('detail').addEventListener('mousedown', (e) => { if (e.target === $('detail'))
 $('modeltoggle').onclick = (e) => {
   e.stopPropagation();
   $('modelpop').classList.toggle('hidden');
-  if (!$('modelpop').classList.contains('hidden')) {
-    if (modelPop) modelPop.open();
-    else {
-      $('modelsearch').value = '';
-      renderModelList('');
-      $('modelsearch').focus();
-    }
-  }
+  if (!$('modelpop').classList.contains('hidden') && modelPop) modelPop.open();
 };
-$('modelsearch').oninput = (e) => renderModelList(e.target.value);
-$('modelsearch').onkeydown = (e) => { if (e.key === 'Escape') closeModelPop(); };
 $('thinkbtn').onclick = (e) => { e.stopPropagation(); $('modeltoggle').click(); };
-$('thinkslider').oninput = (e) => {
-  const lv = levelList[Number(e.target.value)];
-  if (lv) $('thinkname').textContent = lv;
-};
-$('thinkslider').onchange = (e) => modelPopHost.setLevel(e.target.value);
 
 document.addEventListener('click', (e) => {
   if (!$('modelpop').classList.contains('hidden')
@@ -5566,16 +4991,6 @@ function loadSettings() {
     uiSettings.notifyDesktop = raw.notifyDesktop !== false;
     uiSettings.notifySound = raw.notifySound !== false;
   } catch { /* defaults */ }
-  // Caminho novo (Svelte) lê os valores ao montar; o legado (fallback) precisa dos
-  // próprios controles sincronizados. Guardo por existência: um dos dois pode não estar.
-  const setChecked = (id, v) => { const n = $(id); if (n) n.checked = v; };
-  setChecked('setExpTools', uiSettings.expandTools);
-  setChecked('setExpThink', uiSettings.expandThink);
-  setChecked('setShowHidden', uiSettings.showHidden);
-  setChecked('setNotifyDesktop', uiSettings.notifyDesktop);
-  setChecked('setNotifySound', uiSettings.notifySound);
-  const legacySel = $('langsellegacy');
-  if (legacySel) legacySel.value = getLangPref();
   try {
     document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en';
   } catch { /* sem DOM */ }
@@ -5620,24 +5035,11 @@ const settingsHost = {
 
 /* Tela nova e tela antiga convivem: monta o Svelte e só esconde o markup legado
    quando o mount funciona. Sem Svelte, o popover continua funcionando como hoje. */
-let settingsMounted = null;
 try {
-  settingsMounted = mountSettings(settingsHost);
+  mountSettings(settingsHost);
 } catch (e) {
-  debugNote('settings svelte: mount falhou — usando o markup legado (' + e + ')');
+  debugNote('settings svelte: mount falhou (' + e + ')');
 }
-const legacySettings = $('settings-legacy');
-if (legacySettings) legacySettings.classList.toggle('hidden', !!settingsMounted);
-
-/* Handlers do caminho legado: só valem quando o Svelte não montou, mas ficam
-   ligados (idempotentes) porque os controles seguem no DOM como fallback. */
-const legacyBind = (id, fn) => { const n = $(id); if (n) n.onchange = fn; };
-legacyBind('setExpTools', (e) => settingsHost.setSetting('expandTools', e.target.checked));
-legacyBind('setExpThink', (e) => settingsHost.setSetting('expandThink', e.target.checked));
-legacyBind('setShowHidden', (e) => settingsHost.setSetting('showHidden', e.target.checked));
-legacyBind('setNotifyDesktop', (e) => settingsHost.setSetting('notifyDesktop', e.target.checked));
-legacyBind('setNotifySound', (e) => settingsHost.setSetting('notifySound', e.target.checked));
-legacyBind('langsellegacy', (e) => settingsHost.setLang(e.target.value));
 
 async function runUpdate(scope) {
   const out = $('updOut');
@@ -5654,17 +5056,6 @@ $('updPi').onclick = () => runUpdate('self');
 $('pkgbtn').onclick = () => openPkgs();
 $('themebtn').onclick = () => openTheme();
 $('themeback').onclick = () => $('theme').classList.add('hidden');
-$('themeapply').onclick = () => showThemeNote(applyTheme($('themejson').value), null);
-$('themeexport').onclick = () => {
-  const current = themeFromDom();
-  $('themejson').value = JSON.stringify(current, null, 2);
-  showThemeNote(validateTheme(current), t('theme.exported'));
-};
-$('themereset').onclick = () => {
-  resetTheme();
-  $('themejson').value = '';
-  $('themenote').textContent = t('theme.restored');
-};
 
 /* Host do diálogo Svelte de Tema: presets + JSON usam o mesmo motor
    (`applyTheme`/`validateTheme`/`themeFromDom`/`resetTheme`), sem o componente
@@ -5707,14 +5098,11 @@ const themeHost = {
 
 /* Diálogo novo e overlay legado convivem: monta o Svelte e só esconde o markup
    legado quando o mount funciona. Sem Svelte, o overlay continua como hoje. */
-let themeMounted = null;
 try {
-  themeMounted = mountTheme(themeHost);
+  mountTheme(themeHost);
 } catch (e) {
-  debugNote('theme svelte: mount falhou — usando o overlay legado (' + e + ')');
+  debugNote('theme svelte: mount falhou (' + e + ')');
 }
-const legacyTheme = $('theme-legacy');
-if (legacyTheme) legacyTheme.classList.toggle('hidden', !!themeMounted);
 
 /* Hosts dos pops do composer (Fase 2): snapshots puros entram no componente,
    ações voltam para as funções deste módulo. O componente nunca importa este
@@ -5998,7 +5386,7 @@ const subsHost = {
   snapshot: (now) => subsSnapshot(
     lastSnap && lastSnap.runs,
     lastDiskList,
-    { now, warn: caps.subagents === false, emptyLabel: noSubsMessage() },
+    { now, warn: caps.subagents === false, emptyLabel: noSubsMessage(), error: subsError },
   ),
   openChild(id) {
     const c = (lastDiskList || []).find(x => String(x.id) === id);

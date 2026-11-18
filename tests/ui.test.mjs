@@ -1354,6 +1354,8 @@ describe('palette global Ctrl+K (Fase 5c)', () => {
     expect(target.querySelectorAll('.palette-row').length).toBe(1);
     expect(document.getElementById('cmdklist').childElementCount).toBeGreaterThan(0);
     expect(target.classList.contains('hidden')).toBe(true);
+    // Regressão da 5c: o early-path retornava antes do remove('hidden') do overlay.
+    expect(document.getElementById('palette').classList.contains('hidden')).toBe(false);
     closeCmdk();
     expect(target.classList.contains('hidden')).toBe(false);
     unmount(inst);
@@ -1399,14 +1401,11 @@ describe('indicador de digitação (Fase 5d)', () => {
 });
 
 describe('integridade da migracao Svelte (Fase 7b)', () => {
-  it('todo wrapper legacy fica escondido quando o mount funciona', () => {
-    // Regressão real (Fase 5d): o markup legado do #typing ficou visível ao lado
-    // do componente e aparecia com o painel oculto. Cada wrapper precisa ser
-    // escondido no boot quando o mount correspondente funciona.
+  it('não existe mais wrapper legacy no HTML (migração completa)', () => {
+    // Fase 7c: com os componentes Svelte assumindo todas as telas, os wrappers
+    // de fallback foram removidos. Se algum voltar, este teste avisa.
     for (const id of ['settings-legacy', 'theme-legacy', 'modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy', 'typing-legacy']) {
-      const n = document.getElementById(id);
-      if (!n) continue;
-      expect({ id, hidden: n.classList.contains('hidden') }).toEqual({ id, hidden: true });
+      expect({ id, present: !!document.getElementById(id) }).toEqual({ id, present: false });
     }
   });
 

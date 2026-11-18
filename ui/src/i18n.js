@@ -780,7 +780,6 @@ export function applyStaticI18n() {
   ph('toolfilter', t('sidebar.tool_filter_ph'));
   ph('input', t('composer.placeholder'));
   ph('cmdkinput', t('composer.cmd_ph'));
-  ph('modelsearch', t('composer.model_search_ph'));
   ph('catsearch', t('pkgs.catalog_ph'));
   ph('provsearch', t('prov.search_ph'));
   ph('mcpname', t('mcp.name_ph'));
@@ -789,13 +788,6 @@ export function applyStaticI18n() {
   set('confirmok', t('common.execute'));
   set('confirmcancel', t('common.cancel'));
   ti('stopbtn', t('composer.stop'));
-  set('lblExpTools', t('settings.expand_tools'));
-  set('lblExpThink', t('settings.expand_think'));
-  set('lblShowHidden', t('settings.show_hidden'));
-  set('lblNotifyDesktop', t('settings.notify_desktop'));
-  set('lblNotifySound', t('settings.notify_sound'));
-  set('lblHooks', t('settings.instrument'));
-  set('lblLang', t('settings.language'));
   set('themebtn', t('settings.theme'));
   set('pkgbtn', t('settings.packages'));
   set('debugbtn', t('settings.debug'));
@@ -804,14 +796,4 @@ export function applyStaticI18n() {
   set('updatebtn', t('update.install'));
   set('updExt', t('settings.update_ext'));
   set('updPi', t('settings.update_pi'));
-  try {
-    // `langsel` pertence ao componente Svelte (ele mesmo traduz as opções);
-    // aqui só o select do markup legado (fallback).
-    const sel = document.getElementById('langsellegacy');
-    if (sel && sel.options.length >= 3) {
-      sel.options[0].textContent = t('settings.lang_auto');
-      sel.options[1].textContent = t('settings.lang_pt');
-      sel.options[2].textContent = t('settings.lang_en');
-    }
-  } catch { /* sem DOM */ }
 }
