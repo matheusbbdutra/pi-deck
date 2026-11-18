@@ -151,6 +151,121 @@ export default function (pi) {
 }
 "#;
 
+/// Agrega tokens e custo do histórico de sessões por dia e por projeto.
+/// Lê `usage.cost.total`/`usage.totalTokens` das mensagens assistant nos `.jsonl`
+/// (o dado existe no disco; o TUI não o expõe agregado).
+#[tauri::command]
+pub fn usage_stats(days: Option<usize>) -> Result<String, String> {
+    use std::collections::BTreeMap;
+    use std::io::{BufRead, BufReader};
+
+    let root = sessions_root()?;
+    let keep_days = days.unwrap_or(30).clamp(1, 365);
+    let mut by_day: BTreeMap<String, (u64, f64)> = BTreeMap::new();
+    let mut by_proj: BTreeMap<String, (usize, u64, f64)> = BTreeMap::new();
+    let mut tot_tokens = 0u64;
+    let mut tot_cost = 0f64;
+    let mut tot_sessions = 0usize;
+
+    let Ok(projects) = std::fs::read_dir(&root) else {
+        return Ok("{\"days\":[],\"projects\":[],\"totals\":{\"tokens\":0,\"cost\":0,\"sessions\":0}}".to_string());
+    };
+    for proj in projects.flatten() {
+        let pdir = proj.path();
+        if !pdir.is_dir() {
+            continue;
+        }
+        let pname = proj.file_name().to_string_lossy().trim_matches('-').to_string();
+        let mut proj_sessions = 0usize;
+        let mut proj_tokens = 0u64;
+        let mut proj_cost = 0f64;
+        let Ok(files) = std::fs::read_dir(&pdir) else { continue };
+        for f in files.flatten() {
+            let path = f.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(fh) = std::fs::File::open(&path) else { continue };
+            let mut touched = false;
+            for line in BufReader::new(fh).lines().map_while(Result::ok) {
+                // Filtro barato: só mensagens que trazem `usage` (usually assistant).
+                if !line.contains("\"usage\"") || !line.contains("\"type\":\"message\"") {
+                    continue;
+                }
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+                let Some(usage) = v.get("message").and_then(|m| m.get("usage")) else { continue };
+                let tokens = usage.get("totalTokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                let cost = usage
+                    .get("cost")
+                    .and_then(|c| c.get("total"))
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0);
+                let day = v
+                    .get("timestamp")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.chars().take(10).collect::<String>())
+                    .unwrap_or_default();
+                if !day.is_empty() {
+                    let e = by_day.entry(day).or_insert((0, 0.0));
+                    e.0 += tokens;
+                    e.1 += cost;
+                }
+                proj_tokens += tokens;
+                proj_cost += cost;
+                touched = true;
+            }
+            if touched {
+                proj_sessions += 1;
+            }
+        }
+        if proj_sessions > 0 {
+            tot_tokens += proj_tokens;
+            tot_cost += proj_cost;
+            tot_sessions += proj_sessions;
+            let e = by_proj.entry(pname).or_insert((0, 0, 0.0));
+            e.0 += proj_sessions;
+            e.1 += proj_tokens;
+            e.2 += proj_cost;
+        }
+    }
+
+    // Só os últimos N dias (o histórico inteiro dilui o gráfico).
+    let cutoff = by_day
+        .keys()
+        .rev()
+        .nth(keep_days.saturating_sub(1))
+        .cloned();
+    let mut days: Vec<serde_json::Value> = Vec::new();
+    for (date, (tokens, cost)) in by_day.into_iter().rev() {
+        if let Some(c) = &cutoff {
+            if date.as_str() < c.as_str() {
+                break;
+            }
+        }
+        days.push(serde_json::json!({ "date": date, "tokens": tokens, "cost": cost }));
+    }
+    days.reverse();
+
+    let mut projects: Vec<serde_json::Value> = by_proj
+        .into_iter()
+        .map(|(name, (sessions, tokens, cost))| {
+            serde_json::json!({ "name": name, "sessions": sessions, "tokens": tokens, "cost": cost })
+        })
+        .collect();
+    projects.sort_by(|a, b| {
+        let ca = a.get("cost").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let cb = b.get("cost").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(serde_json::json!({
+        "days": days,
+        "projects": projects,
+        "totals": { "tokens": tot_tokens, "cost": tot_cost, "sessions": tot_sessions },
+    })
+    .to_string())
+}
+
 /// Lista de providers conhecidos pelo pi (com flag `configured`).
 /// O CLI só expõe essa lista no erro de `pi auth login <invalido>`, então é de lá que vem.
 #[tauri::command]
@@ -249,6 +364,26 @@ pub fn auth_status(provider: String) -> Result<String, String> {
         .args(["auth", "check", "--provider", p, "--json"])
         .output()
         .map_err(|e| format!("spawn pi auth: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Remove as credenciais de um provider (`pi auth logout <provider>`).
+/// O CLI apaga o que está em `~/.pi/agent/auth.json`; env e models.json ficam.
+/// Re-login (`auth login`) cobre o caso de "editar" a credencial.
+#[tauri::command]
+pub fn auth_logout(provider: String) -> Result<String, String> {
+    let p = provider.trim();
+    if p.is_empty() {
+        return Err("provider vazio".to_string());
+    }
+    let out = std::process::Command::new(pi_bin())
+        .args(["auth", "logout", p])
+        .output()
+        .map_err(|e| format!("spawn pi auth logout: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() { "pi auth logout falhou".to_string() } else { err });
+    }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 

@@ -990,6 +990,8 @@ function renderMessages(data, ctx, keepNote) {
   if (target === $('log')) setEmptyState(false);
   const store = (ctx && ctx.store) || cards;
   const messages = (data && data.messages) || [];
+  // Guarda a lista carregada da sessão atual para o inspetor de contexto.
+  if (target === $('log')) lastMessages = messages;
   const note = keepNote ? target.querySelector('.row.note') : null;
   clear(target);
   if (note) target.appendChild(note);
@@ -2957,6 +2959,11 @@ export function ctxSnapshot(view, opts) {
   }
   blocks.push({ t: 'row', k: t('ctx.cost'), v: fmtCost(st.cost) });
   blocks.push({ t: 'row', k: t('ctx.messages'), v: String(st.totalMessages || 0), dim: true });
+  // Composição estimada do contexto carregado (o que ocupa a janela).
+  if (Array.isArray(o.messages) && o.messages.length) {
+    const comp = ctxComposition(o.messages);
+    if (comp.total > 0) blocks.push({ t: 'comp', comp });
+  }
   return { empty: false, blocks };
 }
 
@@ -3377,6 +3384,37 @@ function updateLoadMore(meta) {
   const left = Math.max(0, (meta.total || 0) - loadedConsumed);
   $('loadmorebtn').textContent = 'carregar anteriores (' + left + ' de ' + (meta.total || 0) + ')';
   bar.classList.remove('hidden');
+}
+
+let lastMessages = [];
+
+/** Composição estimada do contexto por categoria (chars/4, mesma heurística). */
+export function ctxComposition(messages) {
+  const out = { system: 0, user: 0, assistant: 0, tools: 0, total: 0 };
+  for (const m of messages || []) {
+    if (!m) continue;
+    let text = 0;
+    let tool = 0;
+    for (const b of Array.isArray(m.content) ? m.content : []) {
+      if (!b) continue;
+      if (b.type === 'text' || b.type === 'thinking') text += String(b.text || b.thinking || '').length;
+      else if (b.type === 'toolCall') {
+        tool += String(b.name || '').length;
+        try { tool += JSON.stringify(b.arguments || {}).length; } catch { /* parcial */ }
+      } else if (b.type === 'toolResult') {
+        tool += String(b.text || '').length;
+        try { tool += JSON.stringify(b.content || '').length; } catch { /* parcial */ }
+      }
+    }
+    const tk = Math.ceil(text / 4);
+    const tl = Math.ceil(tool / 4);
+    if (m.role === 'system') out.system += tk + tl;
+    else if (m.role === 'user') out.user += tk;
+    else if (m.role === 'assistant') { out.assistant += tk; out.tools += tl; }
+    else out.tools += tk + tl;
+  }
+  out.total = out.system + out.user + out.assistant + out.tools;
+  return out;
 }
 
 function messages0(meta) {
@@ -4584,7 +4622,7 @@ function switchSettingsTab(name) {
   for (const b of document.querySelectorAll('#settings-tabs .settings-tab')) {
     b.classList.toggle('active', b.dataset.pane === name);
   }
-  for (const p of ['general', 'theme', 'pkgs', 'debug', 'about']) {
+  for (const p of ['general', 'theme', 'pkgs', 'providers', 'debug', 'about']) {
     const node = $('pane-' + p);
     if (node) node.classList.toggle('hidden', p !== name);
   }
@@ -4594,6 +4632,8 @@ function switchSettingsTab(name) {
     if (!$('mcpenvrows').childElementCount) addEnvRow();
   }
   if (name === 'debug') { loadMissions(); renderHealthList(); renderDiag(); }
+  if (name === 'providers') loadProvidersTab();
+  if (name === 'usage') loadUsageTab();
   if (name === 'about') openAbout();
 }
 
@@ -4683,6 +4723,152 @@ function renderProviders(filter) {
     row.appendChild(btn);
     host.appendChild(row);
   }
+}
+
+/* =============== aba Custo (histórico de tokens/custo) =============== */
+/** Agrega o histórico (Rust varre os .jsonl): custo e tokens por dia/projeto. */
+async function loadUsageTab() {
+  const st = $('usagestatus');
+  if (st) st.textContent = 'lendo histórico…';
+  try {
+    const data = JSON.parse(String(await inv('usage_stats', { days: 30 })));
+    renderUsageTab(data);
+    if (st) st.textContent = '';
+  } catch (e) {
+    if (st) st.textContent = 'falha ao ler o histórico: ' + String(e);
+  }
+}
+
+function usageKv(label, value) {
+  const box = el('div', 'usage-kv');
+  box.appendChild(el('span', 'usage-kv-k', label));
+  box.appendChild(el('span', 'usage-kv-v', value));
+  return box;
+}
+
+function renderUsageTab(data) {
+  const d = data || {};
+  const totals = d.totals || {};
+  const totHost = $('usagetotals');
+  if (totHost) {
+    clear(totHost);
+    totHost.append(
+      usageKv('sessões', String(totals.sessions || 0)),
+      usageKv('tokens', fmtTokens(totals.tokens || 0)),
+      usageKv('custo', fmtCost(totals.cost || 0)),
+    );
+  }
+
+  const daysHost = $('usagedays');
+  if (daysHost) {
+    clear(daysHost);
+    const days = Array.isArray(d.days) ? d.days : [];
+    if (!days.length) setEmpty(daysHost, 'sem histórico de custo');
+    const max = Math.max(1e-9, ...days.map(x => Number(x.cost) || 0));
+    for (const x of days) {
+      const cost = Number(x.cost) || 0;
+      const row = el('div', 'usage-bar-row');
+      row.appendChild(el('span', 'usage-bar-label', String(x.date || '').slice(5)));
+      const bar = el('div', 'usage-bar');
+      const fill = el('div', 'usage-bar-fill');
+      fill.style.width = Math.round((cost / max) * 100) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el('span', 'usage-bar-val', fmtCost(cost)));
+      row.title = (x.date || '') + ' · ' + fmtTokens(x.tokens || 0) + ' tokens';
+      daysHost.appendChild(row);
+    }
+  }
+
+  const projHost = $('usageprojects');
+  if (projHost) {
+    clear(projHost);
+    const projects = Array.isArray(d.projects) ? d.projects : [];
+    if (!projects.length) setEmpty(projHost, 'sem sessões com usage');
+    for (const p of projects.slice(0, 15)) {
+      const row = el('div', 'file-row');
+      row.appendChild(el('span', 'file-name', String(p.name || '?')));
+      row.appendChild(el('span', 'file-count', String(p.sessions || 0) + ' sess'));
+      row.appendChild(el('span', 'file-dir', fmtTokens(p.tokens || 0)));
+      row.appendChild(el('span', 'git-add', fmtCost(p.cost || 0)));
+      projHost.appendChild(row);
+    }
+  }
+}
+
+/* =============== aba Providers (modal) =============== */
+/** Carrega a lista de providers e pinta a aba do modal (logar/remover). */
+async function loadProvidersTab() {
+  const status = $('provstatus');
+  if (status) status.textContent = 'carregando…';
+  try {
+    authProvidersCache = JSON.parse(String(await inv('auth_providers')));
+    if (status) status.textContent = '';
+  } catch (e) {
+    authProvidersCache = [];
+    if (status) status.textContent = 'falha ao listar: ' + String(e);
+  }
+  renderProvidersTab();
+}
+
+function renderProvidersTab() {
+  const host = $('provtab');
+  if (!host) return;
+  clear(host);
+  const list = Array.isArray(authProvidersCache) ? authProvidersCache : [];
+  if (!list.length) { setEmpty(host, 'nenhum provedor'); return; }
+  for (const p of list) {
+    if (!p || !p.name) continue;
+    const row = el('div', 'cat-row prov-row');
+    row.appendChild(el('span', 'cat-name', p.name));
+    if (p.status === 'ready') row.appendChild(el('span', 'cat-installed', 'pronto'));
+    else if (p.configured) row.appendChild(el('span', 'prov-nocred', 'sem credencial'));
+
+    const login = el('button', 'ghost', p.status === 'ready' ? 'relogar' : 'logar');
+    login.title = 'abre um terminal com pi auth login ' + p.name;
+    login.onclick = () => startLogin(p.name);
+    row.appendChild(login);
+
+    const del = el('button', 'ghost', 'remover');
+    del.title = 'pi auth logout ' + p.name + ' (apaga a credencial de auth.json)';
+    del.onclick = async () => {
+      del.disabled = true;
+      try {
+        await inv('auth_logout', { provider: p.name });
+        note('credencial de ' + p.name + ' removida');
+      } catch (e) {
+        note('remover ' + p.name + ': ' + e);
+        del.disabled = false;
+      }
+      await loadProvidersTab();
+    };
+    row.appendChild(del);
+    host.appendChild(row);
+  }
+}
+
+/* =============== monitor de memória (app + pi) =============== */
+let memTimer = null;
+function fmtMb(kb) {
+  const n = Number(kb) || 0;
+  if (!n) return '—';
+  return n >= 1024 ? Math.round(n / 1024) + ' MB' : n + ' kB';
+}
+async function updateMem() {
+  const node = $('meminfo');
+  if (!node) return;
+  try {
+    const m = JSON.parse(String(await inv('mem_usage')));
+    node.textContent = 'app ' + fmtMb(m.appKb) + ' · pi ' + fmtMb(m.piKb)
+      + (m.piCount ? ' (' + m.piCount + ')' : '');
+    node.title = 'RSS do sightdeck: ' + fmtMb(m.appKb)
+      + '\nRSS do pi em execução (' + m.piCount + ' processo(s)): ' + fmtMb(m.piKb);
+  } catch { /* sem /proc ou comando indisponível */ }
+}
+function startMemMonitor() {
+  if (memTimer) return;
+  updateMem();
+  memTimer = setInterval(updateMem, 5000);
 }
 
 async function checkAuth() {
@@ -5174,6 +5360,7 @@ const ctxPopHost = {
       tabs, curKey: current && current.key,
       reserve: compactReserve, win: ctxWindow(),
       canEdit: !!(sessionState && sessionState.model && current),
+      messages: lastMessages,
     });
   },
   async saveLimit(value) {
@@ -5503,6 +5690,7 @@ setEmptyState(true, 'nosession');
 loadSettings();
 loadTreeState();
 loadCachedModels();
+startMemMonitor();
 loadModelFavs();
 loadLastModel();
 loadCachedLevels();

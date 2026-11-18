@@ -32,6 +32,8 @@
     <button class="settings-tab active" data-pane="general">Geral</button>
     <button class="settings-tab" data-pane="theme">Tema</button>
     <button class="settings-tab" data-pane="pkgs">Pacotes</button>
+    <button class="settings-tab" data-pane="providers">Providers</button>
+    <button class="settings-tab" data-pane="usage">Custo</button>
     <button class="settings-tab" data-pane="debug">Debug</button>
     <button class="settings-tab" data-pane="about">Sobre</button>
   </div>
@@ -109,6 +111,27 @@
         <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
       </div>
     </div>
+    <div id="pane-providers" class="pane hidden">
+      <div class="settings-actions" style="margin-bottom:8px">
+        <button id="provrefresh" class="ghost">Atualizar</button>
+        <span id="provstatus" class="hint"></span>
+      </div>
+      <div id="provtab"></div>
+      <p class="hint">Logar abre um terminal com <code>pi auth login &lt;provider&gt;</code>.
+      Remover apaga a credencial de <code>~/.pi/agent/auth.json</code> (env e models.json ficam).
+      Para "editar", basta logar de novo: a credencial nova substitui a antiga.</p>
+    </div>
+    <div id="pane-usage" class="pane hidden">
+      <div class="settings-actions" style="margin-bottom:8px">
+        <button id="usagerefresh" class="ghost">Atualizar</button>
+        <span id="usagestatus" class="hint"></span>
+      </div>
+      <div id="usagetotals" class="usage-totals"></div>
+      <h4>Custo por dia (últimos 30)</h4>
+      <div id="usagedays" class="usage-days"></div>
+      <h4>Por projeto</h4>
+      <div id="usageprojects" class="usage-projects"></div>
+    </div>
     <div id="pane-about" class="pane hidden">
       <div id="aboutlist"></div>
       <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
@@ -143,7 +166,7 @@
     <div id="searchresults" class="sess-list hidden"></div>
   </div>
   <div id="sessions"></div>
-  <div class="side-foot"><span id="piversion">pi …</span><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
+  <div class="side-foot"><span id="piversion">pi …</span><span id="meminfo" class="mem-info" title="consumo de memória"></span><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
   <div id="colgripaside" class="col-grip col-grip-aside" title="arraste com Ctrl para redimensionar"></div>
 </aside>
 

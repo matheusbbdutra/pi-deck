@@ -5,6 +5,7 @@ mod plans;
 mod pty;
 mod rpc;
 mod sessions;
+mod sysinfo;
 
 fn main() {
     // Os plugins de E2E só existem no binário de teste (`--features e2e`).
@@ -68,6 +69,9 @@ fn main() {
             sessions::copy_text,
             sessions::auth_status,
             sessions::auth_providers,
+            sessions::auth_logout,
+            sessions::usage_stats,
+            sysinfo::mem_usage,
             sessions::pick_directory,
             sessions::pick_file,
             sessions::paste_image,

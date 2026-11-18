@@ -42,6 +42,18 @@
         {#each b.limit.options as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
       </select>
     </div>
+  {:else if b.t === 'comp'}
+    <div class="ctx-comp">
+      <div class="ctx-comp-head">{tr('ctx.composition')}</div>
+      {#each [['system', 'ctx.comp_system'], ['user', 'ctx.comp_user'], ['assistant', 'ctx.comp_assistant'], ['tools', 'ctx.comp_tools']] as [key, label] (key)}
+        {@const pct = b.comp.total ? Math.round((b.comp[key] / b.comp.total) * 100) : 0}
+        <div class="ctx-comp-row">
+          <span class="ctx-comp-label">{tr(label)}</span>
+          <span class="ctx-comp-bar"><span class="ctx-comp-fill {key}" style="width:{pct}%"></span></span>
+          <span class="ctx-comp-val">{pct}%</span>
+        </div>
+      {/each}
+    </div>
   {:else if b.t === 'agg'}
     <div class="ctx-total"><span>{b.agg.totalLabel}</span><span>{b.agg.totalText}</span></div>
     {#each b.agg.rows as r (r.title)}

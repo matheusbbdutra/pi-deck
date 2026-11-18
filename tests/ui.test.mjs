@@ -63,6 +63,7 @@ let msgSpeed;
 let modelListSnapshot;
 let levelsSnapshot;
 let ctxSnapshot;
+let ctxComposition;
 let limitSnapshot;
 let forkSnapshot;
 let tabsSnapshot;
@@ -107,7 +108,7 @@ beforeAll(async () => {
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
-     limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping } = await import('../ui/src/main.js'));
+     limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping, ctxComposition } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -1421,6 +1422,27 @@ describe('integridade da migracao Svelte (Fase 7b)', () => {
   });
 });
 
+describe('inspetor de contexto (Fase 8)', () => {
+  it('ctxComposition separa system/user/assistant/tools por estimativa', () => {
+    const msgs = [
+      { role: 'system', content: [{ type: 'text', text: 'x'.repeat(400) }] },
+      { role: 'user', content: [{ type: 'text', text: 'y'.repeat(400) }] },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'z'.repeat(400) },
+        { type: 'toolCall', name: 'edit', arguments: { a: 1 } },
+      ] },
+      { role: 'tool', content: [{ type: 'toolResult', text: 'w'.repeat(400) }] },
+    ];
+    const comp = ctxComposition(msgs);
+    expect(comp.system).toBe(100);
+    expect(comp.user).toBe(100);
+    expect(comp.assistant).toBe(100);
+    expect(comp.tools).toBeGreaterThan(100);
+    expect(comp.total).toBe(comp.system + comp.user + comp.assistant + comp.tools);
+    expect(ctxComposition([]).total).toBe(0);
+  });
+});
+
 describe('Esc interrompe o turno', () => {
   it('aborta com turno trabalhando e foco no composer', () => {
     expect(shouldAbortOnEsc({ overlayOpen: false, inTerminal: false, working: true })).toBe(true);
@@ -1496,7 +1518,8 @@ describe('avisos de extensão no Debug e overlay Sobre', () => {
   it('todo id que o main.js consulta no Sobre/avisos existe no index.html', () => {
     // Fase 7d: Sobre e manutenção viraram ABAS do modal único (sem popover).
     for (const id of ['aboutlist', 'healthlist', 'healthchip', 'settings', 'settings-tabs',
-      'pane-about', 'pane-debug', 'pane-pkgs', 'pane-theme', 'pane-general',
+      'pane-about', 'pane-debug', 'pane-pkgs', 'pane-theme', 'pane-general', 'pane-providers', 'pane-usage',
+      'provtab', 'provstatus', 'meminfo', 'usagetotals', 'usagedays', 'usageprojects',
       'checkupdate', 'updExt', 'updPi', 'updOut']) {
       expect(document.getElementById(id), id).not.toBeNull();
     }

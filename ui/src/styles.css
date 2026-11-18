@@ -657,6 +657,29 @@
   .settings-tab:hover { color:var(--dim); }
   .settings-tab.active { color:var(--fg); border-bottom-color:var(--accent); }
   .pane.hidden { display:none; }
+  /* Dashboard de custo (aba Custo) */
+  .usage-totals { display:flex; gap:22px; margin:0 0 14px; }
+  .usage-kv { display:flex; flex-direction:column; }
+  .usage-kv-k { font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); }
+  .usage-kv-v { font-family:var(--mono); font-size:15px; color:var(--fg); }
+  .usage-bar-row { display:flex; align-items:center; gap:8px; padding:2px 0;
+                   font-family:var(--mono); font-size:11px; }
+  .usage-bar-label { width:46px; color:var(--dim); flex:none; }
+  .usage-bar { flex:1; height:6px; background:var(--bg-0); border-radius:3px; overflow:hidden; }
+  .usage-bar-fill { height:100%; background:var(--accent); }
+  .usage-bar-val { width:76px; text-align:right; color:var(--ink-4); flex:none; }
+  /* Inspetor de contexto (popover): composição estimada */
+  .ctx-comp { margin:8px 0 0; }
+  .ctx-comp-head { font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+                   color:var(--mute); margin-bottom:4px; }
+  .ctx-comp-row { display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; }
+  .ctx-comp-label { width:66px; color:var(--dim); flex:none; }
+  .ctx-comp-bar { flex:1; height:5px; background:var(--bg-0); border-radius:3px; overflow:hidden; }
+  .ctx-comp-fill { display:block; height:100%; background:var(--accent); }
+  .ctx-comp-fill.system { background:var(--warn); }
+  .ctx-comp-fill.assistant { background:var(--ok); }
+  .ctx-comp-fill.tools { background:var(--mute); }
+  .ctx-comp-val { width:36px; text-align:right; color:var(--ink-4); flex:none; }
   .cat-search { max-width:520px; margin-bottom:10px; border:1px solid var(--line) !important;
                 border-radius:6px !important; }
   .cat-list { display:flex; flex-direction:column; gap:1px; }
