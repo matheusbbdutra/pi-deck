@@ -1,5 +1,19 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, v0.2.5 publicada)
+
+- **v0.2.5 publicada** (11 assets: 5 instaladores + 5 `.sig` + `latest.json`). Run `44321035468`
+  verde em todos os jobs (`test`, `test (windows)`, `clippy`, builds, `publish`).
+- **Primeira release com auto-update assinado.** `latest.json` lista `linux-x86_64-{appimage,deb,rpm}`
+  e `windows-x86_64-{nsis,msi}`.
+- **Atenção**: quem está na 0.2.4 **não** recebe 0.2.5 automaticamente (o updater entrou nesta
+  versão). O primeiro ciclo automático é **0.2.5 → 0.2.6**.
+- **Par de chaves rotacionado** para `~/.tauri/sightdeck-v2.key` (senha no Bitwarden): a chave
+  anterior tinha senha perdida e nunca assinou release publicada. `tauri.conf.json` foi atualizado
+  para o `pubkey` novo; `.pi-lens.json` não foi necessário (LSP resolveu com `ui/vite.config.js`).
+- Armadilhas de assinatura documentadas em `docs/RELEASE.md` (senha obrigatória para chave cifrada,
+  verificação do aviso de pubkey divergente antes de publicar).
+
 ## Onde estamos (2026-11-18, updater)
 
 - Updater Tauri em implementação: Rust pronto (`Cargo.toml`, `main.rs` 2 builders, `tauri.conf.json` pubkey/endpoints/`createUpdaterArtifacts`, capabilities `updater`+`process`). Falta: deps JS, UI via plugin, CI (`latest.json` + tar/zip). NÃO commitar/taggear sem pedido.

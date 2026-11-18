@@ -103,6 +103,23 @@ No CI, dois secrets:
 
 E no config: `bundle.createUpdaterArtifacts: true`.
 
+### Armadilhas de assinatura no CI (já pagas)
+
+- **Chave cifrada exige o secret de senha.** `npx tauri signer generate -p "<senha>"` gera chave
+  cifrada: sem `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` o build morre em
+  `failed to decode secret key: incorrect updater private key password`. Senha **vazia** só funciona
+  para chave **sem** senha (`-p ""`). Escolha uma das duas e registre no Bitwarden.
+- **Senha com espaço/quebra no fim** dá o mesmo erro. Para blindar:
+  `printf '%s' '<senha>' > /tmp/pw && gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < /tmp/pw && rm -f /tmp/pw`.
+- **Não confie em `grep KDF` no arquivo da chave** para saber se é cifrada: minisign é base64 e o
+  marcador (`rsign encrypted secret key`) só aparece decodificado. Teste real: `tauri signer sign`.
+- **Verificação antes de publicar** (rascunho já criado): grepar o log do build por
+  `does not match the public key from plugins > updater > pubkey`. Ausente = o secret assina com o
+  par que o app embute; presente = **não publique** (o app baixaria e recusaria).
+- **Rotação de par**: se a senha da chave se perde e a release ainda não saiu, gerar par novo
+  (`-w ~/.tauri/sightdeck-vN.key`), trocar `plugins.updater.pubkey`, re-setar os secrets, commit e
+  mover a tag. Custo zero enquanto nenhum cliente tem o `pubkey` antigo.
+
 ### Onde guardar (fonte de verdade = Bitwarden)
 
 GitHub Secrets são *write-only*: não dá para lê-los de volta, então **nunca** são backup.
