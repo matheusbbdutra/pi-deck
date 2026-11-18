@@ -71,6 +71,7 @@ fn main() {
             sessions::auth_providers,
             sessions::auth_logout,
             sessions::usage_stats,
+            sessions::models_provider_remove,
             sysinfo::mem_usage,
             sessions::pick_directory,
             sessions::pick_file,

@@ -725,6 +725,41 @@ pub fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Remove um provider custom do `~/.pi/agent/models.json` (backup `.json.bak`).
+/// Único jeito de remover provider configurado por extensão/models.json:
+/// `pi auth logout` só mexe no `auth.json`.
+#[tauri::command]
+pub fn models_provider_remove(provider: String) -> Result<String, String> {
+    let p = provider.trim();
+    if p.is_empty() {
+        return Err("provider vazio".to_string());
+    }
+    let home = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+        .ok_or("HOME nem USERPROFILE definidos")?;
+    let path = home.join(".pi/agent/models.json");
+    let raw = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("models.json inválido: {e}"))?;
+    let Some(providers) = cfg.get_mut("providers").and_then(|v| v.as_object_mut()) else {
+        return Err("models.json sem objeto providers".to_string());
+    };
+    if !providers.contains_key(p) {
+        return Err(format!("{p} não está em models.json"));
+    }
+    // Backup só na primeira vez: não sobrescreve um backup bom anterior.
+    let backup = path.with_extension("json.bak");
+    if !backup.exists() {
+        fs::write(&backup, &raw).map_err(|e| format!("backup: {e}"))?;
+    }
+    providers.remove(p);
+    let pretty = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    fs::write(&path, pretty + "\n").map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!(
+        "{p} removido do models.json (backup em {})",
+        backup.display()
+    ))
+}
+
 /// Caminhos e SO para o "Sobre": sem isso a UI só teria as versões e o usuário
 /// não descobre qual binário do `pi` nem onde estão as sessões.
 #[tauri::command]

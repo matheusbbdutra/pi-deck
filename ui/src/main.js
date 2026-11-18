@@ -4854,15 +4854,21 @@ function renderProvidersTab() {
       del.disabled = true;
       const st = $('provstatus');
       if (st) st.textContent = 'removendo ' + p.name + '…';
+      const done = [];
+      // 1) credencial do auth.json (via CLI).
       try {
         await inv('auth_logout', { provider: p.name });
-        if (st) st.textContent = 'credencial de ' + p.name + ' removida';
+        done.push('auth.json');
+      } catch { /* sem credencial no auth.json */ }
+      // 2) provider custom do models.json (único jeito de remover built-in
+      //    configurado por extensão — o logout do CLI não toca nesse arquivo).
+      try {
+        const out = String(await inv('models_provider_remove', { provider: p.name }));
+        done.push(out);
       } catch (e) {
-        // Provider built-in sem credencial responde exit 0 no CLI; o Rust
-        // converte em erro e o aviso aparece AQUI (o note() ia para o #log,
-        // escondido atrás do modal).
-        if (st) st.textContent = String(e);
+        if (!done.length) done.push(String(e));
       }
+      if (st) st.textContent = done.length ? done.join(' · ') : p.name + ': nada para remover';
       await loadProvidersTab();
     };
     row.appendChild(del);
