@@ -1,5 +1,16 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18)
+
+- **v0.2.4 publicada** (5 assets: deb/AppImage/rpm/exe/msi). Release: run `44215135306`
+  (`test`, `clippy`, `test (windows)`, builds Linux/Windows, `publish` todos verdes), draft →
+  `gh release edit v0.2.4 --draft=false --latest`; `releases/latest` = `v0.2.4`. Conteúdo:
+  path relativo em `open_file`/`revert_hunk`, `<select>` legível, run novo no painel durante o
+  turno e dispensar aviso de extensão. `cargo test` 95, vitest 97, `build:ui` ok.
+- Review de memória/custo feito junto: o poll de 2 s do painel passou a rodar **só com a aba
+  Subagents à vista** — `list_children` faz `read_title` (até 200 linhas) + `child_state` (últimos
+  64 KB) por child run, medido ~8 ms/child num child session de 13,8 MB, e não tem teto de runs.
+
 ## Onde estamos (2026-11-17)
 
 - **v0.2.3 publicada** (5 assets: deb/AppImage/rpm/exe/msi). Release: run `44198214263`
@@ -172,6 +183,19 @@ cd ~/Projects/sightdeck/src-tauri && cargo run
 - Prova de UI sem Tauri: harness Playwright em `/tmp/harness` (`build.cjs` + `test.cjs`), 0 erros, 19 tool cards.
 
 ## Gotchas já pagos
+
+- **Path relativo do webview é do projeto, não do processo**: a aba Plano manda
+  `docs/spec/x.md` e `Path::canonicalize` resolve contra o cwd **do processo** (a pasta do app).
+  `open_file`/`revert_hunk` davam `docs/spec/x.md: Arquivo ou diretório inexistente (os error 2)`.
+  Sempre `cwd.join(path)` antes de validar; `join` com path absoluto substitui a base, então não
+  abre buraco no confinamento (testes cobrem `../`).
+- **`<select>` no WebKitGTK ignora background/color da classe**: com `appearance:menulist` o UA pinta
+  campo branco + seta nativa e o texto claro do tema fica ilegível. Precisa de `appearance:none` +
+  chevron próprio (gradiente usando `var(--dim)`; `var()` não vale dentro de `url()`).
+- **Snapshot ao vivo de subagent só existe para job async**: `PI_SUBAGENT_ASYNC_JSON` é emitido
+  apenas pelo `async-job-tracker` (`renderWidget` só tem chamador lá, e só no modo rpc), então run
+  em primeiro plano não manda nada. O painel depende de reler `list_children` durante o turno;
+  repintar a cada poll custa o scroll, daí a chave `id|estado` (sem `mtime`, que muda a cada escrita).
 
 - **`stream` não caducava no `agent_settled`**: o objeto global do stream continuava com a resposta
   completa depois do fim do turno; trocar de aba chamava `stashDraft`, que regravava esse texto em
