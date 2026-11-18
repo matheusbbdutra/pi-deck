@@ -5,6 +5,37 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-11-18
+
+### Added
+- **Auto-update assinado (Tauri updater)**: `check()` contra o `latest.json` da última release;
+  o botão baixa com progresso, valida a assinatura minisign e chama `relaunch()`. Cobre
+  `.AppImage`, `.deb`, `.rpm`, `.msi` e `.exe` (deb/rpm pedem senha de administrador via
+  `pkexec`); os artefatos são assinados no CI e o `latest.json` lista uma chave por
+  instalador (`{os}-{arch}-{installer}`).
+- **Tela de Configurações em Svelte (piloto)**: opções agrupadas em Transcript / Notificações /
+  Projeto / Aparência, em `ui/src/settings/`, alimentadas por um `host` injetado (o componente
+  não importa `main.js`).
+- **Fallback da tela antiga**: o markup anterior continua no DOM e volta com os handlers
+  religados se o componente falhar no mount.
+
+### Changed
+- **i18n**: ~40 literais migrados para `t()` — painel Git (rótulos e tooltips), popover de
+  contexto, fork, `APP_COMMANDS`, sidebar, missões e diagnóstico; grupos novos em pt/en.
+
+### Fixed
+- **`is not a function` no painel Git**: `renderGit` declarava `const t = gitData.totals`,
+  sombreando o `t()` de i18n.
+- **TDZ em desfazer fila e `/name`**: `t()` era chamado antes do `const t` na mesma função.
+- **Desfazer fila marcava tudo como entregue**: o `queue_update` vazio chega antes da resposta
+  do `clear_queue`, então as rows eram marcadas como entregues e ficavam na tela; agora são
+  canceladas e removidas (voltam ao composer).
+
+### Performance
+- **Pacotes e MCP**: abrir não paga mais `pi mcp list` (~1,5 s) — cada aba carrega só o seu
+  (`pi_list` ~241 ms) e o MCP tem cache de 30 s, invalidado em add/remove.
+- **Sobre**: `pi_version` e `app_info` em paralelo.
+
 ## [0.2.4] — 2026-11-17
 
 ### Fixed
