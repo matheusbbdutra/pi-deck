@@ -1533,7 +1533,7 @@ describe('avisos de extensão no Debug e overlay Sobre', () => {
     // Fase 7d: Sobre e manutenção viraram ABAS do modal único (sem popover).
     for (const id of ['aboutlist', 'healthlist', 'healthchip', 'settings', 'settings-tabs',
       'pane-about', 'pane-debug', 'pane-pkgs', 'pane-theme', 'pane-general', 'pane-providers', 'pane-usage',
-      'provtab', 'provstatus', 'meminfo', 'usagetotals', 'usagedays', 'usageprojects',
+      'provtab', 'provstatus', 'provsearchtab', 'meminfo', 'usagetotals', 'usagedays', 'usageprojects',
       'checkupdate', 'updExt', 'updPi', 'updOut']) {
       expect(document.getElementById(id), id).not.toBeNull();
     }

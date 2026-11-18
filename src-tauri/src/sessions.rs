@@ -288,21 +288,9 @@ pub fn auth_providers() -> Result<String, String> {
         }
     }
 
-    // Fallback: os providers que já têm modelos configurados.
-    if providers.is_empty() {
-        if let Ok(out) = std::process::Command::new(pi_bin()).arg("--list-models").output() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines().skip(1) {
-                if let Some(p) = line.split_whitespace().next() {
-                    if !providers.iter().any(|x| x == p) {
-                        providers.push(p.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // providers com modelo no catálogo
+    // Providers com modelo no catálogo: entram SEMPRE na lista. É aqui que
+    // aparecem os adicionados por extensão/models.json, que não constam no
+    // `Providers:` do CLI. Antes isso era só fallback (quando a lista vinha vazia).
     let mut configured: Vec<String> = Vec::new();
     if let Ok(out) = std::process::Command::new(pi_bin()).arg("--list-models").output() {
         let text = String::from_utf8_lossy(&out.stdout);
@@ -310,6 +298,9 @@ pub fn auth_providers() -> Result<String, String> {
             if let Some(p) = line.split_whitespace().next() {
                 if !configured.iter().any(|x| x == p) {
                     configured.push(p.to_string());
+                }
+                if !providers.iter().any(|x| x == p) {
+                    providers.push(p.to_string());
                 }
             }
         }
@@ -384,7 +375,18 @@ pub fn auth_logout(provider: String) -> Result<String, String> {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if err.is_empty() { "pi auth logout falhou".to_string() } else { err });
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    // O CLI devolve exit 0 mesmo sem remover nada: quando o provider não tem
+    // credencial ele imprime `Unknown provider` e lista as armazenadas.
+    // Sem esta checagem o app dizia "removida" sem ter removido.
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if stdout.contains("Unknown provider") {
+        let stored = stdout
+            .lines()
+            .find(|l| l.contains("Stored credentials:"))
+            .unwrap_or("Stored credentials: (nenhuma)");
+        return Err(format!("{} não tem credencial armazenada — {}", p, stored));
+    }
+    Ok(stdout)
 }
 
 /// Providers aceitos em `open_terminal_login`, verificados contra o `pi` instalado

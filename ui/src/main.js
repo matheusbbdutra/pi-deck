@@ -4815,8 +4815,11 @@ function renderProvidersTab() {
   const host = $('provtab');
   if (!host) return;
   clear(host);
-  const list = Array.isArray(authProvidersCache) ? authProvidersCache : [];
-  if (!list.length) { setEmpty(host, 'nenhum provedor'); return; }
+  const q = String(($('provsearchtab') && $('provsearchtab').value) || '').toLowerCase().trim();
+  const all = Array.isArray(authProvidersCache) ? authProvidersCache : [];
+  const list = all.filter(p => p && p.name && (!q || p.name.toLowerCase().includes(q)));
+  if (!all.length) { setEmpty(host, 'nenhum provedor'); return; }
+  if (!list.length) { setEmpty(host, 'nenhum provedor para "' + q + '"'); return; }
   for (const p of list) {
     if (!p || !p.name) continue;
     const row = el('div', 'cat-row prov-row');
@@ -4837,8 +4840,9 @@ function renderProvidersTab() {
         await inv('auth_logout', { provider: p.name });
         note('credencial de ' + p.name + ' removida');
       } catch (e) {
-        note('remover ' + p.name + ': ' + e);
-        del.disabled = false;
+        // O CLI devolve Unknown provider quando não há credencial: o Rust
+        // converte isso em erro para não mentir "removida".
+        note('remover ' + p.name + ': ' + String(e));
       }
       await loadProvidersTab();
     };
@@ -5645,6 +5649,8 @@ document.querySelectorAll('.pkg-tab').forEach(t => { t.onclick = () => switchPkg
 document.querySelectorAll('#settings-tabs .settings-tab').forEach(t => {
   t.onclick = () => switchSettingsTab(t.dataset.pane);
 });
+$('provsearchtab').oninput = () => renderProvidersTab();
+$('provrefresh').onclick = () => loadProvidersTab();
 $('catsearch').oninput = () => renderCatalog();
 $('hooksrefresh').onclick = () => { loadHooks(); refreshHooksStatus(); };
 $('setHooks').onchange = (e) => setHooksEnabled(e.target.checked);
