@@ -4622,7 +4622,7 @@ function switchSettingsTab(name) {
   for (const b of document.querySelectorAll('#settings-tabs .settings-tab')) {
     b.classList.toggle('active', b.dataset.pane === name);
   }
-  for (const p of ['general', 'theme', 'pkgs', 'providers', 'debug', 'about']) {
+  for (const p of ['general', 'theme', 'pkgs', 'providers', 'usage', 'debug', 'about']) {
     const node = $('pane-' + p);
     if (node) node.classList.toggle('hidden', p !== name);
   }

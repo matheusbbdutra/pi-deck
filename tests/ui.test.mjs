@@ -1515,6 +1515,20 @@ describe('avisos de extensão no Debug e overlay Sobre', () => {
     expect(rows[1].textContent).toContain('lsp');
   });
 
+  it('toda aba do modal tem o seu pane e vice-versa', () => {
+    // Regressão real: a aba Custo existia, mas 'usage' não estava na lista
+    // de panes do switchSettingsTab — a aba abria vazia.
+    const html = readFileSync(resolve(process.cwd(), 'ui/index.html'), 'utf8');
+    // Só as abas do modal: o painel direito também usa data-pane.
+    const tabsBlock = html.slice(html.indexOf('id="settings-tabs"'));
+    const modalTabs = tabsBlock.slice(0, tabsBlock.indexOf('</div>'));
+    const tabs = [...modalTabs.matchAll(/data-pane="([a-z]+)"/g)].map(m => m[1]);
+    for (const name of tabs) {
+      expect(html.includes(`id="pane-${name}"`), `pane-${name}`).toBe(true);
+    }
+    expect(tabs).toContain('usage');
+  });
+
   it('todo id que o main.js consulta no Sobre/avisos existe no index.html', () => {
     // Fase 7d: Sobre e manutenção viraram ABAS do modal único (sem popover).
     for (const id of ['aboutlist', 'healthlist', 'healthchip', 'settings', 'settings-tabs',
