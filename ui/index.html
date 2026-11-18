@@ -20,11 +20,7 @@
 <div id="tabs" class="tabs"></div>
 
 <div id="settingspop" class="settings-pop hidden">
-  <!-- Geral/Aparência: componente Svelte (piloto). Lê `uiSettings` e o idioma ao
-       montar; `main.js` injeta `t`/setters via `mountSettings`.
-       Hooks fica aqui porque o estado vem de `hooks_status` (IPC assíncrono). -->
-  <div id="settings-general"></div>
-  <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
+  <button id="settingsopen" class="ghost">Configurações…</button>
   <div class="settings-sep"></div>
   <h5 class="settings-group" data-i18n="settings.group_tools">Ferramentas</h5>
   <button id="themebtn" class="ghost">Tema</button>
@@ -39,6 +35,18 @@
     <button id="updPi" class="ghost">Atualizar pi</button>
   </div>
   <pre id="updOut" class="upd-out"></pre>
+</div>
+
+<!-- Modal grande de configurações: o popover é só o menu; os toggles vivem aqui. -->
+<div id="settings" class="overlay hidden">
+  <div class="detail-head">
+    <button id="settingsback" title="Fechar">×</button>
+    <span class="detail-title">Configurações</span>
+  </div>
+  <div class="overlay-body">
+    <div id="settings-general"></div>
+    <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
+  </div>
 </div>
 
 <aside id="sidebar">

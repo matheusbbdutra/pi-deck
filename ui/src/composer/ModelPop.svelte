@@ -67,6 +67,12 @@
       >
         <span class="model-name">{r.name}</span>
         <span class="model-ctx">{r.ctx}</span>
+        <button
+          class="fav"
+          class:on={r.fav}
+          title={tr('model.fav_toggle')}
+          onclick={(e) => { e.stopPropagation(); host.toggleFav(r.id); }}
+        >{r.fav ? '★' : '☆'}</button>
       </div>
     {/each}
   {/each}
@@ -93,3 +99,18 @@
     />
   </div>
 {/if}
+
+<style>
+  .fav {
+    background: none;
+    border: none;
+    padding: 0 2px;
+    cursor: pointer;
+    color: var(--mute);
+    font-size: 12px;
+    line-height: 1;
+    flex: none;
+  }
+  .fav:hover { color: var(--warn); }
+  .fav.on { color: var(--warn); }
+</style>

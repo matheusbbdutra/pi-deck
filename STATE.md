@@ -1,5 +1,34 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, ajustes do teste de runtime)
+
+Feedback do usuário na janela dev -> corrigido:
+
+- **Duplicação de placeholders** (2x "nenhum subagent", sidebar presa em
+  "carregando…"): `.empty` estáticos nos containers `#sessions/#subs/#plans/
+  #git/#missions` ficavam ao lado do componente montado. Removidos; o
+  componente é a única fonte.
+- **Lista de modelos sem scroll/grupos**: `ModelPop` não envolvia as linhas em
+  `.model-list` (max-height/overflow). Corrigido -> grupos de provider visíveis
+  e lista rolável.
+- **Cores da aba não mudavam com o tema**: `#7c869c`, `#394055`, `#4f5f80`,
+  `#6f7a92` hardcoded -> `--ink-5`/`--dot-off`.
+- **Presets fracos**: cada preset só cobria 16/46 chaves. Expandidos para a
+  paleta completa (bg-0..4, ink-0..6, bordas, controles, hovers, chips, estados).
+- **Configurações**: popover virou MENU; modal grande `#settings` (novo overlay)
+  concentra os toggles + idioma (componente Settings continua em
+  `#settings-general`). Handlers `settingsopen`/`settingsback`.
+- **ctx popover**: só dados da sessão (agregado de abas removido — `sessAggSnapshot`
+  e `sessShort` deletados), **% de cache hit do input** e **média de tokens por
+  mensagem**. i18n pt/en novos.
+- **Favoritar modelos**: estrela na linha, persistida em `localStorage['model-favs']`,
+  favoritos ordenados no topo do grupo (função `loadModelFavs`/`saveModelFavs`).
+- **Terminal**: sintoma "não digitava" não reproduziu depois do reload; nenhum
+  erro de PTY no log (a única feature no Cargo.toml é `e2e`).
+- **Pendências deste feedback**: transformar Sobre em mini modal; avaliar o
+  restante da UI com o usuário.
+- Verificado: `test:ui` **145/145**, `build:ui` ✓ (362 ms), HMR recarregado.
+
 ## Onde estamos (2026-11-18, Fase 7c CONCLUÍDA: legado removido)
 
 - **Branch**: `sprint/svelte-migration`. Sem release/versão — sprint para teste.

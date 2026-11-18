@@ -342,6 +342,7 @@ export const STRINGS = {
     'think.none': 'modelo sem níveis de thinking',
 
     'model.none': 'nenhum modelo',
+    'model.fav_toggle': 'Favoritar modelo (vai para o topo)',
     'model.not_found': 'modelo não encontrado para "{q}"',
 
     'palette.empty': 'nenhum resultado',
@@ -702,6 +703,7 @@ export const STRINGS = {
     'think.none': 'model has no thinking levels',
 
     'model.none': 'no models',
+    'model.fav_toggle': 'Favorite model (pins to top)',
     'model.not_found': 'no model found for "{q}"',
 
     'palette.empty': 'no results',

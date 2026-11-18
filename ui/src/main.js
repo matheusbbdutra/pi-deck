@@ -91,6 +91,17 @@ let compactReserve = null;    // reserva escolhida para o modelo atual (null = p
 let allModels = [];
 let modelsByProvider = new Map();
 let levelList = [];
+/* Modelos favoritos: ficam no topo da lista e persistem em localStorage. */
+let modelFavs = new Set();
+function loadModelFavs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('model-favs') || '[]');
+    modelFavs = new Set(Array.isArray(raw) ? raw.filter(x => typeof x === 'string') : []);
+  } catch { modelFavs = new Set(); }
+}
+function saveModelFavs() {
+  try { localStorage.setItem('model-favs', JSON.stringify([...modelFavs])); } catch { /* sem storage */ }
+}
 let debugEnabled = false;
 let tabs = [];
 /* Pops do composer em Svelte (Fase 2): instâncias montadas ou null (fallback legado). */
@@ -2724,14 +2735,24 @@ function loadCachedModels() {
 
 /** Snapshot puro da lista de modelos (pop Svelte + testes): grupos por provider
  *  com linhas `{id,name,ctx,current}`. `providers` é o Map montado em `fillModels`. */
-export function modelListSnapshot(providers, currentId, filter) {
+export function modelListSnapshot(providers, currentId, filter, favs) {
   const q = String(filter || '').toLowerCase();
+  const favorite = favs instanceof Set ? favs : new Set(Array.isArray(favs) ? favs : []);
   const groups = [];
   for (const provider of [...providers.keys()].sort()) {
     const rows = providers.get(provider)
       .filter(m => m && m.id && (!q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)))
-      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
-      .map(m => ({ id: m.id, name: m.name || m.id, ctx: contextLabel(m.contextWindow), current: m.id === currentId }));
+      .sort((a, b) => {
+        // Favoritos primeiro; depois alfabético.
+        const fa = favorite.has(a.id) ? 0 : 1;
+        const fb = favorite.has(b.id) ? 0 : 1;
+        if (fa !== fb) return fa - fb;
+        return String(a.id).localeCompare(String(b.id));
+      })
+      .map(m => ({
+        id: m.id, name: m.name || m.id, ctx: contextLabel(m.contextWindow),
+        current: m.id === currentId, fav: favorite.has(m.id),
+      }));
     if (rows.length) groups.push({ provider, rows });
   }
   return { groups, empty: groups.length === 0 };
@@ -4984,6 +5005,11 @@ $('settingsbtn').onclick = (e) => {
   e.stopPropagation();
   $('settingspop').classList.toggle('hidden');
 };
+$('settingsopen').onclick = () => {
+  $('settingspop').classList.add('hidden');
+  $('settings').classList.remove('hidden');
+};
+$('settingsback').onclick = () => $('settings').classList.add('hidden');
 /* Host do componente Svelte de Configurações: passa `t`/estado e recebe as
    mudanças, sem o componente importar este módulo (evita ciclo). */
 const settingsHost = {
@@ -5088,13 +5114,18 @@ const modelPopHost = {
   getLangPref,
   snapshot(filter) {
     return {
-      list: modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter),
+      list: modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter, modelFavs),
       levels: levelsSnapshot(levelList, sessionState && sessionState.thinkingLevel),
     };
   },
   async apply(id) {
     const m = allModels.find(x => x && x.id === id);
     await applyModel(m);
+  },
+  toggleFav(id) {
+    if (modelFavs.has(id)) modelFavs.delete(id); else modelFavs.add(id);
+    saveModelFavs();
+    renderModelList();
   },
   previewLevel(i) {
     return levelList[Number(i)] || '';
@@ -5465,6 +5496,7 @@ setEmptyState(true, 'nosession');
 loadSettings();
 loadTreeState();
 loadCachedModels();
+loadModelFavs();
 loadLastModel();
 loadCachedLevels();
 loadCachedCommands();
