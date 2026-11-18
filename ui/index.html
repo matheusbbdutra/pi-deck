@@ -19,26 +19,9 @@
 
 <div id="tabs" class="tabs"></div>
 
-<div id="settingspop" class="settings-pop hidden">
-  <button id="settingsopen" class="ghost">Configurações…</button>
-  <div class="settings-sep"></div>
-  <h5 class="settings-group" data-i18n="settings.group_tools">Ferramentas</h5>
-  <button id="themebtn" class="ghost">Tema</button>
-  <button id="pkgbtn" class="ghost">Pacotes e MCP</button>
-  <button id="debugbtn" class="ghost">Debug</button>
-  <button id="aboutbtn" class="ghost">Sobre</button>
-  <div class="settings-sep"></div>
-  <h5 class="settings-group" data-i18n="settings.group_maintenance">Manutenção</h5>
-  <button id="checkupdate" class="ghost">Verificar atualização</button>
-  <div class="settings-actions">
-    <button id="updExt" class="ghost">Atualizar extensões</button>
-    <button id="updPi" class="ghost">Atualizar pi</button>
-  </div>
-  <pre id="updOut" class="upd-out"></pre>
-</div>
-
-<!-- Modal grande de configurações: o popover é só o menu; os toggles vivem aqui. -->
-<div id="settings" class="overlay hidden">
+<!-- Modal único de configurações: aberto direto pelo ⚙ (sem popover). -->
+<div id="settings" class="overlay modal hidden">
+  <div class="modal-box">
   <div class="detail-head">
     <button id="settingsback" title="Fechar">×</button>
     <span class="detail-title">Configurações</span>
@@ -130,7 +113,15 @@
       <div id="aboutlist"></div>
       <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
       atualiza o pi sozinho: os botões de atualização chamam <code>pi update</code>.</p>
+      <h4>Manutenção</h4>
+      <div class="settings-actions">
+        <button id="checkupdate" class="ghost">Verificar atualização</button>
+        <button id="updExt" class="ghost">Atualizar extensões</button>
+        <button id="updPi" class="ghost">Atualizar pi</button>
+      </div>
+      <pre id="updOut" class="upd-out"></pre>
     </div>
+  </div>
   </div>
 </div>
 <aside id="sidebar">

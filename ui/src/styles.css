@@ -615,6 +615,12 @@
   .overlay { position:fixed; inset:64px 0 0 0; background:var(--bg); z-index:35;
              display:flex; flex-direction:column; }
   .overlay.hidden { display:none; }
+  /* Modal de verdade (Configurações): scrim + caixa centralizada e fechável. */
+  .overlay.modal { inset:0; background:rgba(0,0,0,.55); align-items:center; justify-content:center; }
+  .overlay.modal .modal-box { display:flex; flex-direction:column; width:min(920px, 92vw);
+                              max-height:86vh; background:var(--bg-1); border:1px solid var(--line-strong);
+                              border-radius:10px; overflow:hidden;
+                              box-shadow:0 24px 64px rgba(0,0,0,.6); }
   .overlay-body { flex:1; overflow:auto; padding:16px 24px; }
   .overlay-body h4 { margin:18px 0 8px; font-size:10px; color:var(--mute); font-weight:600;
                      letter-spacing:.06em; text-transform:uppercase; }

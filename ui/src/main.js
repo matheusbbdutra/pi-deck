@@ -70,7 +70,13 @@ export function shouldAbortOnEsc({ overlayOpen, inTerminal, inOtherField, workin
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
-  const overlayOpen = !!document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.settings-pop:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)');
+  // Modal de configurações: Esc fecha (o overlay antigo não tinha esse caminho).
+  const modal = $('settings');
+  if (modal && !modal.classList.contains('hidden')) {
+    modal.classList.add('hidden');
+    return;
+  }
+  const overlayOpen = !!document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)');
   const ae = document.activeElement;
   const inTerminal = !!(ae && ae.closest && ae.closest('#termdock'));
   // Busca/filtro (INPUT) e textareas que não são o composer: Esc é do campo, não do turno.
@@ -4552,18 +4558,13 @@ function switchPkgPane(name) {
   }
 }
 
-function openPkgs() {
-  openSettingsTab('pkgs');
-}
-
 /** Aba Debug do modal único: Missões e Diagnóstico. */
 function openDebug() {
   openSettingsTab('debug');
 }
 
-/** Abre o modal de configurações numa aba (menu do ⚙ chama isto). */
+/** Abre o modal de configurações numa aba (⚙ chama com 'general'). */
 function openSettingsTab(name) {
-  $('settingspop').classList.add('hidden');
   $('settings').classList.remove('hidden');
   switchSettingsTab(name);
 }
@@ -4577,7 +4578,11 @@ function switchSettingsTab(name) {
     const node = $('pane-' + p);
     if (node) node.classList.toggle('hidden', p !== name);
   }
-  if (name === 'pkgs') switchPkgPane('installed');
+  if (name === 'pkgs') {
+    switchPkgPane('installed');
+    // Primeira abertura: uma linha de env vazia pronta para editar.
+    if (!$('mcpenvrows').childElementCount) addEnvRow();
+  }
   if (name === 'debug') { loadMissions(); renderHealthList(); renderDiag(); }
   if (name === 'about') openAbout();
 }
@@ -4625,9 +4630,6 @@ function themeNoteText(res, prefix) {
   return parts.join(' · ');
 }
 
-function openTheme() {
-  openSettingsTab('theme');
-}
 
 /* =============== auth do provider (perto da versão do pi) =============== */
 let authProvider = null;
@@ -5013,10 +5015,13 @@ function saveSettings() {
 
 $('settingsbtn').onclick = (e) => {
   e.stopPropagation();
-  $('settingspop').classList.toggle('hidden');
+  openSettingsTab('general');
 };
-$('settingsopen').onclick = () => openSettingsTab('general');
 $('settingsback').onclick = () => $('settings').classList.add('hidden');
+// Fechável: clique no scrim (fora da caixa) fecha.
+$('settings').addEventListener('mousedown', (e) => {
+  if (e.target === $('settings')) $('settings').classList.add('hidden');
+});
 /* Host do componente Svelte de Configurações: passa `t`/estado e recebe as
    mudanças, sem o componente importar este módulo (evita ciclo). */
 const settingsHost = {
@@ -5062,8 +5067,6 @@ async function runUpdate(scope) {
 }
 $('updExt').onclick = () => runUpdate('extensions');
 $('updPi').onclick = () => runUpdate('self');
-$('pkgbtn').onclick = () => openPkgs();
-$('themebtn').onclick = () => openTheme();
 
 /* Host do diálogo Svelte de Tema: presets + JSON usam o mesmo motor
    (`applyTheme`/`validateTheme`/`themeFromDom`/`resetTheme`), sem o componente
@@ -5403,10 +5406,8 @@ try {
 } catch (e) {
   debugNote('subs svelte: mount falhou — usando o render legado (' + e + ')');
 }
-$('debugbtn').onclick = () => openDebug();
 // Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
 $('healthchip').onclick = () => openDebug();
-$('aboutbtn').onclick = () => openAbout();
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };
 $('checkupdate').onclick = () => checkUpdate(true);
 $('updatebtn').onclick = async () => {
@@ -5454,12 +5455,6 @@ $('mcpadd').onclick = mcpAdd;
 $('mcpremove').onclick = mcpRemove;
 $('mcpenvadd').onclick = () => addEnvRow();
 $('mcppreset').onchange = (e) => applyPreset(e.target.value);
-document.addEventListener('click', (e) => {
-  const pop = $('settingspop');
-  if (pop.classList.contains('hidden')) return;
-  if (pop.contains(e.target) || $('settingsbtn').contains(e.target)) return;
-  pop.classList.add('hidden');
-});
 
 // Recarregar/fechar no meio do turno não perde abas nem o parcial em tela.
 window.addEventListener('pagehide', () => {

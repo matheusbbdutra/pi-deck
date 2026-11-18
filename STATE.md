@@ -1,5 +1,23 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, modal fechável + ⚙ direto)
+
+- **⚙ abre direto o modal** `#settings` na aba Geral; o popover foi REMOVIDO
+  (ações de manutenção — verificar atualização, atualizar extensões/pi — foram
+  para a aba **Sobre**).
+- **Modal de verdade**: `.overlay.modal` ganhou scrim (`rgba(0,0,0,.55)`),
+  caixa centralizada `.modal-box` (`min(920px,92vw)`, `max-height:86vh`,
+  borda/raio/sombra). Fecha por: botão × (`settingsback`), clique no scrim
+  (`mousedown` fora da caixa) e **Esc** (handler no keydown global).
+- Handlers órfãos removidos (`settingsopen`, `pkgbtn`, `themebtn`, `debugbtn`,
+  `aboutbtn`, click-outside do popover) — quebravam o boot com null.
+  `openPkgs()` removida; `switchSettingsTab('pkgs')` garante a 1ª linha de env
+  do MCP.
+- Teste de integridade atualizado (sem `aboutbtn`/`#about`; agora `settings`,
+  `settings-tabs`, `pane-*`, `checkupdate`, `updExt`, `updPi`, `updOut`).
+- Verificado: `test:ui` **145/145**, `build:ui` ✓ (396 ms), `node --check` OK,
+  reload do dev sem erros.
+
 ## Onde estamos (2026-11-18, modal único de configurações com abas)
 
 - **Modal único**: o ⚙ abre o popover (menu) e cada item abre `#settings` na aba
