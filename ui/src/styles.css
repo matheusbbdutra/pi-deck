@@ -97,19 +97,19 @@
   .tab-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1;
                 color:var(--ink-4); }
   .tab.active .tab-title { color:var(--ink-0); }
-  .tab-close { background:none; border:none; color:#7c869c; font-size:11px; padding:2px 3px;
+  .tab-close { background:none; border:none; color:var(--ink-5); font-size:11px; padding:2px 3px;
                cursor:pointer; flex:none; border-radius:3px; }
   .tab-close:hover { color:var(--ink-0); background:var(--err-bg-2); }
   /* estado + projeto por aba: "running" é o turno em andamento, não a aba ativa */
-  .tab-dot { width:6px; height:6px; border-radius:50%; flex:none; background:#394055; }
-  .tab-dot.live { background:#4f5f80; }
+  .tab-dot { width:6px; height:6px; border-radius:50%; flex:none; background:var(--dot-off); }
+  .tab-dot.live { background:var(--ink-5); }
   .tab-dot.busy { background:var(--ok); animation:tabpulse 1.2s ease-in-out infinite; }
   /* pulso só de opacidade: box-shadow inflava o dot para ~16px na barra de 34px */
   @keyframes tabpulse {
     0%, 100% { opacity:1; }
     50% { opacity:.35; }
   }
-  .tab-proj { color:#6f7a92; flex:none; max-width:84px; overflow:hidden;
+  .tab-proj { color:var(--ink-5); flex:none; max-width:84px; overflow:hidden;
               text-overflow:ellipsis; white-space:nowrap; }
   .tab.active .tab-proj { color:var(--accent); }
   .row.user.queued { opacity:.7; }

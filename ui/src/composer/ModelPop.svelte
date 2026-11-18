@@ -48,30 +48,32 @@
   }}
   autocomplete="off"
 />
-{#each snap.list.groups as g (g.provider)}
-  <div class="model-group">{g.provider.toUpperCase()}</div>
-  {#each g.rows as r (r.id)}
-    <div
-      class="model-row"
-      class:current={r.current}
-      role="button"
-      tabindex="0"
-      onclick={() => host.apply(r.id)}
-      onkeydown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          host.apply(r.id);
-        }
-      }}
-    >
-      <span class="model-name">{r.name}</span>
-      <span class="model-ctx">{r.ctx}</span>
-    </div>
+<div class="model-list">
+  {#each snap.list.groups as g (g.provider)}
+    <div class="model-group">{g.provider.toUpperCase()}</div>
+    {#each g.rows as r (r.id)}
+      <div
+        class="model-row"
+        class:current={r.current}
+        role="button"
+        tabindex="0"
+        onclick={() => host.apply(r.id)}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            host.apply(r.id);
+          }
+        }}
+      >
+        <span class="model-name">{r.name}</span>
+        <span class="model-ctx">{r.ctx}</span>
+      </div>
+    {/each}
   {/each}
-{/each}
-{#if snap.list.empty}
-  <div class="model-empty">{tr('model.none')}</div>
-{/if}
+  {#if snap.list.empty}
+    <div class="model-empty">{tr('model.none')}</div>
+  {/if}
+</div>
 {#if snap.levels.showSlider}
   <div class="think-foot">
     <div class="think-foot-row"><span>{tr('tools.thinking')}</span><span>{preview || snap.levels.name}</span></div>

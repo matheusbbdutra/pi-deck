@@ -2840,7 +2840,6 @@ export function liveStatsView(data, live) {
 
 /** Detalhamento do contexto (mesmo formato que o pi-gpui mostra). */
 function fmtCost(c) { return typeof c === 'number' ? 'US$ ' + c.toFixed(2) : '—'; }
-function sessShort(t) { return t.label || prettyId(t.key); }
 
 /** Parcial do turno em voo da aba em foco (setado em message_update/get_messages). */
 function currentLive() {
@@ -2879,45 +2878,12 @@ export function limitSnapshot(win, reserve, canEdit) {
 }
 
 /** Snapshot puro do agregado por sessão (ctx Svelte + testes). */
-export function sessAggSnapshot(tabsList, curKey) {
-  const found = (tabsList || []).filter(x => x && x.stats && x.stats.tokens);
-  if (!found.length) return null;
-  let totTok = 0, totCost = 0, totMsg = 0;
-  for (const x of found) {
-    totTok += Number(x.stats.tokens && x.stats.tokens.total) || 0;
-    if (typeof x.stats.cost === 'number') totCost += x.stats.cost;
-    totMsg += Number(x.stats.totalMessages) || 0;
-  }
-  const ordered = found.slice().sort((a, b) => {
-    const pa = (a.stats.contextUsage && a.stats.contextUsage.percent) || 0;
-    const pb = (b.stats.contextUsage && b.stats.contextUsage.percent) || 0;
-    return pb - pa;
-  });
-  return {
-    totalLabel: found.length === 1 ? t('ctx.sess_one', { n: found.length }) : t('ctx.sess_many', { n: found.length }),
-    totalText: t('ctx.agg', { tok: fmtTokens(totTok), cost: fmtCost(totCost), n: totMsg }),
-    rows: ordered.slice(0, 8).map(x => {
-      const p = x.stats.contextUsage && x.stats.contextUsage.percent != null
-        ? Math.round(x.stats.contextUsage.percent) : null;
-      return {
-        n: (x.key === curKey ? '● ' : '') + sessShort(x),
-        m: (p == null ? '—' : p + '%') + ' · ' + fmtTokens(x.stats.tokens.total) + ' · ' + fmtCost(x.stats.cost),
-        cls: p == null ? '' : (p >= 90 ? 'danger' : p >= 70 ? 'warn' : ''),
-        title: x.key,
-      };
-    }),
-  };
-}
-
 /** Snapshot puro do popover de contexto (Svelte + testes): blocos ordenados
  *  `{t:'row'|'alert'|'limit'|'agg'}`. `view` vem de `liveStatsView`. */
 export function ctxSnapshot(view, opts) {
   const o = opts || {};
   const st = view.stats;
-  if (!st || !st.tokens) {
-    const agg = sessAggSnapshot(o.tabs || [], null);
-    return { empty: true, blocks: agg ? [{ t: 'agg', agg }] : [] };
-  }
+  if (!st || !st.tokens) return { empty: true, blocks: [] };
   const cu = st.contextUsage || {};
   const tok = st.tokens || {};
   const blocks = [];
@@ -2935,15 +2901,25 @@ export function ctxSnapshot(view, opts) {
   blocks.push({ t: 'limit', win, limit: limitSnapshot(win, o.reserve, !!o.canEdit) });
   blocks.push({ t: 'row', k: t('ctx.cache'),
     v: t('ctx.cache_value', { r: fmtTokens(tok.cacheRead), w: fmtTokens(tok.cacheWrite) }), dim: true });
+  const cacheRead = Number(tok.cacheRead) || 0;
+  const rawIn = Number(tok.input) || 0;
+  if (cacheRead + rawIn > 0) {
+    blocks.push({ t: 'row', k: t('ctx.cache_hit'),
+      v: t('ctx.cache_hit_value', { pct: Math.round((cacheRead / (cacheRead + rawIn)) * 100) }), dim: true });
+  }
   blocks.push({ t: 'row', k: t('ctx.io'), v: fmtTokens(tok.input) + ' / ' + fmtTokens(tok.output) });
+  const msgs = Number(st.totalMessages) || 0;
+  const totalTok = Number(tok.total) || 0;
+  if (msgs > 0 && totalTok > 0) {
+    blocks.push({ t: 'row', k: t('ctx.avg'),
+      v: t('ctx.avg_value', { n: fmtTokens(Math.round(totalTok / msgs)) }), dim: true });
+  }
   if (view.billed || view.ctxDelta) {
     blocks.push({ t: 'row', k: t('ctx.live'),
       v: t('ctx.live_value', { b: fmtTokens(view.billed), c: fmtTokens(view.ctxDelta) }) });
   }
   blocks.push({ t: 'row', k: t('ctx.cost'), v: fmtCost(st.cost) });
   blocks.push({ t: 'row', k: t('ctx.messages'), v: String(st.totalMessages || 0), dim: true });
-  const agg = sessAggSnapshot(o.tabs || [], o.curKey);
-  if (agg) blocks.push({ t: 'agg', agg });
   return { empty: false, blocks };
 }
 

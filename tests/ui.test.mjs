@@ -63,7 +63,6 @@ let msgSpeed;
 let modelListSnapshot;
 let levelsSnapshot;
 let ctxSnapshot;
-let sessAggSnapshot;
 let limitSnapshot;
 let forkSnapshot;
 let tabsSnapshot;
@@ -108,7 +107,7 @@ beforeAll(async () => {
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
-     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping } = await import('../ui/src/main.js'));
+     limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -763,19 +762,6 @@ describe('snapshots dos pops (Fase 2)', () => {
     expect(limitSnapshot(0, null, true).disabled).toBe(true);
   });
 
-  it('sessAggSnapshot agrega, ordena por uso e marca a atual', () => {
-    expect(sessAggSnapshot([], null)).toBe(null);
-    const tabs = [
-      { key: 'k1', label: 'S1', stats: { tokens: { total: 100 }, cost: 0.5, totalMessages: 3, contextUsage: { percent: 10 } } },
-      { key: 'k2', label: 'S2', stats: { tokens: { total: 300 }, cost: 1.5, totalMessages: 5, contextUsage: { percent: 80 } } },
-    ];
-    const agg = sessAggSnapshot(tabs, 'k2');
-    expect(agg.totalLabel).toBe('2 sessões');
-    expect(agg.totalText).toBe('400 · US$ 2.00 · 8 msg');
-    expect(agg.rows.map(r => r.title)).toEqual(['k2', 'k1']);
-    expect(agg.rows[0].n).toBe('● S2');
-    expect(agg.rows[0].cls).toBe('warn');
-  });
 
   it('forkSnapshot normaliza, trunca e rotula', () => {
     expect(forkSnapshot([])).toEqual([]);
@@ -785,13 +771,10 @@ describe('snapshots dos pops (Fase 2)', () => {
     expect(snap[0].title).toMatch(/olá   mundo[\s\S]*fork/);
   });
 
-  it('ctxSnapshot vazio mostra só o agregado (ou nada)', () => {
-    const tabs = [{ key: 'k1', label: 's1', stats: { tokens: { total: 100 }, cost: 0.01, totalMessages: 2 } }];
-    const e = ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, { tabs });
+  it('ctxSnapshot vazio devolve só o vazio (sem agregado de abas)', () => {
+    const e = ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, {});
     expect(e.empty).toBe(true);
-    expect(e.blocks.length).toBe(1);
-    expect(e.blocks[0].t).toBe('agg');
-    expect(ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, { tabs: [] }).blocks).toEqual([]);
+    expect(e.blocks).toEqual([]);
   });
 
   it('ctxSnapshot cheio ordena blocos e alerta aos 90%', () => {
@@ -805,9 +788,12 @@ describe('snapshots dos pops (Fase 2)', () => {
     };
     const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true });
     expect(snap.empty).toBe(false);
-    expect(snap.blocks.map(b => b.t)).toEqual(['row', 'alert', 'row', 'limit', 'row', 'row', 'row', 'row', 'row']);
+    // window, alert, auto, limit, cache, cache_hit, io, avg, live, cost, messages
+    expect(snap.blocks.map(b => b.t)).toEqual(['row', 'alert', 'row', 'limit', 'row', 'row', 'row', 'row', 'row', 'row', 'row']);
     expect(snap.blocks[1]).toMatchObject({ kind: 'danger' });
     expect(snap.blocks[2].v).toBe('ligada');
+    expect(snap.blocks[5].k).toBe('Cache hit do input');
+    expect(snap.blocks[7].k).toBe('Média por mensagem');
   });
 });
 
