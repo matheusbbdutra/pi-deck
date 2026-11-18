@@ -520,72 +520,70 @@ async function loadSessions() {
 
     if (sessionTree) { sessionTree.sync(); return; }
 
-    for (const g of visible) {
-      const isCollapsed = collapsedProjects.has(g.path);
-      const box = el('div', 'group' + (isCollapsed ? ' collapsed' : ''));
+    const byPath = new Map(visible.map(g => [g.path, g]));
+    for (const grp of sessionsSnapshot(visible, treeOpts()).groups) {
+      const box = el('div', 'group' + (grp.collapsed ? ' collapsed' : ''));
 
       const head = el('div', 'group-head');
-      head.appendChild(el('span', 'caret', isCollapsed ? '▸' : '▾'));
-      const isHome = homeDir && g.path === homeDir;
-      const name = el('span', 'proj-name', isHome ? t('sidebar.no_project') : (g.name || g.path));
-      name.title = g.path;
+      head.appendChild(el('span', 'caret', grp.caret));
+      const name = el('span', 'proj-name', grp.name);
+      name.title = grp.path;
       head.appendChild(name);
-      if (g.sessions.length) head.appendChild(el('span', 'proj-count', String(g.sessions.length)));
+      if (grp.count) head.appendChild(el('span', 'proj-count', String(grp.count)));
 
       const plus = el('button', 'tiny plus', '+');
-      plus.title = t('proj.new_here', { path: g.path });
-      plus.onclick = (e) => { e.stopPropagation(); newSessionIn(g.path); };
+      plus.title = grp.newTitle;
+      plus.onclick = (e) => { e.stopPropagation(); newSessionIn(grp.path); };
       head.appendChild(plus);
 
-      const hide = el('button', 'tiny', hiddenProjects.has(g.path) ? '↺' : '⊘');
-      hide.title = hiddenProjects.has(g.path) ? t('proj.show') : t('proj.hide');
+      const hide = el('button', 'tiny', grp.hideMark);
+      hide.title = grp.hideTitle;
       hide.onclick = (e) => {
         e.stopPropagation();
-        if (hiddenProjects.has(g.path)) hiddenProjects.delete(g.path);
-        else hiddenProjects.add(g.path);
+        if (hiddenProjects.has(grp.path)) hiddenProjects.delete(grp.path);
+        else hiddenProjects.add(grp.path);
         saveTreeState();
         loadSessions();
       };
       head.appendChild(hide);
 
       head.onclick = () => {
-        if (collapsedProjects.has(g.path)) collapsedProjects.delete(g.path);
-        else collapsedProjects.add(g.path);
+        if (collapsedProjects.has(grp.path)) collapsedProjects.delete(grp.path);
+        else collapsedProjects.add(grp.path);
         saveTreeState();
         loadSessions();
       };
       box.appendChild(head);
 
       const list = el('div', 'sess-list');
-      const shown = expandedProjects.has(g.path) ? g.sessions : g.sessions.slice(0, SESS_PAGE);
-      for (const s of shown) {
+      const group = byPath.get(grp.path);
+      for (const r of grp.rows) {
+        const s = group && group.sessions.find(x => x.id === r.key);
         const row = el('div', 'sess');
-        row.dataset.key = s.id;
-        row.title = (s.title || s.id) + '\n' + s.id;
+        row.dataset.key = r.key;
+        row.title = r.titleAttr;
 
-        const title = el('div', 'sess-title', s.title || t('sidebar.untitled'));
+        const title = el('div', 'sess-title', r.title);
         const meta = el('div', 'sess-meta');
-        meta.appendChild(el('span', null, prettyId(s.id)));
-        if (s.children > 0) {
-          const b = el('span', 'badge', String(s.children));
-          b.title = t('sess.badge_runs');
+        meta.appendChild(el('span', null, r.meta));
+        if (r.children > 0) {
+          const b = el('span', 'badge', String(r.children));
+          b.title = r.childrenTitle;
           meta.appendChild(b);
         }
 
         const del = el('button', 'tiny', '×');
-        del.title = t('sess.trash');
-        del.onclick = (e) => { e.stopPropagation(); askDeleteSession(s); };
+        del.title = r.trashTitle;
+        del.onclick = (e) => { e.stopPropagation(); if (s) askDeleteSession(s); };
         meta.appendChild(del);
 
         row.append(title, meta);
-        row.onclick = () => openSession(s.cwd || g.path, s);
+        row.onclick = () => { if (s) openSession(s.cwd || grp.path, s); };
         list.appendChild(row);
       }
-      // Pasta com histórico longo: limita a leitura e libera sob demanda.
-      const hiddenCount = g.sessions.length - shown.length;
-      if (hiddenCount > 0) {
-        const more = el('button', 'sess-more', t('sidebar.load_more', { n: hiddenCount }));
-        more.onclick = (e) => { e.stopPropagation(); expandedProjects.add(g.path); saveTreeState(); loadSessions(); };
+      if (grp.hiddenCount > 0) {
+        const more = el('button', 'sess-more', grp.moreLabel);
+        more.onclick = (e) => { e.stopPropagation(); expandedProjects.add(grp.path); saveTreeState(); loadSessions(); };
         list.appendChild(more);
       }
       box.appendChild(list);

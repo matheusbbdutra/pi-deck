@@ -1,5 +1,22 @@
 # STATE — sightdeck
 
+## Onde estamos (2026-11-18, Fase 6 decidida + Fase 7a aplicada)
+
+- **Fase 6 NÃO migrada — decisão técnica com evidência**:
+  - *Stream*: `scheduleStreamRender` (`main.js:2738`) usa `requestAnimationFrame`
+    e atualiza só o nó corrente (`setMarkdown(stream.node, stream.text)`), sem
+    re-renderizar a lista; `insertRowByAt`/`appendCapped`/`renderMessages` são o
+    núcleo de performance, com **40** referências de teste no caminho.
+  - *Terminal*: as abas são renderizadas em `terminal.js:220` (`$('termtabs')`),
+    dentro do módulo que já gerencia PTY/xterm — migrar a casca criaria fronteira
+    artificial no ciclo de vida do xterm.
+- **Fase 7a**: o render legado de `loadSessions` agora consome
+  `sessionsSnapshot(visible, treeOpts())` e resolve sessão por path/key —
+  dívida de duplicação eliminada (~60 linhas). `sessionTreeHost` segue sendo a
+  via do componente; o legado usa as funções diretas (sem TDZ).
+- Verificado: `test:ui` **144/144**, `build:ui` ✓ (404 ms), oxlint exit 0 nos
+  `.svelte` (warnings de estilo em `main.js` são pré-existentes).
+
 ## Onde estamos (2026-11-18, Fase 5d Svelte aplicada: indicador de digitação)
 
 - **Fase 5d**: indicador `#typing` em Svelte (`ui/src/composer/TypingIndicator.svelte`).
