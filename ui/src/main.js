@@ -986,7 +986,22 @@ async function send() {
 }
 
 /* =============== histórico =============== */
-function renderMessages(data, ctx, keepNote) {
+/* scrollBottom força layout (lê scrollHeight) e é chamado a cada delta de token.
+   Coalescer no rAF derruba isso a um layout por frame. */
+let scrollQueued = false;
+function scrollBottomSoon() {
+  if (scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(() => { scrollQueued = false; scrollBottom(); });
+}
+
+/* Render em fatias: sessão longa (250 msgs) montava o log inteiro num tick e
+   travava a janela. A cada RENDER_CHUNK linhas a main thread respira; se outra
+   renderização começar no meio (troca de aba), esta aborta — o log já é dela. */
+const RENDER_CHUNK = 25;
+let renderToken = 0;
+
+async function renderMessages(data, ctx, keepNote) {
   const target = (ctx && ctx.target) || $('log');
   // Renderizou no painel principal: não há mais "nenhuma sessão" a mostrar.
   if (target === $('log')) setEmptyState(false);
@@ -999,12 +1014,13 @@ function renderMessages(data, ctx, keepNote) {
   if (note) target.appendChild(note);
   store.clear();
   if (!ctx) stream = null;
+  const token = ++renderToken;
   // Ancora de fork por linha: índice/texto das user messages na ordem do transcript.
   let userIdx = -1;
   const userTexts = [];
 
-  for (const m of messages) {
-    if (!m || m.role === 'system') continue;
+  const paint = (m) => {
+    if (!m || m.role === 'system') return;
     const blocks = Array.isArray(m.content) ? m.content : null;
     if (m.role === 'user') userIdx++;
     if (m.role === 'user' && userTexts.length <= userIdx) userTexts.push('');
@@ -1014,7 +1030,7 @@ function renderMessages(data, ctx, keepNote) {
       node.appendChild(el('b', null, t('custom.label')));
       node.appendChild(el('span', null, ' ' + (m.customType || m.type || 'custom')));
       target.appendChild(node);
-      continue;
+      return;
     }
 
     if (m.role === 'user') {
@@ -1023,7 +1039,7 @@ function renderMessages(data, ctx, keepNote) {
         : (typeof m.content === 'string' ? m.content : '');
       // Imagem enviada também aparece: sem isto o print some do transcript.
       const imgs = blocks ? blocks.filter(b => b && b.type === 'image' && b.data) : [];
-      if (!text.trim() && !imgs.length) { userIdx--; userTexts.pop(); continue; }
+      if (!text.trim() && !imgs.length) { userIdx--; userTexts.pop(); return; }
       const urow = el('div', 'row user', '▸ ' + text.trim());
       urow.dataset.text = text.trim();
       // Âncora do restore: uma linha local só volta antes da 1ª mensagem mais nova.
@@ -1033,11 +1049,11 @@ function renderMessages(data, ctx, keepNote) {
       if (!ctx) urow.appendChild(forkRowBtn({ uindex: userIdx, utext: text.trim() }, t('fork.row_msg')));
       imgs.forEach(b => urow.appendChild(thumb('data:' + (b.mimeType || 'image/png') + ';base64,' + b.data)));
       target.appendChild(urow);
-      continue;
+      return;
     }
 
     if (m.role === 'assistant') {
-      if (!blocks) continue;
+      if (!blocks) return;
       for (const b of blocks) {
         if (!b) continue;
         if (b.type === 'thinking' && b.thinking && b.thinking.trim()) {
@@ -1059,7 +1075,7 @@ function renderMessages(data, ctx, keepNote) {
           card(b.id, b.name, b.arguments, { target, store }, m.timestamp);
         }
       }
-      continue;
+      return;
     }
 
     if (m.role === 'toolResult') {
@@ -1068,9 +1084,21 @@ function renderMessages(data, ctx, keepNote) {
       entry.icon.textContent = m.isError ? '✕' : '✓';
       applyToolResult(entry, m);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
-      continue;
     }
+  };
+
+  // Offscreen (preview, child, loadEarlier) fica síncrono: quem chama lê o DOM
+  // logo depois — `loadEarlier` move os childNodes de `tmp` para o log.
+  const chunk = target === $('log') ? RENDER_CHUNK : messages.length + 1;
+  for (let i = 0; i < messages.length; i += chunk) {
+    const end = Math.min(i + chunk, messages.length);
+    for (let j = i; j < end; j++) paint(messages[j]);
+    if (end >= messages.length) break;
+    // Outra renderização tomou o log: o que sobrar aqui não é mais desta sessão.
+    if (token !== renderToken) return;
+    await new Promise(r => setTimeout(r, 0));
   }
+  if (token !== renderToken) return;
   if (target === $('log')) { restoreLocalRows(); reattachStream(); }
   if (ctx) target.scrollTop = 0;
   else { scrollBottom(true); updateScrollBtn(); }
@@ -2587,7 +2615,7 @@ listen('rpc-line', (ev) => {
         // Guarda por aba: trocar de aba no meio do pensamento não perde o parcial.
         const tt = tabs.find(x => current && x.key === current.key);
         if (tt) tt.thinkText = appendCapped(tt.thinkText, d.delta, STREAM_CAP);
-        scrollBottom();
+        scrollBottomSoon();
         break;
       }
 
@@ -2605,7 +2633,7 @@ listen('rpc-line', (ev) => {
         if (tt) tt.streamText = stream.text.slice(-STREAM_CAP);
         maybeSaveTabs();
         scheduleStreamRender();
-        scrollBottom();
+        scrollBottomSoon();
       }
       break;
     }
