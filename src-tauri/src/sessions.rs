@@ -154,7 +154,7 @@ export default function (pi) {
 /// Agrega tokens e custo do histórico de sessões por dia e por projeto.
 /// Lê `usage.cost.total`/`usage.totalTokens` das mensagens assistant nos `.jsonl`
 /// (o dado existe no disco; o TUI não o expõe agregado).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn usage_stats(days: Option<usize>) -> Result<String, String> {
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader};
@@ -268,7 +268,7 @@ pub fn usage_stats(days: Option<usize>) -> Result<String, String> {
 
 /// Lista de providers conhecidos pelo pi (com flag `configured`).
 /// O CLI só expõe essa lista no erro de `pi auth login <invalido>`, então é de lá que vem.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_providers() -> Result<String, String> {
     let mut providers: Vec<String> = Vec::new();
 
@@ -356,7 +356,7 @@ pub fn auth_providers() -> Result<String, String> {
 }
 
 /// Status de auth do provider: `pi auth check --provider X --json`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_status(provider: String) -> Result<String, String> {
     let p = provider.trim();
     if p.is_empty() {
@@ -372,7 +372,7 @@ pub fn auth_status(provider: String) -> Result<String, String> {
 /// Remove as credenciais de um provider (`pi auth logout <provider>`).
 /// O CLI apaga o que está em `~/.pi/agent/auth.json`; env e models.json ficam.
 /// Re-login (`auth login`) cobre o caso de "editar" a credencial.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_logout(provider: String) -> Result<String, String> {
     let p = provider.trim();
     if p.is_empty() {
@@ -457,7 +457,7 @@ fn login_inner(bin_quoted: &str, provider: &str, windows: bool) -> String {
 }
 
 /// Abre um terminal já rodando `pi auth login <provider>` (login é interativo).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_terminal_login(provider: String) -> Result<String, String> {
     let p = validate_login_provider(&provider)?;
     let bin = quote_bin(&pi_bin().to_string_lossy());
@@ -502,7 +502,7 @@ pub fn open_terminal_login(provider: String) -> Result<String, String> {
 }
 
 /// Copia texto para a área de transferência usando utilitário do sistema.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn copy_text(text: String) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -585,7 +585,7 @@ fn pick_file_blocking() -> Result<String, String> {
 /// Lê imagem da área de transferência do sistema e devolve `(base64, mimeType)`.
 /// A WebKitGTK não entrega `image/*` no evento `paste` do webview, então o app
 /// consulta o clipboard do sistema direto. Só lê: nunca escreve no clipboard.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn paste_image() -> Result<(String, String), String> {
     use base64::Engine;
 
@@ -870,7 +870,7 @@ fn open_file_in(cwd: &Path, path: &Path) -> Result<PathBuf, String> {
 /// bloco adicionado (`+`) apareça exatamente 1 vez e o troca pelo bloco removido
 /// (`-`). Recusa hunk só de adições (ex.: `write`, só `+`), hunk só de remoções
 /// (reinserção sem âncora) e patch truncado, com erro legível.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn revert_hunk(cwd: String, file: String, hunk: String) -> Result<String, String> {
     revert_hunk_in(Path::new(&cwd), Path::new(&file), &hunk)
 }
@@ -993,7 +993,7 @@ pub fn debug_note(msg: String) -> String {
 }
 
 /// Pacotes instalados (`pi list`), texto cru.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_list() -> Result<String, String> {
     let out = std::process::Command::new(pi_bin())
         .arg("list")
@@ -1007,7 +1007,7 @@ pub fn pi_list() -> Result<String, String> {
 }
 
 /// Instala um pacote pelo CLI oficial (`pi install <source>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_install(spec: String, local: bool) -> Result<String, String> {
     let mut cmd = pi_cmd();
     cmd.args(["install", spec.as_str(), "--no-approve"]);
@@ -1025,7 +1025,7 @@ pub fn pi_install(spec: String, local: bool) -> Result<String, String> {
 }
 
 /// Adiciona/atualiza servidor MCP via `pi mcp add` (o CLI grava o mcp.json).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_mcp_add(
     name: String,
     url: String,
@@ -1070,7 +1070,7 @@ pub fn pi_mcp_add(
 }
 
 /// Remove um pacote instalado (`pi remove <source>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_remove(spec: String, local: bool) -> Result<String, String> {
     let mut cmd = pi_cmd();
     cmd.args(["remove", spec.as_str(), "--no-approve"]);
@@ -1088,7 +1088,7 @@ pub fn pi_remove(spec: String, local: bool) -> Result<String, String> {
 }
 
 /// Remove servidor MCP (`pi mcp remove <name>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_mcp_remove(name: String, local: bool) -> Result<String, String> {
     let mut cmd = std::process::Command::new(pi_bin());
     cmd.args(["mcp", "remove", name.as_str()]);
@@ -1106,7 +1106,7 @@ pub fn pi_mcp_remove(name: String, local: bool) -> Result<String, String> {
 }
 
 /// Servidores MCP em JSON (`pi mcp list --json`) — evita ler mcp.json e expor `env`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_mcp_list() -> Result<String, String> {
     let out = std::process::Command::new(pi_bin())
         .args(["mcp", "list", "--json"])
@@ -1120,7 +1120,7 @@ pub fn pi_mcp_list() -> Result<String, String> {
 }
 
 /// Atualiza pi e/ou extensões pelo próprio CLI (`pi update`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_update(scope: String) -> Result<String, String> {
     let target = match scope.as_str() {
         "self" => "--self",
@@ -1145,7 +1145,7 @@ pub fn pi_update(scope: String) -> Result<String, String> {
 }
 
 /// `pi` filhos marcados com SIGHTDECK_CHILD cujo pai morreu (ppid 1) — limpa órfãos de crash.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn kill_orphans() -> Result<usize, String> {
     let entries = fs::read_dir("/proc").map_err(|e| e.to_string())?;
     let mut killed = 0usize;
@@ -1199,7 +1199,7 @@ fn parse_context(raw: &str) -> u64 {
 }
 
 /// Catálogo de modelos direto do CLI (`pi --list-models`) — instantâneo, sem subir sessão.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_models() -> Result<String, String> {
     let out = std::process::Command::new(pi_bin())
         .arg("--list-models")
@@ -1226,7 +1226,7 @@ pub fn pi_models() -> Result<String, String> {
 }
 
 /// Último modelo registrado na sessão (record `model_change`), sem precisar de RPC.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_model(path: String) -> Result<String, String> {
     let raw = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
 
@@ -1256,7 +1256,7 @@ pub fn session_model(path: String) -> Result<String, String> {
 }
 
 /// Caminho do log de hooks e se a extensão de instrumentação está instalada.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_status() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/sightdeck-hooks.js"));
@@ -1270,7 +1270,7 @@ pub fn hooks_status() -> Result<String, String> {
 }
 
 /// Instala a extensão que registra hooks em `~/.pi/agent/sightdeck/hooks.log`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_install() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let dir = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions"));
@@ -1280,7 +1280,7 @@ pub fn hooks_install() -> Result<String, String> {
     Ok(format!("instalado em {}", ext.display()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_remove() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/sightdeck-hooks.js"));
@@ -1292,7 +1292,7 @@ pub fn hooks_remove() -> Result<String, String> {
 }
 
 /// Últimas linhas do log de hooks.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_tail(lines: Option<usize>) -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let path = format!("{home}/.pi/agent/sightdeck/hooks.log");
@@ -1425,7 +1425,7 @@ pub fn compaction_set(
 }
 
 /// Versão do `pi` instalado.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_version() -> String {
     std::process::Command::new(pi_bin())
         .arg("--version")
@@ -1588,7 +1588,7 @@ fn child_state(session_file: &Path) -> &'static str {
 
 /// Últimas `limit` mensagens de um arquivo de sessão (JSONL), precedidas por um record
 /// `__deck_meta` com quantas ficaram de fora. Evita mandar 20 MB+ para o webview.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_session_messages(
     path: String,
     limit: Option<usize>,
@@ -1761,7 +1761,7 @@ fn slim_content(content: &mut serde_json::Value, text_chars: usize, args_bytes: 
 
 /// "Exclui" uma sessão movendo o `.jsonl` e o diretório de children para
 /// `<projeto>/.sightdeck-trash/<stem>/`. Nunca apaga de verdade.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_session(file: String) -> Result<String, String> {
     let root = sessions_root()?;
     delete_session_in(Path::new(&file), &root)
@@ -1796,7 +1796,7 @@ fn delete_session_in(file: &Path, root: &Path) -> Result<String, String> {
 
 /// Children da sessão lidos do disco: `<sessão>/<childId>/run-N/session.jsonl`.
 /// Usado quando não há widget ao vivo (sessão aberta do histórico).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_children(dir: String) -> Result<String, String> {
     list_children_in(&std::path::PathBuf::from(&dir), &sessions_root()?)
 }
@@ -1880,7 +1880,7 @@ fn list_children_in(dir: &Path, root: &Path) -> Result<String, String> {
 /// Edições de arquivo da sessão **e dos seus children**, com o patch de cada uma.
 /// `path` = `.jsonl` da sessão; children vêm de `<stem>/<childId>/run-N/session.jsonl`.
 /// O patch é o `details.patch` que a própria tool `edit` já grava no histórico.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_edits(path: String) -> Result<String, String> {
     let root = sessions_root()?;
     session_edits_in(Path::new(&path), &root)
@@ -2055,7 +2055,7 @@ fn added_patch(content: &str) -> String {
 
 /// Sidebar: sessões agrupadas por pasta.
 /// `file` = caminho absoluto do `.jsonl` (é o que vai em `pi --session <path>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_sessions() -> Result<String, String> {
     let root = sessions_root()?;
     let entries = fs::read_dir(&root).map_err(|e| format!("{}: {e}", root.display()))?;
@@ -2152,7 +2152,7 @@ pub fn list_sessions() -> Result<String, String> {
 /// `SEARCH_TOTAL_BYTES` no total) — arquivo grande é cortado, mas a varredura
 /// continua nos seguintes. Linha gigante (> `MAX_PATCH_BYTES`) é pulada.
 /// Retorna `{"total","truncated","files","scannedFiles","results":[{"id","file","cwd","title","matches","snippet","tools","hasError"}]}`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_sessions(
     query: String,
     tool: Option<String>,

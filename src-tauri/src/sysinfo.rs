@@ -58,7 +58,7 @@ fn pi_rss(pi: &Path) -> (u64, usize) {
 }
 
 /// JSON `{ appKb, piKb, piCount }` — usado pelo monitor perto da versão do pi.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mem_usage() -> Result<String, String> {
     let app_kb = rss_kb(std::process::id()).unwrap_or(0);
     let (pi_kb, pi_count) = pi_rss(&crate::sessions::pi_bin());

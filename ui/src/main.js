@@ -258,6 +258,7 @@ function settleGhostTurn(key, why) {
   if (t) { t.streamText = ''; t.thinkText = ''; t.queue = []; saveTabs(); }
   renderTabs();
   if (!current || current.key !== key) return;
+  flushStream();
   stream = null;
   setTyping(false);
   setStatus(why);
@@ -2446,8 +2447,28 @@ function scheduleStreamRender() {
   if (pendingRender) return;
   pendingRender = requestAnimationFrame(() => {
     pendingRender = 0;
-    if (stream && stream.node) setMarkdown(stream.node, stream.text);
+    if (!stream || !stream.node) return;
+    // Durante o stream só o delta novo entra no DOM, como texto cru: reconstruir o
+    // markdown inteiro a cada frame custava 39,7 ms e 3.599 nós no pior caso
+    // (STREAM_CAP = 30000) — a aba ficava 100% ocupada por toda a resposta.
+    if (!stream.tail) {
+      stream.tail = document.createTextNode('');
+      stream.node.appendChild(stream.tail);
+      stream.rendered = 0;
+    }
+    const rest = stream.text.slice(stream.rendered);
+    if (rest) stream.tail.appendData(rest);
+    stream.rendered = stream.text.length;
   });
+}
+
+/** Encerra o trecho em voo: converte o texto cru acumulado em markdown uma vez. */
+function flushStream() {
+  if (!stream || !stream.node) return;
+  if (pendingRender) { cancelAnimationFrame(pendingRender); pendingRender = 0; }
+  if (stream.tail) { stream.tail.remove(); stream.tail = null; }
+  if (stream.text) setMarkdown(stream.node, stream.text);
+  stream.rendered = stream.text.length;
 }
 
 listen('rpc-line', (ev) => {
@@ -2593,6 +2614,7 @@ listen('rpc-line', (ev) => {
       // Fim da resposta: pede stats frescos e deixa o live cair na resposta
       // (a mensagem já foi persistida, então o próximo total a inclui).
       if (rec.message && rec.message.role === 'assistant') {
+        flushStream();
         const et = tabs.find(x => current && x.key === current.key);
         if (et && et.live) et.livePending = true;
         // Sem processo vivo o RPC falharia e a nota de erro cairia no transcript.
@@ -2614,6 +2636,7 @@ listen('rpc-line', (ev) => {
 
     case 'tool_execution_start':
       card(rec.toolCallId, rec.toolName, rec.args, null, Date.now());
+      flushStream();
       stream = null;
       // Trecho de texto anterior já está renderizado: não reanexa na volta.
       {
@@ -2663,10 +2686,9 @@ listen('rpc-line', (ev) => {
         // `stream` também caduca. Sem isto, trocar de aba depois do fim do turno
         // fazia `stashDraft` regravar a resposta final em `t.streamText`, e voltar
         // pintava a mesma resposta duas vezes (histórico do disco + reattach).
-        // Último frame do rAF: `stream = null` sem flush perde o trecho acumulado
-        // desde o frame anterior (o callback veria `stream` já nulo).
-        if (stream && stream.node) setMarkdown(stream.node, stream.text);
-        if (pendingRender) { cancelAnimationFrame(pendingRender); pendingRender = 0; }
+        // Último frame do rAF: sem o flush o trecho cru acumulado desde o frame
+        // anterior ficaria fora do markdown final.
+        flushStream();
         stream = null;
         saveTabs();
       }

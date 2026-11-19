@@ -26,7 +26,7 @@ pub struct Change {
 }
 
 /// Status com o repositório do `cwd` informado pela UI.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_status(cwd: String) -> Result<String, String> {
     if !Path::new(&cwd).is_dir() {
         return Ok(no_repo());
@@ -56,7 +56,7 @@ pub fn git_status(cwd: String) -> Result<String, String> {
 /// Patch unificado de UM arquivo do `cwd`: `HEAD` (worktree + índice), depois só
 /// o índice (`--cached`) e por fim `--no-index` contra o device nulo, que é o
 /// caminho do untracked. Texto cru; sem diff, string vazia.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_file_diff(cwd: String, path: String) -> Result<String, String> {
     validate_diff_path(&path)?;
     if !Path::new(&cwd).is_dir() {
@@ -279,7 +279,7 @@ fn require_dir(cwd: &str) -> Result<String, String> {
 /// `amend` troca a mensagem do último commit, por isso `--amend -m <message>`
 /// (e NÃO `--no-edit`, que manteria a mensagem antiga). Devolve o hash curto do
 /// HEAD novo; qualquer falha volta com o texto literal do git.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_commit(
     cwd: String,
     message: String,
@@ -315,7 +315,7 @@ pub fn git_commit(
 /// `git restore -- <paths>`: desfaz o worktree pelo índice. Untracked é recusado
 /// com erro explícito — o equivalente seria `git clean`, que apaga arquivo sem
 /// volta e está fora do escopo da aba.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_discard(cwd: String, paths: Vec<String>) -> Result<String, String> {
     let cwd = require_dir(&cwd)?;
     if paths.is_empty() {
@@ -340,7 +340,7 @@ pub fn git_discard(cwd: String, paths: Vec<String>) -> Result<String, String> {
 
 /// Stash com untracked incluso e mensagem carimbada (`sightdeck: <epoch>`), para o
 /// usuário reconhecer de onde veio a entrada na lista de stashes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_stash(cwd: String) -> Result<String, String> {
     let cwd = require_dir(&cwd)?;
     let stamp = std::time::SystemTime::now()
@@ -356,7 +356,7 @@ pub fn git_stash(cwd: String) -> Result<String, String> {
 
 /// `git stash pop`: conflito sai != 0 com a lista de arquivos em conflito — vira
 /// `Err` para a UI mostrar em vez de fingir sucesso.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_stash_pop(cwd: String) -> Result<String, String> {
     let cwd = require_dir(&cwd)?;
     git_rw_ok(&cwd, &["stash", "pop"])
@@ -364,7 +364,7 @@ pub fn git_stash_pop(cwd: String) -> Result<String, String> {
 
 /// Só fast-forward: sem `--ff-only` o pull criaria um merge commit que ninguém
 /// pediu (e que o push depois recusaria).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_pull(cwd: String) -> Result<String, String> {
     let cwd = require_dir(&cwd)?;
     git_rw_ok(&cwd, &["pull", "--ff-only"])
@@ -373,7 +373,7 @@ pub fn git_pull(cwd: String) -> Result<String, String> {
 /// `git push` (ou `--force-with-lease`, nunca `--force`). O git escreve o
 /// progresso e o erro no stderr: sucesso devolve esse texto, falha devolve `Err`
 /// com o stderr literal — non-fast-forward e "sem remote" ficam legíveis.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_push(cwd: String, force_with_lease: bool) -> Result<String, String> {
     let cwd = require_dir(&cwd)?;
     let args: &[&str] = if force_with_lease {
