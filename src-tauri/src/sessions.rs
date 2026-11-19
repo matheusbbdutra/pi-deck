@@ -1527,10 +1527,6 @@ fn read_title(session_file: &Path) -> Option<String> {
     read_head_meta(session_file).1
 }
 
-fn read_cwd(session_file: &Path) -> Option<String> {
-    read_head_meta(session_file).0
-}
-
 /// (cwd, título) numa única abertura: `list_sessions` gira ~750 arquivos do
 /// histórico e cada abertura extra é um syscall por sessão.
 fn read_head_meta(session_file: &Path) -> (Option<String>, Option<String>) {
@@ -2630,8 +2626,7 @@ mod tests {
         assert_eq!(cwd.as_deref(), Some("/home/u/proj"));
         // Cerca de código vira espaço e o espaço em excesso colapsa.
         assert_eq!(title.as_deref(), Some("arruma o build"));
-        // `read_cwd`/`read_title` são o mesmo caminho: não podem divergir.
-        assert_eq!(read_cwd(&p), cwd);
+        // O wrapper público é o mesmo caminho do meta: não pode divergir.
         assert_eq!(read_title(&p), title);
     }
 
