@@ -5,6 +5,51 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-11-19
+
+### Added
+- **Migração para Svelte 5**: tema, abas, sidebar, painéis (planos, missões, git, subagentes), anexos
+  do composer, paleta (`/` e `Ctrl+K`), indicador de digitação e a tela de configurações. Cada
+  componente recebe um `host` injetado e o `main.js` ficou só com o wiring; um teste guard-rail
+  confere que a migração não perdeu peça.
+- **Modal único de configurações** com abas, presets de tema completos, favoritos de modelo em
+  seção própria e abertura direta pelo ⚙.
+- **Dashboard de custo e inspetor de contexto** (aba nova, com pane no `switch`).
+- **Velocidade média (tok/s)** no popover de contexto: média ponderada de `output ÷ duração` das
+  respostas, no lugar do antigo `tokens ÷ mensagens` (que misturava cache acumulado com contagem
+  de linhas e virava "37k" sem significado).
+- **Miniatura da imagem que uma tool leu** (`read x.png`): o card mostra o que o modelo viu,
+  lendo o arquivo sob demanda pelo caminho da própria chamada.
+- **Providers de extensão** (ex.: `commandcode`): aparecem na aba Providers e no chip de auth como
+  "via extensão" em vez de um botão "logar" que só dava `provider desconhecido`.
+- **Busca global com cobertura**: varre a árvore inteira dentro de orçamento de tempo/bytes e
+  informa "N de M sessões" em vez de parar no 5º arquivo.
+
+### Changed
+- **Comandos Tauri de I/O fora da thread do IPC**: 42 comandos passaram a `#[tauri::command(async)]`
+  (`pty_*` segue sync de propósito — a ordem de chegada garante `open` antes de `write`).
+- **Stream do transcript**: o delta entra como texto cru e o markdown é renderizado uma vez por
+  flush (antes: o markdown inteiro a cada frame, 39,7 ms e 3.599 nós só no stream).
+- **Histórico em fatias** de 25 mensagens com `setTimeout(0)` entre elas; offscreen (preview,
+  filho, `loadEarlier`) continua síncrono.
+- **`scrollBottom` no `requestAnimationFrame`**, coalescendo os deltas de token.
+
+### Fixed
+- **Aviso de extensão duplicado**: o chip do topo virou o único ponto de entrada e abre a lista
+  com dispensa por aviso + atalho para o Diagnóstico.
+- **`session_model`** agora passa por `contained_in` — era o único caminho do webview sem a
+  checagem de raiz.
+- **`git_file_diff`** com teto de 256 KB e **`hooks_tail`** lendo só o fim do log (512 KB).
+- **Aba Custo abria vazia** (pane não estava na lista do `switch`), **`loadSessions` apagava o DOM**
+  do `SessionTree`, placeholders duplicados na lista de modelos e provider não removível exibindo
+  remoção.
+- **Remoção de provider custom** do `models.json` com feedback na aba.
+
+### Performance
+- **stdin/kill fora do mutex global**: um `write` travado não bloqueia mais o `stop_session`.
+- **Uma abertura por sessão** ao listar e buscar (antes: 2 aberturas + 1 `stat` por arquivo, em
+  749 `.jsonl`); leituras com teto em `hooks_tail`, `session_model` e no diff.
+
 ## [0.2.5] — 2026-11-18
 
 ### Added

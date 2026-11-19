@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsFd;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -55,11 +56,15 @@ fn take_if_same<T: SlotOwner>(
 impl RpcState {
     /// Encerra todos os processos `pi` filhos (usado ao fechar a janela).
     pub fn kill_all(&self) {
-        if let Ok(mut map) = self.0.lock() {
-            for (_, mut handle) in map.drain() {
-                let _ = handle.child.kill();
-                let _ = handle.child.wait();
-            }
+        // Drena sob o lock e mata/espara fora dele: `wait()` é bloqueante e sem
+        // timeout, e no handler de fechamento da janela isso trava o teardown.
+        let drained: Vec<ChildHandle> = match self.0.lock() {
+            Ok(mut map) => map.drain().map(|(_, h)| h).collect(),
+            Err(_) => return,
+        };
+        for mut handle in drained {
+            let _ = handle.child.kill();
+            let _ = handle.child.wait();
         }
     }
 
@@ -118,7 +123,7 @@ fn child_path_with(
 }
 
 /// Uma sessao = um processo `pi --mode rpc` (padrao do pi-desktop).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_session(
     app: AppHandle,
     state: State<'_, RpcState>,
@@ -245,7 +250,7 @@ pub fn start_session(
     Ok(session_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn send_prompt(
     state: State<'_, RpcState>,
     session_id: String,
@@ -254,8 +259,6 @@ pub fn send_prompt(
     // Pares (base64, mimeType) — formato ImageContent do RPC do pi.
     images: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
-    let mut map = state.0.lock().map_err(|e| e.to_string())?;
-
     let images_json = match images.as_deref() {
         Some(list) if !list.is_empty() => {
             let items: Vec<String> = list
@@ -281,25 +284,42 @@ pub fn send_prompt(
         escape_json(&id),
         escape_json(&message)
     );
-    let written = {
-        let handle = map
-            .get_mut(&session_id)
+    write_stdin(&state.0, &session_id, command.as_bytes())
+}
+
+/// Escreve no stdin da sessão **fora** do lock global: se o filho parar de drenar
+/// o stdin, o pipe enche (64 KB) e o write bloqueia — segurando o mutex, isso
+/// travaria também `stop_session`, isto é, o próprio cancelamento. O fd é
+/// clonado sob o lock e a escrita acontece depois de soltá-lo.
+fn write_stdin(
+    map: &Arc<Mutex<HashMap<String, ChildHandle>>>,
+    session_id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let fd = {
+        let guard = map.lock().map_err(|e| e.to_string())?;
+        let handle = guard
+            .get(session_id)
             .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
         handle
             .stdin
-            .write_all(command.as_bytes())
-            .and_then(|_| handle.stdin.flush())
+            .as_fd()
+            .try_clone_to_owned()
+            .map_err(|e| format!("clonar stdin falhou: {e}"))?
     };
-    if let Err(e) = written {
-        // stdin morto = filho já não existe. Libera o slot para o próximo
-        // `ensureRpc` subir um processo novo em vez de falhar para sempre.
-        if let Some(dead) = map.remove(&session_id) {
-            drop(map);
-            drop_child(dead.child);
+    let mut pipe = std::fs::File::from(fd);
+    match pipe.write_all(bytes).and_then(|_| pipe.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // stdin morto = filho já não existe. Libera o slot para o próximo
+            // `ensureRpc` subir um processo novo em vez de falhar para sempre.
+            let dead = map.lock().ok().and_then(|mut g| g.remove(session_id));
+            if let Some(dead) = dead {
+                drop_child(dead.child);
+            }
+            Err(format!("processo do pi encerrou ({e})"))
         }
-        return Err(format!("processo do pi encerrou ({e})"));
     }
-    Ok(())
 }
 
 /// Quantos processos `pi` filhos estão vivos (visibilidade do custo).
@@ -309,37 +329,26 @@ pub fn running_sessions(state: State<'_, RpcState>) -> Vec<String> {
 }
 
 /// Comando RPC genérico: o frontend manda o JSON pronto (set_model, set_thinking_level, etc.).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rpc_command(
     state: State<'_, RpcState>,
     session_id: String,
     payload: String,
 ) -> Result<(), String> {
-    let mut map = state.0.lock().map_err(|e| e.to_string())?;
-    let written = {
-        let handle = map
-            .get_mut(&session_id)
-            .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
-        handle
-            .stdin
-            .write_all(format!("{payload}\n").as_bytes())
-            .and_then(|_| handle.stdin.flush())
-    };
-    if let Err(e) = written {
-        // Mesmo motivo do `send_prompt`: sem isto o slot fica envenenado.
-        if let Some(dead) = map.remove(&session_id) {
-            drop(map);
-            drop_child(dead.child);
-        }
-        return Err(format!("processo do pi encerrou ({e})"));
-    }
-    Ok(())
+    // Mesmo motivo do `send_prompt`: sem isto o slot fica envenenado.
+    write_stdin(&state.0, &session_id, format!("{payload}\n").as_bytes())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_session(state: State<'_, RpcState>, session_id: String) -> Result<(), String> {
-    let mut map = state.0.lock().map_err(|e| e.to_string())?;
-    if let Some(mut handle) = map.remove(&session_id) {
+    // Remove sob o lock e mata/espara fora: `wait()` bloqueante dentro do mutex
+    // global travava todo o canal RPC (inclusive o próprio cancelamento).
+    let handle = state
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&session_id);
+    if let Some(mut handle) = handle {
         let _ = handle.child.kill();
         let _ = handle.child.wait();
     }

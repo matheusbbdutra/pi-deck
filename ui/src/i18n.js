@@ -267,6 +267,7 @@ export const STRINGS = {
     'search.total': '{n} sessão(ões)',
     'search.none': 'nada encontrado',
     'search.capped': 'teto de leitura atingido',
+    'search.coverage': '{n} de {m} sessões',
     'search.showing': 'mostrando {n}',
     'search.matches': '{id} · {n} trecho(s)',
 
@@ -303,6 +304,15 @@ export const STRINGS = {
     'ctx.limit_fail': 'falha ao salvar o limite de compactação: {e}',
     'ctx.cache': 'Prompt cache (sessão)',
     'ctx.cache_value': 'read {r} · write {w}',
+    'ctx.cache_hit': 'Cache hit do input',
+    'ctx.cache_hit_value': '{pct}% veio do cache',
+    'ctx.avg': 'Velocidade média',
+    'ctx.avg_value': '{n}',
+    'ctx.composition': 'Composição (estimada)',
+    'ctx.comp_system': 'system',
+    'ctx.comp_user': 'usuário',
+    'ctx.comp_assistant': 'assistente',
+    'ctx.comp_tools': 'tools',
     'ctx.io': 'Input / Output',
     'ctx.live': 'Turno em andamento',
     'ctx.live_value': '+{b} tokens · +{c} no contexto',
@@ -338,6 +348,8 @@ export const STRINGS = {
     'think.none': 'modelo sem níveis de thinking',
 
     'model.none': 'nenhum modelo',
+    'model.fav_toggle': 'Favoritar modelo (vai para o topo)',
+    'model.favs': 'FAVORITOS',
     'model.not_found': 'modelo não encontrado para "{q}"',
 
     'palette.empty': 'nenhum resultado',
@@ -400,6 +412,9 @@ export const STRINGS = {
     'export.done': 'exportado: {x}',
     'turn.interrupted': 'turno interrompido',
     'health.more': '… +{n} aviso(s)',
+    'notify.head': 'Notificações',
+    'notify.title': '{n} aviso(s) de extensão no total (todas as sessões)',
+    'notify.empty': 'nenhum aviso agora',
     'update.install': 'Baixar e instalar'
   },
   en: {
@@ -623,6 +638,7 @@ export const STRINGS = {
     'search.total': '{n} session(s)',
     'search.none': 'nothing found',
     'search.capped': 'read cap reached',
+    'search.coverage': '{n} of {m} sessions',
     'search.showing': 'showing {n}',
     'search.matches': '{id} · {n} match(es)',
 
@@ -659,6 +675,15 @@ export const STRINGS = {
     'ctx.limit_fail': 'failed to save the compaction limit: {e}',
     'ctx.cache': 'Prompt cache (session)',
     'ctx.cache_value': 'read {r} · write {w}',
+    'ctx.cache_hit': 'Input cache hit',
+    'ctx.cache_hit_value': '{pct}% came from cache',
+    'ctx.avg': 'Average speed',
+    'ctx.avg_value': '{n}',
+    'ctx.composition': 'Composition (estimated)',
+    'ctx.comp_system': 'system',
+    'ctx.comp_user': 'user',
+    'ctx.comp_assistant': 'assistant',
+    'ctx.comp_tools': 'tools',
     'ctx.io': 'Input / Output',
     'ctx.live': 'Turn in progress',
     'ctx.live_value': '+{b} tokens · +{c} in context',
@@ -694,6 +719,8 @@ export const STRINGS = {
     'think.none': 'model has no thinking levels',
 
     'model.none': 'no models',
+    'model.fav_toggle': 'Favorite model (pins to top)',
+    'model.favs': 'FAVORITES',
     'model.not_found': 'no model found for "{q}"',
 
     'palette.empty': 'no results',
@@ -756,6 +783,9 @@ export const STRINGS = {
     'export.done': 'exported: {x}',
     'turn.interrupted': 'turn interrupted',
     'health.more': '… +{n} warning(s)',
+    'notify.head': 'Notifications',
+    'notify.title': '{n} extension warning(s) across all sessions',
+    'notify.empty': 'no warnings right now',
     'update.install': 'Download and install'
   },
 };
@@ -780,7 +810,6 @@ export function applyStaticI18n() {
   ph('toolfilter', t('sidebar.tool_filter_ph'));
   ph('input', t('composer.placeholder'));
   ph('cmdkinput', t('composer.cmd_ph'));
-  ph('modelsearch', t('composer.model_search_ph'));
   ph('catsearch', t('pkgs.catalog_ph'));
   ph('provsearch', t('prov.search_ph'));
   ph('mcpname', t('mcp.name_ph'));
@@ -789,13 +818,6 @@ export function applyStaticI18n() {
   set('confirmok', t('common.execute'));
   set('confirmcancel', t('common.cancel'));
   ti('stopbtn', t('composer.stop'));
-  set('lblExpTools', t('settings.expand_tools'));
-  set('lblExpThink', t('settings.expand_think'));
-  set('lblShowHidden', t('settings.show_hidden'));
-  set('lblNotifyDesktop', t('settings.notify_desktop'));
-  set('lblNotifySound', t('settings.notify_sound'));
-  set('lblHooks', t('settings.instrument'));
-  set('lblLang', t('settings.language'));
   set('themebtn', t('settings.theme'));
   set('pkgbtn', t('settings.packages'));
   set('debugbtn', t('settings.debug'));
@@ -804,14 +826,4 @@ export function applyStaticI18n() {
   set('updatebtn', t('update.install'));
   set('updExt', t('settings.update_ext'));
   set('updPi', t('settings.update_pi'));
-  try {
-    // `langsel` pertence ao componente Svelte (ele mesmo traduz as opções);
-    // aqui só o select do markup legado (fallback).
-    const sel = document.getElementById('langsellegacy');
-    if (sel && sel.options.length >= 3) {
-      sel.options[0].textContent = t('settings.lang_auto');
-      sel.options[1].textContent = t('settings.lang_pt');
-      sel.options[2].textContent = t('settings.lang_en');
-    }
-  } catch { /* sem DOM */ }
 }

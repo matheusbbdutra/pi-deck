@@ -48,30 +48,64 @@
   }}
   autocomplete="off"
 />
-{#each snap.list.groups as g (g.provider)}
-  <div class="model-group">{g.provider.toUpperCase()}</div>
-  {#each g.rows as r (r.id)}
-    <div
-      class="model-row"
-      class:current={r.current}
-      role="button"
-      tabindex="0"
-      onclick={() => host.apply(r.id)}
-      onkeydown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          host.apply(r.id);
-        }
-      }}
-    >
-      <span class="model-name">{r.name}</span>
-      <span class="model-ctx">{r.ctx}</span>
-    </div>
+<div class="model-list">
+  {#if snap.list.favs.length}
+    <div class="model-group">{tr('model.favs')}</div>
+    {#each snap.list.favs as f (f.id)}
+      <div
+        class="model-row"
+        class:current={f.current}
+        role="button"
+        tabindex="0"
+        onclick={() => host.apply(f.id)}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            host.apply(f.id);
+          }
+        }}
+      >
+        <span class="model-name">{f.label}</span>
+        <span class="model-ctx">{f.ctx}</span>
+        <button
+          class="fav on"
+          title={tr('model.fav_toggle')}
+          onclick={(e) => { e.stopPropagation(); host.toggleFav(f.id); }}
+        >★</button>
+      </div>
+    {/each}
+  {/if}
+  {#each snap.list.groups as g (g.provider)}
+    <div class="model-group">{g.provider.toUpperCase()}</div>
+    {#each g.rows as r (r.id)}
+      <div
+        class="model-row"
+        class:current={r.current}
+        role="button"
+        tabindex="0"
+        onclick={() => host.apply(r.id)}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            host.apply(r.id);
+          }
+        }}
+      >
+        <span class="model-name">{r.name}</span>
+        <span class="model-ctx">{r.ctx}</span>
+        <button
+          class="fav"
+          class:on={r.fav}
+          title={tr('model.fav_toggle')}
+          onclick={(e) => { e.stopPropagation(); host.toggleFav(r.id); }}
+        >{r.fav ? '★' : '☆'}</button>
+      </div>
+    {/each}
   {/each}
-{/each}
-{#if snap.list.empty}
-  <div class="model-empty">{tr('model.none')}</div>
-{/if}
+  {#if snap.list.empty}
+    <div class="model-empty">{tr('model.none')}</div>
+  {/if}
+</div>
 {#if snap.levels.showSlider}
   <div class="think-foot">
     <div class="think-foot-row"><span>{tr('tools.thinking')}</span><span>{preview || snap.levels.name}</span></div>
@@ -91,3 +125,18 @@
     />
   </div>
 {/if}
+
+<style>
+  .fav {
+    background: none;
+    border: none;
+    padding: 0 3px;
+    cursor: pointer;
+    color: var(--mute);
+    font-size: 16px;
+    line-height: 1;
+    flex: none;
+  }
+  .fav:hover { color: var(--warn); }
+  .fav.on { color: var(--warn); }
+</style>

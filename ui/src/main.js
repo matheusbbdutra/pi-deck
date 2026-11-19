@@ -70,7 +70,13 @@ export function shouldAbortOnEsc({ overlayOpen, inTerminal, inOtherField, workin
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
-  const overlayOpen = !!document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.settings-pop:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)');
+  // Modal de configurações: Esc fecha (o overlay antigo não tinha esse caminho).
+  const modal = $('settings');
+  if (modal && !modal.classList.contains('hidden')) {
+    modal.classList.add('hidden');
+    return;
+  }
+  const overlayOpen = !!document.querySelector('.overlay:not(.hidden),.confirm-bar:not(.hidden),.palette:not(.hidden),.model-pop:not(.hidden),.img-view:not(.hidden)');
   const ae = document.activeElement;
   const inTerminal = !!(ae && ae.closest && ae.closest('#termdock'));
   // Busca/filtro (INPUT) e textareas que não são o composer: Esc é do campo, não do turno.
@@ -91,6 +97,17 @@ let compactReserve = null;    // reserva escolhida para o modelo atual (null = p
 let allModels = [];
 let modelsByProvider = new Map();
 let levelList = [];
+/* Modelos favoritos: ficam no topo da lista e persistem em localStorage. */
+let modelFavs = new Set();
+function loadModelFavs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('model-favs') || '[]');
+    modelFavs = new Set(Array.isArray(raw) ? raw.filter(x => typeof x === 'string') : []);
+  } catch { modelFavs = new Set(); }
+}
+function saveModelFavs() {
+  try { localStorage.setItem('model-favs', JSON.stringify([...modelFavs])); } catch { /* sem storage */ }
+}
 let debugEnabled = false;
 let tabs = [];
 /* Pops do composer em Svelte (Fase 2): instâncias montadas ou null (fallback legado). */
@@ -112,6 +129,10 @@ let tabBar = null;
 /* Árvore de sessões em Svelte (Fase 3b): grupos crus para os callbacks + instância. */
 let sessionGroups = [];
 let sessionTree = null;
+/* Erro transitório de `loadChildren` exibido pelo painel (substitui o setEmpty legado). */
+let subsError = '';
+/* Erro transitório de `loadSessions` exibido pela árvore (substitui o setEmpty legado). */
+let treeError = '';
 /* Resultados da busca global em Svelte (Fase 3c): itens acumulados + instância. */
 let searchItems = [];
 let searchTotal = 0;
@@ -170,8 +191,7 @@ export function setTyping(on, label) {
   box.classList.toggle('hidden', !on);
   typingOn = !!on;
   if (label) typingLabel = label;
-  if (typingPane) { typingPane.sync(); return; }
-  if (label) $('typinglabel').textContent = label;
+  if (typingPane) typingPane.sync();
 }
 
 /** Botão de parar do composer: aparece só com turno rodando.
@@ -238,6 +258,7 @@ function settleGhostTurn(key, why) {
   if (t) { t.streamText = ''; t.thinkText = ''; t.queue = []; saveTabs(); }
   renderTabs();
   if (!current || current.key !== key) return;
+  flushStream();
   stream = null;
   setTyping(false);
   setStatus(why);
@@ -383,12 +404,13 @@ const SESS_PAGE = 8;
 
 /** Opções do snapshot da árvore (estado de UI persistido). */
 function treeOpts() {
-  return { collapsed: collapsedProjects, expanded: expandedProjects, hidden: hiddenProjects, homeDir };
+  return { collapsed: collapsedProjects, expanded: expandedProjects, hidden: hiddenProjects, homeDir, error: treeError };
 }
 
 /** Snapshot puro da árvore de sessões (Svelte + testes). */
 export function sessionsSnapshot(groups, opts) {
   const o = opts || {};
+  if (o.error) return { emptyLabel: String(o.error), groups: [] };
   const collapsed = o.collapsed || new Set();
   const expanded = o.expanded || new Set();
   const hidden = o.hidden || new Set();
@@ -493,12 +515,13 @@ async function loadSessions() {
       if (!t.cwd || groups.some(g => g.path === t.cwd)) continue;
       groups.push({ path: t.cwd, name: t.cwd.split('/').pop() || t.cwd, sessions: [] });
     }
-    const side = $('sessions');
-    clear(side);
-
     const visible = groups.filter(g => !hiddenProjects.has(g.path) || uiSettings.showHidden);
     sessionGroups = visible;
-    if (!visible.length) { setEmpty(side, t('sidebar.no_sessions')); return; }
+    if (!visible.length) {
+      treeError = '';
+      if (sessionTree) sessionTree.sync();
+      return;
+    }
 
     // Títulos ficam em cache: a aba aberta mostra o mesmo nome da lista.
     let titlesChanged = false;
@@ -518,79 +541,11 @@ async function loadSessions() {
       try { localStorage.setItem('collapsed-initialized', '1'); } catch { /* sem storage */ }
     }
 
-    if (sessionTree) { sessionTree.sync(); return; }
-
-    const byPath = new Map(visible.map(g => [g.path, g]));
-    for (const grp of sessionsSnapshot(visible, treeOpts()).groups) {
-      const box = el('div', 'group' + (grp.collapsed ? ' collapsed' : ''));
-
-      const head = el('div', 'group-head');
-      head.appendChild(el('span', 'caret', grp.caret));
-      const name = el('span', 'proj-name', grp.name);
-      name.title = grp.path;
-      head.appendChild(name);
-      if (grp.count) head.appendChild(el('span', 'proj-count', String(grp.count)));
-
-      const plus = el('button', 'tiny plus', '+');
-      plus.title = grp.newTitle;
-      plus.onclick = (e) => { e.stopPropagation(); newSessionIn(grp.path); };
-      head.appendChild(plus);
-
-      const hide = el('button', 'tiny', grp.hideMark);
-      hide.title = grp.hideTitle;
-      hide.onclick = (e) => {
-        e.stopPropagation();
-        if (hiddenProjects.has(grp.path)) hiddenProjects.delete(grp.path);
-        else hiddenProjects.add(grp.path);
-        saveTreeState();
-        loadSessions();
-      };
-      head.appendChild(hide);
-
-      head.onclick = () => {
-        if (collapsedProjects.has(grp.path)) collapsedProjects.delete(grp.path);
-        else collapsedProjects.add(grp.path);
-        saveTreeState();
-        loadSessions();
-      };
-      box.appendChild(head);
-
-      const list = el('div', 'sess-list');
-      const group = byPath.get(grp.path);
-      for (const r of grp.rows) {
-        const s = group && group.sessions.find(x => x.id === r.key);
-        const row = el('div', 'sess');
-        row.dataset.key = r.key;
-        row.title = r.titleAttr;
-
-        const title = el('div', 'sess-title', r.title);
-        const meta = el('div', 'sess-meta');
-        meta.appendChild(el('span', null, r.meta));
-        if (r.children > 0) {
-          const b = el('span', 'badge', String(r.children));
-          b.title = r.childrenTitle;
-          meta.appendChild(b);
-        }
-
-        const del = el('button', 'tiny', '×');
-        del.title = r.trashTitle;
-        del.onclick = (e) => { e.stopPropagation(); if (s) askDeleteSession(s); };
-        meta.appendChild(del);
-
-        row.append(title, meta);
-        row.onclick = () => { if (s) openSession(s.cwd || grp.path, s); };
-        list.appendChild(row);
-      }
-      if (grp.hiddenCount > 0) {
-        const more = el('button', 'sess-more', grp.moreLabel);
-        more.onclick = (e) => { e.stopPropagation(); expandedProjects.add(grp.path); saveTreeState(); loadSessions(); };
-        list.appendChild(more);
-      }
-      box.appendChild(list);
-      side.appendChild(box);
-    }
+    treeError = '';
+    if (sessionTree) sessionTree.sync();
   } catch (e) {
-    setEmpty($('sessions'), String(e), 'empty err');
+    treeError = String(e);
+    if (sessionTree) sessionTree.sync();
   }
 }
 
@@ -663,31 +618,9 @@ async function runSearch(append) {
     searchOffset += items.length;
     const total = (res && res.total) || 0;
     searchTotal = total;
-    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
-    if (searchResults) { searchResults.sync(); return; }
-    if (!append) clear($('searchresults'));
-    $('searchresults').querySelectorAll('.sess-more').forEach(n => n.remove());
-    for (const r of items) {
-      const row = el('div', 'sess');
-      row.dataset.key = r.id;
-      row.title = (r.title || r.id) + '\n' + r.file;
-      row.appendChild(el('div', 'sess-title', r.title || t('sidebar.untitled')));
-      if (r.snippet) row.appendChild(el('div', 'snippet', r.snippet));
-      const meta = el('div', 'sess-meta');
-      meta.appendChild(el('span', null, t('search.matches', { id: prettyId(r.id), n: r.matches })));
-      if (r.tools && r.tools.length) meta.appendChild(el('span', 'badge', r.tools.slice(0, 3).join(',')));
-      if (r.hasError) meta.appendChild(el('span', 'badge', t('sidebar.error_badge')));
-      row.append(meta);
-      row.onclick = () => openSession(r.cwd, r);
-      $('searchresults').appendChild(row);
-    }
-    // Paginação: o botão some quando tudo já está na tela.
-    if (searchOffset < total) {
-      const more = el('button', 'sess-more', t('sidebar.show_more', { n: total - searchOffset }));
-      more.onclick = (e) => { e.stopPropagation(); runSearch(true); };
-      $('searchresults').appendChild(more);
-    }
-    if (!items.length && !append) setEmpty($('searchresults'), 'nada encontrado', 'empty');
+    const cov = res && res.files ? t('search.coverage', { n: res.scannedFiles || 0, m: res.files }) : '';
+    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (cov ? ' · ' + cov : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
+    if (searchResults) searchResults.sync();
   } catch (e) {
     setSearchMeta(String(e));
   }
@@ -741,7 +674,7 @@ async function start(cwd, key, refValue, refFlag, childrenDir) {
   // `+`, `+ Nova` e `+ Pasta` abrem sessão sem histórico; a overlay de estado
   // vazio é opaca e cobre o #log, então sem isto a sessão nova parece não ter aberto.
   setEmptyState(false);
-  setEmpty($('subs'), noSubsMessage());
+  if (subsPane) subsPane.sync();
   setStatus('iniciando… ' + prettyId(key));
 
   // Histórico vem do disco primeiro: não depende do RPC responder.
@@ -1053,23 +986,41 @@ async function send() {
 }
 
 /* =============== histórico =============== */
-function renderMessages(data, ctx, keepNote) {
+/* scrollBottom força layout (lê scrollHeight) e é chamado a cada delta de token.
+   Coalescer no rAF derruba isso a um layout por frame. */
+let scrollQueued = false;
+function scrollBottomSoon() {
+  if (scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(() => { scrollQueued = false; scrollBottom(); });
+}
+
+/* Render em fatias: sessão longa (250 msgs) montava o log inteiro num tick e
+   travava a janela. A cada RENDER_CHUNK linhas a main thread respira; se outra
+   renderização começar no meio (troca de aba), esta aborta — o log já é dela. */
+const RENDER_CHUNK = 25;
+let renderToken = 0;
+
+async function renderMessages(data, ctx, keepNote) {
   const target = (ctx && ctx.target) || $('log');
   // Renderizou no painel principal: não há mais "nenhuma sessão" a mostrar.
   if (target === $('log')) setEmptyState(false);
   const store = (ctx && ctx.store) || cards;
   const messages = (data && data.messages) || [];
+  // Guarda a lista carregada da sessão atual para o inspetor de contexto.
+  if (target === $('log')) lastMessages = messages;
   const note = keepNote ? target.querySelector('.row.note') : null;
   clear(target);
   if (note) target.appendChild(note);
   store.clear();
   if (!ctx) stream = null;
+  const token = ++renderToken;
   // Ancora de fork por linha: índice/texto das user messages na ordem do transcript.
   let userIdx = -1;
   const userTexts = [];
 
-  for (const m of messages) {
-    if (!m || m.role === 'system') continue;
+  const paint = (m) => {
+    if (!m || m.role === 'system') return;
     const blocks = Array.isArray(m.content) ? m.content : null;
     if (m.role === 'user') userIdx++;
     if (m.role === 'user' && userTexts.length <= userIdx) userTexts.push('');
@@ -1079,7 +1030,7 @@ function renderMessages(data, ctx, keepNote) {
       node.appendChild(el('b', null, t('custom.label')));
       node.appendChild(el('span', null, ' ' + (m.customType || m.type || 'custom')));
       target.appendChild(node);
-      continue;
+      return;
     }
 
     if (m.role === 'user') {
@@ -1088,7 +1039,7 @@ function renderMessages(data, ctx, keepNote) {
         : (typeof m.content === 'string' ? m.content : '');
       // Imagem enviada também aparece: sem isto o print some do transcript.
       const imgs = blocks ? blocks.filter(b => b && b.type === 'image' && b.data) : [];
-      if (!text.trim() && !imgs.length) { userIdx--; userTexts.pop(); continue; }
+      if (!text.trim() && !imgs.length) { userIdx--; userTexts.pop(); return; }
       const urow = el('div', 'row user', '▸ ' + text.trim());
       urow.dataset.text = text.trim();
       // Âncora do restore: uma linha local só volta antes da 1ª mensagem mais nova.
@@ -1098,11 +1049,11 @@ function renderMessages(data, ctx, keepNote) {
       if (!ctx) urow.appendChild(forkRowBtn({ uindex: userIdx, utext: text.trim() }, t('fork.row_msg')));
       imgs.forEach(b => urow.appendChild(thumb('data:' + (b.mimeType || 'image/png') + ';base64,' + b.data)));
       target.appendChild(urow);
-      continue;
+      return;
     }
 
     if (m.role === 'assistant') {
-      if (!blocks) continue;
+      if (!blocks) return;
       for (const b of blocks) {
         if (!b) continue;
         if (b.type === 'thinking' && b.thinking && b.thinking.trim()) {
@@ -1124,7 +1075,7 @@ function renderMessages(data, ctx, keepNote) {
           card(b.id, b.name, b.arguments, { target, store }, m.timestamp);
         }
       }
-      continue;
+      return;
     }
 
     if (m.role === 'toolResult') {
@@ -1132,10 +1083,23 @@ function renderMessages(data, ctx, keepNote) {
       entry.root.classList.add(m.isError ? 'err' : 'ok');
       entry.icon.textContent = m.isError ? '✕' : '✓';
       applyToolResult(entry, m);
+      renderToolImages(entry, m);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
-      continue;
     }
+  };
+
+  // Offscreen (preview, child, loadEarlier) fica síncrono: quem chama lê o DOM
+  // logo depois — `loadEarlier` move os childNodes de `tmp` para o log.
+  const chunk = target === $('log') ? RENDER_CHUNK : messages.length + 1;
+  for (let i = 0; i < messages.length; i += chunk) {
+    const end = Math.min(i + chunk, messages.length);
+    for (let j = i; j < end; j++) paint(messages[j]);
+    if (end >= messages.length) break;
+    // Outra renderização tomou o log: o que sobrar aqui não é mais desta sessão.
+    if (token !== renderToken) return;
+    await new Promise(r => setTimeout(r, 0));
   }
+  if (token !== renderToken) return;
   if (target === $('log')) { restoreLocalRows(); reattachStream(); }
   if (ctx) target.scrollTop = 0;
   else { scrollBottom(true); updateScrollBtn(); }
@@ -1159,6 +1123,7 @@ const CHILD_STATE = {
 };
 
 function renderChildren(list) {
+  subsError = '';
   const next = Array.isArray(list) ? list : [];
   // Poll de 2 s durante o turno relê o disco: repintar sem mudança zera o scroll do
   // painel. `mtime` fica fora da chave (o filho escreve o tempo todo e o relógio do
@@ -1186,7 +1151,7 @@ const diagPending = new Map(); // rpc id -> Date.now() do envio (para a latênci
 function diagPush(cmd, lat, res) {
   diagBuf.push({ t: Date.now(), cmd: String(cmd == null ? '' : cmd).slice(0, 220), lat: lat || '—', res: res || '' });
   if (diagBuf.length > DIAG_MAX) diagBuf.splice(0, diagBuf.length - DIAG_MAX);
-  if (!$('debug').classList.contains('hidden')) renderDiag();
+  if ($('pane-debug') && !$('pane-debug').classList.contains('hidden')) renderDiag();
 }
 
 function renderDiag() {
@@ -1684,23 +1649,7 @@ export function missionsSnapshot(list, err) {
 }
 
 function renderMissions() {
-  if (missionsPane) { missionsPane.sync(); return; }
-  const host = $('missions');
-  clear(host);
-  if (missionsError) { host.appendChild(el('div', 'empty', missionsError)); return; }
-  if (!missionsList.length) {
-    host.appendChild(el('div', 'empty', t('missions.empty'))); return;
-  }
-  host.appendChild(el('div', 'history-head', t('missions.count', { n: missionsList.length })) );
-  for (const m of missionsList) {
-    const row = el('div', 'file-row');
-    row.title = String(m.cwd || m.project || '');
-    row.appendChild(el('span', 'file-name', String(m.title || m.id || t('sidebar.untitled'))));
-    row.appendChild(el('span', 'file-dir', String(m.status || '')));
-    row.appendChild(el('span', 'file-count', String(m.runs || 0)));
-    row.onclick = () => openMission(m);
-    host.appendChild(row);
-  }
+  if (missionsPane) missionsPane.sync();
 }
 
 /** Detalhe da missão no mesmo painel dos diffs (só mostra, não executa). */
@@ -1850,17 +1799,6 @@ async function gitPush() {
 }
 
 /** Checkbox com rótulo (o `<label>` faz o texto também alternar a caixa). */
-function gitCheck(text, on, title, onchange) {
-  const lab = el('label', 'git-check');
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = !!on;
-  box.onchange = () => onchange(box.checked);
-  lab.appendChild(box);
-  lab.appendChild(el('span', null, text));
-  if (title) { lab.title = title; box.title = title; }
-  return lab;
-}
 
 /** Snapshot puro do painel Git (Svelte + testes). */
 export function gitSnapshot(data, ui) {
@@ -1922,9 +1860,7 @@ export function gitSnapshot(data, ui) {
 }
 
 function renderGit() {
-  if (gitPane) { gitPane.sync(); return; }
-  const host = $('git');
-  if (!host) return;
+  // Contador da aba e reset por sessão continuam fora do componente.
   const repo = !!gitData && gitData.repo === true;
   const list = repo && Array.isArray(gitData.changes) ? gitData.changes : [];
   const cnt = $('gitcnt');
@@ -1936,128 +1872,8 @@ function renderGit() {
     gitMsg = '';
     gitNote = '';
   }
-  // Re-render (loadGit roda a cada ação/edição) não pode roubar o cursor de quem
-  // está escrevendo a mensagem: guarda foco e posição e devolve no fim.
-  const prevMsgEl = document.getElementById('gitmsg');
-  const msgFocused = !!prevMsgEl && document.activeElement === prevMsgEl;
-  const msgCaret = msgFocused ? prevMsgEl.selectionStart : 0;
-
-  clear(host);
-  if (gitError) { host.appendChild(el('div', 'empty', gitError)); return; }
-  if (!repo) {
-    host.appendChild(el('div', 'empty', cwdTxt ? t('git.no_repo', { path: cwdTxt }) : t('composer.no_session')));
-    return;
-  }
-  // NÃO chamar de `t`: sombreia o `t()` de i18n e o render do painel Git quebra
-  // com "t is not a function" (aconteceu ao migrar os rótulos para `t('git.*')`).
-  const tot = gitData.totals || {};
-  const head = el('div', 'history-head');
-  const branch = String(gitData.branch || '') || (gitData.detached ? '(detached)' : '—');
-  head.appendChild(el('span', null, branch));
-  head.appendChild(el('span', null, ' · ↑' + (Number(gitData.ahead) || 0) + ' ↓' + (Number(gitData.behind) || 0)));
-  head.appendChild(el('span', null, ' · ' + list.length + ' arquivo(s) '));
-  head.appendChild(el('span', 'git-add', '+' + (Number(tot.add) || 0)));
-  head.appendChild(el('span', null, ' '));
-  head.appendChild(el('span', 'git-del', '−' + (Number(tot.del) || 0)));
-  host.appendChild(head);
-  // Caminho e estado limpo explícitos: sem isso, repo sem mudanças e "nada carregou"
-  // ficam idênticos na tela (bug reportado 2026-11-16).
-  if (cwdTxt) host.appendChild(el('div', 'file-dir', cwdTxt));
-
-  const bar = el('div', 'git-bar');
-  const btn = (label, title, onclick, cls) => {
-    const b = el('button', cls || 'ghost', label);
-    b.title = title;
-    b.onclick = onclick;
-    bar.appendChild(b);
-    return b;
-  };
-  btn(t('git.reload'), t('git.hint_reload'), () => loadGit());
-  const discardBtn = btn(t('git.discard'), t('git.hint_discard'), gitDiscardSelected);
-  discardBtn.disabled = !gitSel.size;
-  btn(t('git.stash'), t('git.hint_stash'), gitStash);
-  btn(t('git.stash_pop'), t('git.hint_stash_pop'), gitStashPop);
-  btn(t('git.pull'), t('git.hint_pull'), gitPull);
-  host.appendChild(bar);
-
-  if (!list.length) {
-    host.appendChild(el('div', 'empty', t('panel.git_clean')));
-  }
-  for (const c of list) {
-    const path = String(c.path || '');
-    const [name, dir] = splitPath(path);
-    const row = el('div', 'file-row');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.checked = gitSel.has(path);
-    box.title = 'selecionar para commit/descartar';
-    row.appendChild(box);
-    row.appendChild(el('span', 'file-name', name));
-    row.appendChild(el('span', 'file-dir', dir));
-    row.appendChild(el('span', 'file-count', String(c.status || '?')));
-    if (typeof c.add === 'number' || typeof c.del === 'number') {
-      row.appendChild(el('span', 'git-add', '+' + (Number(c.add) || 0)));
-      row.appendChild(el('span', 'git-del', '−' + (Number(c.del) || 0)));
-    }
-    const diffBtn = el('button', 'ghost', 'diff');
-    diffBtn.title = 'abrir o diff deste arquivo';
-    diffBtn.onclick = (e) => { e.stopPropagation(); openGitDiff(path); };
-    row.appendChild(diffBtn);
-    row.title = path + ' · ' + (c.untracked ? 'não rastreado' : (c.staged ? 'no índice' : 'no worktree'))
-      + ' · clique na row seleciona; `diff` abre o patch';
-    row.onclick = () => {
-      if (gitSel.has(path)) gitSel.delete(path); else gitSel.add(path);
-      box.checked = gitSel.has(path);
-      discardBtn.disabled = !gitSel.size;
-    };
-    host.appendChild(row);
-  }
-
-  // Linha de status da última ação: sem `alert`, dentro do painel. Só existe
-  // quando há algo a dizer (não há regra CSS genérica para `.hidden` aqui).
-  if (gitNote) {
-    const note = el('div', 'empty', gitNote);
-    note.id = 'gitnote';
-    if (gitNoteErr) note.style.color = 'var(--err)';
-    host.appendChild(note);
-  }
-
-  const comp = el('div', 'git-composer');
-  const ta = el('textarea');
-  ta.id = 'gitmsg';
-  ta.placeholder = 'mensagem do commit · Ctrl+Enter commita';
-  ta.value = gitMsg;
-  ta.oninput = () => { gitMsg = ta.value; };
-  ta.onkeydown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); gitCommit(false); }
-  };
-  comp.appendChild(ta);
-
-  const cbar = el('div', 'git-bar');
-  cbar.appendChild(gitCheck('amend', gitAmend, t('git.hint_amend'),
-    (on) => { gitAmend = on; }));
-  cbar.appendChild(gitCheck('--force-with-lease', gitLease,
-    t('git.hint_lease'),
-    (on) => { gitLease = on; }));
-  const mkBtn = (label, title, onclick, cls) => {
-    const b = el('button', cls || 'ghost', label);
-    b.title = title;
-    b.onclick = onclick;
-    cbar.appendChild(b);
-    return b;
-  };
-  mkBtn('commit', t('git.hint_commit'), () => gitCommit(false), 'primary');
-  mkBtn('commit & push', 'commit e depois push; se o push falhar o commit fica', () => gitCommit(true));
-  mkBtn('push', 'git push (--force-with-lease se o toggle estiver ligado)', gitPush);
-  comp.appendChild(cbar);
-  host.appendChild(comp);
-
-  if (msgFocused && ta) {
-    ta.focus();
-    try { ta.setSelectionRange(msgCaret, msgCaret); } catch { /* sem seleção no tipo */ }
-  }
+  if (gitPane) gitPane.sync();
 }
-
 /* =============== aba Plano (plans/ do projeto) =============== */
 let plansData = null;   // último `plans_list` da sessão em foco (null = ainda não leu)
 let plansError = '';
@@ -2110,42 +1926,7 @@ export function plansSnapshot(data, err) {
 }
 
 function renderPlans() {
-  if (plansPane) { plansPane.sync(); return; }
-  const host = $('plans');
-  if (!host) return;
-  clear(host);
-  if (plansError) { host.appendChild(el('div', 'empty', plansError)); return; }
-  if (!plansData) { host.appendChild(el('div', 'empty', t('panel.no_plans'))); return; }
-  if (plansData.repo !== true) {
-    host.appendChild(el('div', 'empty', t('panel.no_plans_found')));
-    return;
-  }
-  const list = Array.isArray(plansData.plans) ? plansData.plans : [];
-  if (!list.length) { host.appendChild(el('div', 'empty', t('panel.no_plans'))); return; }
-  const cwd = current && current.cwd;
-  for (const p of list) {
-    const file = String(p.file || '');
-    const done = Number(p.done) || 0;
-    const total = Number(p.total) || 0;
-    const item = el('div', 'plan-item');
-    const row = el('div', 'file-row');
-    row.appendChild(el('span', 'file-name', String(p.name || file)));
-    if (p.source) row.appendChild(el('span', 'plan-source', String(p.source)));
-    if (p.current) row.appendChild(el('span', 'plan-current', String(p.current)));
-    row.appendChild(el('span', 'file-count', total ? done + '/' + total : t('panel.no_checklist')));
-    item.appendChild(row);
-    const bar = el('div', 'plan-bar');
-    const fill = el('div', 'plan-bar-fill');
-    fill.style.width = (total ? Math.min(100, Math.round((done / total) * 100)) : 0) + '%';
-    bar.appendChild(fill);
-    item.appendChild(bar);
-    item.title = file + ' · ' + t('plan.open_in_app');
-    item.onclick = async () => {
-      try { await inv('open_file', { cwd, path: file }); }
-      catch (e) { plansError = 'abrir: ' + String(e); renderPlans(); }
-    };
-    host.appendChild(item);
-  }
+  if (plansPane) plansPane.sync();
 }
 
 async function loadChildren(dir) {
@@ -2161,7 +1942,8 @@ async function loadChildren(dir) {
     renderChildren(list);
   } catch (e) {
     if (seq !== viewSeq) return;
-    setEmpty($('subs'), String(e));
+    subsError = String(e);
+    if (subsPane) subsPane.sync();
   }
 }
 
@@ -2211,73 +1993,6 @@ let lastSnap = null; // último widget ao vivo (runs em andamento), por sessão 
 let lastDiskList = null; // último histórico do disco, da sessão em foco
 let lastDiskKey = ''; // id/estado da última lista pintada: poll igual não repinta
 
-function liveRunBox(run, now) {
-  const state = String(run.state || '?');
-  const box = el('div', 'run');
-  const head = el('div', 'run-head');
-  head.appendChild(el('span', 'run-label', String(run.label || run.kind || 'run')));
-  head.appendChild(el('span', 'state state-' + state, state));
-  head.appendChild(el('span', 'tool-right run-time', elapsedFor(run, now)));
-  box.dataset.state = state;
-  box.dataset.started = String(run.startedAt || '');
-  box.dataset.updated = String(run.updatedAt || '');
-  box.appendChild(head);
-
-  for (const ch of run.children || []) {
-    const line = el('div', 'child');
-    line.dataset.state = String(ch.state || '');
-    line.dataset.started = String(ch.startedAt || '');
-    line.dataset.updated = String(ch.updatedAt || '');
-    line.appendChild(el('b', null, String(ch.label || ch.agent || ch.id)));
-    line.appendChild(el('span', null, ' · ' + String(ch.state || '?')));
-    if (ch.model) line.appendChild(el('span', null, ' · ' + ch.model.split('/').pop()));
-    if (ch.thinking) line.appendChild(el('span', null, ' · ' + ch.thinking));
-    const took = elapsedFor(ch, now);
-    line.appendChild(el('span', 'child-time', took ? ' · ' + took : ''));
-    box.appendChild(line);
-  }
-  return box;
-}
-
-/** Tempo a partir do dataset da row: mantém o relógio sem repintar a lista toda
- *  (repintar a cada segundo resetava o scroll do painel e perdia o hover). */
-function rowTiming(node) {
-  return {
-    state: node.dataset.state || '',
-    startedAt: Number(node.dataset.started) || 0,
-    updatedAt: Number(node.dataset.updated) || 0,
-  };
-}
-
-function tickSubsTimes(now = Date.now()) {
-  const host = $('subs');
-  if (!host) return;
-  for (const box of host.querySelectorAll('.run')) {
-    const time = box.querySelector('.run-time');
-    if (time) time.textContent = elapsedFor(rowTiming(box), now);
-    for (const line of box.querySelectorAll('.child')) {
-      const ct = line.querySelector('.child-time');
-      if (!ct) continue;
-      const took = elapsedFor(rowTiming(line), now);
-      ct.textContent = took ? ' · ' + took : '';
-    }
-  }
-}
-
-function diskRunBox(c) {
-  const box = el('div', 'run clickable');
-  box.title = c.id;
-  box.onclick = () => openChild(c);
-  const head = el('div', 'run-head');
-  head.appendChild(el('span', 'run-label', c.label || c.id.slice(0, 8)));
-
-  const meta = CHILD_STATE[c.state] || CHILD_STATE.unknown;
-  head.appendChild(el('span', 'state ' + meta[1], meta[0]));
-  head.appendChild(el('span', 'tool-right', c.run + ' · ' + relTime(c.mtime)));
-  box.appendChild(head);
-  return box;
-}
-
 /* Dedupe conservador: só esconde o item do disco se o id for exatamente igual ao
    do run ao vivo. O formato de run.id do widget não é verificado (produtor é a
    extensão externa pi-subagents), então igualdade frouxa poderia sumir com item. */
@@ -2285,31 +2000,15 @@ function sameSub(r, c) {
   return !!r && !!c && r.id != null && c.id != null && String(r.id) === String(c.id);
 }
 
-/* Ao vivo e histórico se fundem: cada fonte atualiza só o seu estado e o paint
-   desenha as duas metades. Antes um apagava o outro — o snapshot do widget limpava
-   o histórico do disco a cada update ("aparece e depois fica só esse"). */
-/** Relógio de 1 s do painel: o snapshot só chega quando o run muda, então sem isto
- *  o tempo do run congelava no último update ("11m16" parado). */
-let subsClock = null;
-function ensureSubsClock() {
-  if (subsClock) return;
-  subsClock = setInterval(() => {
-    const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
-    // Run terminado não faz o relógio andar: sem nenhum ao vivo, o timer morre.
-    if (!live.some(isLiveRun)) {
-      clearInterval(subsClock);
-      subsClock = null;
-      return;
-    }
-    tickSubsTimes();
-  }, 1000);
-}
+/* Ao vivo e histórico se fundem: cada fonte atualiza só o seu estado e o snapshot
+   desenha as duas metades (o preview resolve os tempos no componente). */
 
 /** Snapshot puro do painel Subagents (Svelte + testes). `live` são os runs do
  *  widget; `disk` o histórico de `list_children` (deduplicado por id). */
 export function subsSnapshot(live, disk, opts) {
   const o = opts || {};
   const now = o.now || Date.now();
+  if (o.error) return { empty: true, emptyLabel: String(o.error), warn: false, runs: [], history: [], historyHead: '' };
   const liveList = Array.isArray(live) ? live : [];
   const diskList = (Array.isArray(disk) ? disk : []).filter(c => !liveList.some(r => sameSub(r, c)));
   const runs = liveList.map(run => ({
@@ -2346,24 +2045,8 @@ export function subsSnapshot(live, disk, opts) {
   };
 }
 
-function paintSubs(now = Date.now()) {
-  if (subsPane) { subsPane.sync(); return; }
-  const host = $('subs');
-  if (!host) return;
-  const live = (lastSnap && Array.isArray(lastSnap.runs)) ? lastSnap.runs : [];
-  const disk = (lastDiskList || []).filter(c => !live.some(r => sameSub(r, c)));
-  clear(host);
-  if (!live.length && !disk.length) {
-    setEmpty(host, noSubsMessage());
-    applySubsWarning();
-    return;
-  }
-  for (const run of live) host.appendChild(liveRunBox(run, now));
-  if (live.length) ensureSubsClock();
-  if (disk.length) {
-    host.appendChild(el('div', 'history-head', t('subs.history', { n: disk.length })));
-    for (const c of disk) host.appendChild(diskRunBox(c));
-  }
+function paintSubs() {
+  if (subsPane) subsPane.sync();
 }
 
 export function renderSubs(snap) {
@@ -2670,7 +2353,8 @@ function renderHealthChip() {
   chip.textContent = st.count ? '⚠ ' + st.count : '';
   chip.title = st.title;
   // O chip só mostra a contagem; o overlay Debug é onde a lista vira legível.
-  if (!$('debug').classList.contains('hidden')) renderHealthList();
+  if ($('pane-debug') && !$('pane-debug').classList.contains('hidden')) renderHealthList();
+  renderNotify();
   return st;
 }
 
@@ -2707,6 +2391,55 @@ export function renderHealthList(map = current ? healthBySession.get(current.key
   host.appendChild(foot);
 }
 
+/* =============== central de notificações =============== */
+/** Avisos vivos de TODAS as sessões (o ⚠ do header só conta a atual). */
+function notifyEntries() {
+  const out = [];
+  for (const [key, map] of healthBySession) {
+    if (!(map instanceof Map) || !map.size) continue;
+    const tab = tabs.find(x => x.key === key);
+    const label = (tab && tab.label) || prettyId(key);
+    for (const [id, kind] of map) out.push({ key, label, id, kind });
+  }
+  return out;
+}
+
+/** Lista do popover de avisos, aberto pelo chip do topo. Chamado por `renderHealthChip`,
+ *  que já roda quando um aviso chega, é dispensado ou a sessão fecha. */
+export function renderNotify() {
+  const entries = notifyEntries();
+  const pop = $('notifypop');
+  if (!pop || pop.classList.contains('hidden')) return;
+  const head = $('notifyhead');
+  if (head) head.textContent = t('notify.head');
+  const host = $('notifylist');
+  clear(host);
+  if (!entries.length) { setEmpty(host, t('notify.empty')); return; }
+  for (const e of entries) {
+    const row = el('div', 'notify-row');
+    row.appendChild(el('span', 'notify-kind', e.kind));
+    const body = el('div', 'notify-body');
+    body.appendChild(el('div', 'notify-msg', e.id));
+    body.appendChild(el('div', 'notify-src', e.label));
+    row.appendChild(body);
+    const off = el('button', 'tiny', '✕');
+    off.title = t('health.dismiss');
+    off.onclick = () => muteHealth(e.id);
+    row.appendChild(off);
+    host.appendChild(row);
+  }
+  const restore = $('notifyrestore');
+  if (restore) restore.classList.toggle('hidden', !mutedIds().size);
+}
+
+function toggleNotify(force) {
+  const pop = $('notifypop');
+  if (!pop) return;
+  const show = force === undefined ? pop.classList.contains('hidden') : force;
+  pop.classList.toggle('hidden', !show);
+  if (show) renderNotify();
+}
+
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
    render do log principal, então `seen` só contém linhas vindas do disco
    (`data-local` fica de fora): quando a mensagem já foi persistida, a cópia local cai. */
@@ -2737,8 +2470,28 @@ function scheduleStreamRender() {
   if (pendingRender) return;
   pendingRender = requestAnimationFrame(() => {
     pendingRender = 0;
-    if (stream && stream.node) setMarkdown(stream.node, stream.text);
+    if (!stream || !stream.node) return;
+    // Durante o stream só o delta novo entra no DOM, como texto cru: reconstruir o
+    // markdown inteiro a cada frame custava 39,7 ms e 3.599 nós no pior caso
+    // (STREAM_CAP = 30000) — a aba ficava 100% ocupada por toda a resposta.
+    if (!stream.tail) {
+      stream.tail = document.createTextNode('');
+      stream.node.appendChild(stream.tail);
+      stream.rendered = 0;
+    }
+    const rest = stream.text.slice(stream.rendered);
+    if (rest) stream.tail.appendData(rest);
+    stream.rendered = stream.text.length;
   });
+}
+
+/** Encerra o trecho em voo: converte o texto cru acumulado em markdown uma vez. */
+function flushStream() {
+  if (!stream || !stream.node) return;
+  if (pendingRender) { cancelAnimationFrame(pendingRender); pendingRender = 0; }
+  if (stream.tail) { stream.tail.remove(); stream.tail = null; }
+  if (stream.text) setMarkdown(stream.node, stream.text);
+  stream.rendered = stream.text.length;
 }
 
 listen('rpc-line', (ev) => {
@@ -2857,7 +2610,7 @@ listen('rpc-line', (ev) => {
         // Guarda por aba: trocar de aba no meio do pensamento não perde o parcial.
         const tt = tabs.find(x => current && x.key === current.key);
         if (tt) tt.thinkText = appendCapped(tt.thinkText, d.delta, STREAM_CAP);
-        scrollBottom();
+        scrollBottomSoon();
         break;
       }
 
@@ -2875,7 +2628,7 @@ listen('rpc-line', (ev) => {
         if (tt) tt.streamText = stream.text.slice(-STREAM_CAP);
         maybeSaveTabs();
         scheduleStreamRender();
-        scrollBottom();
+        scrollBottomSoon();
       }
       break;
     }
@@ -2884,6 +2637,7 @@ listen('rpc-line', (ev) => {
       // Fim da resposta: pede stats frescos e deixa o live cair na resposta
       // (a mensagem já foi persistida, então o próximo total a inclui).
       if (rec.message && rec.message.role === 'assistant') {
+        flushStream();
         const et = tabs.find(x => current && x.key === current.key);
         if (et && et.live) et.livePending = true;
         // Sem processo vivo o RPC falharia e a nota de erro cairia no transcript.
@@ -2905,6 +2659,7 @@ listen('rpc-line', (ev) => {
 
     case 'tool_execution_start':
       card(rec.toolCallId, rec.toolName, rec.args, null, Date.now());
+      flushStream();
       stream = null;
       // Trecho de texto anterior já está renderizado: não reanexa na volta.
       {
@@ -2931,6 +2686,7 @@ listen('rpc-line', (ev) => {
       entry.root.classList.add(rec.isError ? 'err' : 'ok');
       entry.icon.textContent = rec.isError ? '✕' : '✓';
       applyToolResult(entry, rec.result);
+      renderToolImages(entry, rec.result);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
       // Tokens crescem também entre tool calls: atualiza o chip sem esperar o turno.
       {
@@ -2954,10 +2710,9 @@ listen('rpc-line', (ev) => {
         // `stream` também caduca. Sem isto, trocar de aba depois do fim do turno
         // fazia `stashDraft` regravar a resposta final em `t.streamText`, e voltar
         // pintava a mesma resposta duas vezes (histórico do disco + reattach).
-        // Último frame do rAF: `stream = null` sem flush perde o trecho acumulado
-        // desde o frame anterior (o callback veria `stream` já nulo).
-        if (stream && stream.node) setMarkdown(stream.node, stream.text);
-        if (pendingRender) { cancelAnimationFrame(pendingRender); pendingRender = 0; }
+        // Último frame do rAF: sem o flush o trecho cru acumulado desde o frame
+        // anterior ficaria fora do markdown final.
+        flushStream();
         stream = null;
         saveTabs();
       }
@@ -3077,7 +2832,7 @@ function fillModels(models, currentModel) {
   const cur = (sessionState && sessionState.model) || currentModel;
   if (cur) updateModelButton(cur);
   // Montado (Svelte): o filtro vive no componente; undefined = só atualizar.
-  renderModelList(modelPop ? undefined : ($('modelsearch') ? $('modelsearch').value : ''));
+  renderModelList();
   try { localStorage.setItem('models-cache', JSON.stringify(models)); } catch { /* sem storage */ }
   debugNote('providers=' + modelsByProvider.size + ' models=' + allModels.length);
 }
@@ -3092,17 +2847,36 @@ function loadCachedModels() {
 
 /** Snapshot puro da lista de modelos (pop Svelte + testes): grupos por provider
  *  com linhas `{id,name,ctx,current}`. `providers` é o Map montado em `fillModels`. */
-export function modelListSnapshot(providers, currentId, filter) {
+export function modelListSnapshot(providers, currentId, filter, favs) {
   const q = String(filter || '').toLowerCase();
+  const favorite = favs instanceof Set ? favs : new Set(Array.isArray(favs) ? favs : []);
+  const hit = (m) => !q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q);
   const groups = [];
+  const favRows = [];
   for (const provider of [...providers.keys()].sort()) {
-    const rows = providers.get(provider)
-      .filter(m => m && m.id && (!q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)))
+    const all = providers.get(provider).filter(m => m && m.id);
+    // Favoritos saem da lista principal e ganham seção própria (provider/modelo).
+    for (const m of all) {
+      if (!favorite.has(m.id) || !hit(m)) continue;
+      favRows.push({
+        id: m.id,
+        label: provider + '/' + (m.name || m.id),
+        ctx: contextLabel(m.contextWindow),
+        current: m.id === currentId,
+        fav: true,
+      });
+    }
+    const rows = all
+      .filter(m => !favorite.has(m.id) && hit(m))
       .sort((a, b) => String(a.id).localeCompare(String(b.id)))
-      .map(m => ({ id: m.id, name: m.name || m.id, ctx: contextLabel(m.contextWindow), current: m.id === currentId }));
+      .map(m => ({
+        id: m.id, name: m.name || m.id, ctx: contextLabel(m.contextWindow),
+        current: m.id === currentId, fav: false,
+      }));
     if (rows.length) groups.push({ provider, rows });
   }
-  return { groups, empty: groups.length === 0 };
+  favRows.sort((a, b) => a.label.localeCompare(b.label));
+  return { groups, favs: favRows, empty: groups.length === 0 && favRows.length === 0 };
 }
 
 /** Snapshot puro do thinking (pop Svelte + testes): níveis, posição e se há slider. */
@@ -3114,51 +2888,22 @@ export function levelsSnapshot(levels, thinkingLevel) {
 }
 
 function renderModelList(filter) {
-  if (modelPop) { modelPop.sync(filter); return; }
-  const snap = modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter);
-  const byId = new Map(allModels.filter(m => m && m.id).map(m => [m.id, m]));
-  const host = $('modellist');
-  if (!host) return;
-  clear(host);
-  for (const g of snap.groups) {
-    host.appendChild(el('div', 'model-group', g.provider.toUpperCase()));
-    for (const r of g.rows) {
-      const row = el('div', 'model-row' + (r.current ? ' current' : ''));
-      row.appendChild(el('span', 'model-name', r.name));
-      row.appendChild(el('span', 'model-ctx', r.ctx));
-      const m = byId.get(r.id);
-      if (m) row.onclick = () => applyModel(m);
-      host.appendChild(row);
-    }
-  }
-  if (snap.empty) host.appendChild(el('div', 'model-empty', t('model.none')));
+  if (modelPop) modelPop.sync(filter);
 }
 
 function fillLevels(levels) {
   if (Array.isArray(levels)) levelList = levels;
-  if (modelPop) { modelPop.sync(); return; }
   const snap = levelsSnapshot(levelList, sessionState && sessionState.thinkingLevel);
+  // `#thinkbtn` é o chip da barra do composer (fora do pop): continua sendo do main.
   const btn = $('thinkbtn');
-  const foot = $('thinkfoot');
-  const slider = $('thinkslider');
-  const name = $('thinkname');
-  if (!btn || !foot || !slider || !name) return;
-  if (!snap.levels.length) {
-    btn.textContent = 'thinking';
-    foot.classList.add('hidden');
-    return;
+  if (btn) {
+    if (!snap.levels.length) btn.textContent = 'thinking';
+    else {
+      btn.textContent = snap.name;
+      btn.title = 'thinking: ' + snap.name + ' — clique para escolher';
+    }
   }
-
-  btn.textContent = snap.name;
-  btn.title = 'thinking: ' + snap.name + ' — clique para escolher';
-  // Modelo sem reasoning devolve só ["off"]: sem slider.
-  if (!snap.showSlider) { foot.classList.add('hidden'); return; }
-  foot.classList.remove('hidden');
-  slider.min = '0';
-  slider.max = String(snap.levels.length - 1);
-  slider.value = String(snap.at);
-  name.textContent = snap.name;
-  debugNote('levels=' + snap.levels.length + ' selected=' + (sessionState && sessionState.thinkingLevel));
+  if (modelPop) modelPop.sync();
 }
 
 function fmtTokens(n) {
@@ -3212,6 +2957,30 @@ export function msgSpeed(m) {
   return tpsTxt + ' tok/s · ' + out + ' out · ' + secsTxt + 's';
 }
 
+/** Velocidade média de geração do histórico: soma de `output` ÷ soma do tempo
+ *  das respostas que têm `usage.output` + `durationMs` (média ponderada pelo
+ *  tamanho — a média das taxas daria o mesmo peso a respostas curtas e longas).
+ *  Devolve `37,5 tok/s` ou `null` quando nenhuma resposta tem duração. */
+export function avgMsgSpeed(messages) {
+  let out = 0;
+  let ms = 0;
+  let n = 0;
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const u = m && m.usage;
+    const o = u ? Number(u.output) : NaN;
+    const d = m ? Number(m.durationMs) : NaN;
+    if (!Number.isFinite(o) || !Number.isFinite(d) || d <= 0 || o <= 0) continue;
+    out += o;
+    ms += d;
+    n++;
+  }
+  if (!n || ms <= 0) return null;
+  const tps = out / (ms / 1000);
+  // Mesma régua de `msgSpeed`, sem o ",0" que só polui (50,0 → 50).
+  const txt = tps >= 100 ? String(Math.round(tps)) : tps.toFixed(1).replace('.', ',').replace(/,0$/, '');
+  return txt + ' tok/s';
+}
+
 /** Stats do RPC + parcial em voo, sem tocar no cache por aba. */
 export function liveStatsView(data, live) {
   const stats = data || {};
@@ -3237,7 +3006,6 @@ export function liveStatsView(data, live) {
 
 /** Detalhamento do contexto (mesmo formato que o pi-gpui mostra). */
 function fmtCost(c) { return typeof c === 'number' ? 'US$ ' + c.toFixed(2) : '—'; }
-function sessShort(t) { return t.label || prettyId(t.key); }
 
 /** Parcial do turno em voo da aba em foco (setado em message_update/get_messages). */
 function currentLive() {
@@ -3276,45 +3044,12 @@ export function limitSnapshot(win, reserve, canEdit) {
 }
 
 /** Snapshot puro do agregado por sessão (ctx Svelte + testes). */
-export function sessAggSnapshot(tabsList, curKey) {
-  const found = (tabsList || []).filter(x => x && x.stats && x.stats.tokens);
-  if (!found.length) return null;
-  let totTok = 0, totCost = 0, totMsg = 0;
-  for (const x of found) {
-    totTok += Number(x.stats.tokens && x.stats.tokens.total) || 0;
-    if (typeof x.stats.cost === 'number') totCost += x.stats.cost;
-    totMsg += Number(x.stats.totalMessages) || 0;
-  }
-  const ordered = found.slice().sort((a, b) => {
-    const pa = (a.stats.contextUsage && a.stats.contextUsage.percent) || 0;
-    const pb = (b.stats.contextUsage && b.stats.contextUsage.percent) || 0;
-    return pb - pa;
-  });
-  return {
-    totalLabel: found.length === 1 ? t('ctx.sess_one', { n: found.length }) : t('ctx.sess_many', { n: found.length }),
-    totalText: t('ctx.agg', { tok: fmtTokens(totTok), cost: fmtCost(totCost), n: totMsg }),
-    rows: ordered.slice(0, 8).map(x => {
-      const p = x.stats.contextUsage && x.stats.contextUsage.percent != null
-        ? Math.round(x.stats.contextUsage.percent) : null;
-      return {
-        n: (x.key === curKey ? '● ' : '') + sessShort(x),
-        m: (p == null ? '—' : p + '%') + ' · ' + fmtTokens(x.stats.tokens.total) + ' · ' + fmtCost(x.stats.cost),
-        cls: p == null ? '' : (p >= 90 ? 'danger' : p >= 70 ? 'warn' : ''),
-        title: x.key,
-      };
-    }),
-  };
-}
-
 /** Snapshot puro do popover de contexto (Svelte + testes): blocos ordenados
  *  `{t:'row'|'alert'|'limit'|'agg'}`. `view` vem de `liveStatsView`. */
 export function ctxSnapshot(view, opts) {
   const o = opts || {};
   const st = view.stats;
-  if (!st || !st.tokens) {
-    const agg = sessAggSnapshot(o.tabs || [], null);
-    return { empty: true, blocks: agg ? [{ t: 'agg', agg }] : [] };
-  }
+  if (!st || !st.tokens) return { empty: true, blocks: [] };
   const cu = st.contextUsage || {};
   const tok = st.tokens || {};
   const blocks = [];
@@ -3332,70 +3067,33 @@ export function ctxSnapshot(view, opts) {
   blocks.push({ t: 'limit', win, limit: limitSnapshot(win, o.reserve, !!o.canEdit) });
   blocks.push({ t: 'row', k: t('ctx.cache'),
     v: t('ctx.cache_value', { r: fmtTokens(tok.cacheRead), w: fmtTokens(tok.cacheWrite) }), dim: true });
+  const cacheRead = Number(tok.cacheRead) || 0;
+  const rawIn = Number(tok.input) || 0;
+  if (cacheRead + rawIn > 0) {
+    blocks.push({ t: 'row', k: t('ctx.cache_hit'),
+      v: t('ctx.cache_hit_value', { pct: Math.round((cacheRead / (cacheRead + rawIn)) * 100) }), dim: true });
+  }
   blocks.push({ t: 'row', k: t('ctx.io'), v: fmtTokens(tok.input) + ' / ' + fmtTokens(tok.output) });
+  // Velocidade média de geração (tok/s), não tokens de cache: `tokens.total`
+  // soma cacheRead e não é "por mensagem". Só respostas com duração entram.
+  const speed = avgMsgSpeed(o.messages);
+  if (speed) blocks.push({ t: 'row', k: t('ctx.avg'), v: t('ctx.avg_value', { n: speed }), dim: true });
   if (view.billed || view.ctxDelta) {
     blocks.push({ t: 'row', k: t('ctx.live'),
       v: t('ctx.live_value', { b: fmtTokens(view.billed), c: fmtTokens(view.ctxDelta) }) });
   }
   blocks.push({ t: 'row', k: t('ctx.cost'), v: fmtCost(st.cost) });
   blocks.push({ t: 'row', k: t('ctx.messages'), v: String(st.totalMessages || 0), dim: true });
-  const agg = sessAggSnapshot(o.tabs || [], o.curKey);
-  if (agg) blocks.push({ t: 'agg', agg });
+  // Composição estimada do contexto carregado (o que ocupa a janela).
+  if (Array.isArray(o.messages) && o.messages.length) {
+    const comp = ctxComposition(o.messages);
+    if (comp.total > 0) blocks.push({ t: 'comp', comp });
+  }
   return { empty: false, blocks };
 }
 
-function appendAgg(host, agg) {
-  if (!agg) return;
-  const tot = el('div', 'ctx-total');
-  tot.appendChild(el('span', null, agg.totalLabel));
-  tot.appendChild(el('span', null, agg.totalText));
-  host.appendChild(tot);
-  for (const r of agg.rows) {
-    const row = el('div', 'ctx-sess');
-    row.appendChild(el('span', 'n', r.n));
-    row.appendChild(el('span', 'm' + (r.cls ? ' ' + r.cls : ''), r.m));
-    row.title = r.title;
-    host.appendChild(row);
-  }
-}
-
-function appendCtxBlock(host, b) {
-  if (b.t === 'row') {
-    const r = el('div', 'ctx-row');
-    r.appendChild(el('div', 'k', b.k));
-    r.appendChild(el('div', 'v' + (b.dim ? ' dim' : ''), b.v));
-    host.appendChild(r);
-  } else if (b.t === 'alert') {
-    host.appendChild(el('div', 'ctx-alert ' + b.kind, b.text));
-  } else if (b.t === 'limit') {
-    const limRow = el('div', 'ctx-row');
-    limRow.appendChild(el('div', 'k', t('ctx.compact_at')));
-    limRow.appendChild(renderLimitSelect(b.win));
-    host.appendChild(limRow);
-  } else if (b.t === 'agg') {
-    appendAgg(host, b.agg);
-  }
-}
-
 function renderCtxPop() {
-  if (ctxPop) { ctxPop.sync(); return; }
-  const host = $('ctxrows');
-  if (!host) return;
-  const view = liveStatsView(sessionState && sessionState.stats, currentLive());
-  const snap = ctxSnapshot(view, {
-    autoOn: !!(sessionState && sessionState.autoCompactionEnabled),
-    tabs, curKey: current && current.key,
-    reserve: compactReserve, win: ctxWindow(),
-    canEdit: !!(sessionState && sessionState.model && current),
-  });
-  clear(host);
-  if (snap.empty) {
-    // Sem stats da sessão atual: ainda mostra o agregado das abas que já têm.
-    for (const b of snap.blocks) appendCtxBlock(host, b);
-    if (!snap.blocks.length) setEmpty(host, t('panel.no_stats'));
-    return;
-  }
-  for (const b of snap.blocks) appendCtxBlock(host, b);
+  if (ctxPop) ctxPop.sync();
 }
 
 /** Chip do contexto. O valor exibido soma o parcial do turno em voo (liveStatsView),
@@ -3512,20 +3210,8 @@ export function forkSnapshot(messages) {
 
 function openForkPop(messages) {
   closeModelPop();
-  if (forkPop) { forkPop.sync(messages); $('forkpop').classList.remove('hidden'); return; }
-  const snap = forkSnapshot(messages);
-  const host = $('forklist');
-  clear(host);
-  if (!snap.length) { host.appendChild(el('div', 'model-empty', t('fork.empty'))); $('forkpop').classList.remove('hidden'); return; }
-  for (const r of snap) {
-    const row = el('div', 'model-row');
-    row.appendChild(el('span', 'model-name', r.label));
-    row.appendChild(el('span', 'model-ctx', r.short));
-    row.title = r.title;
-    const id = r.entryId;
-    row.onclick = () => { closeForkPop(); sendCommand({ type: 'fork', entryId: id }); };
-    host.appendChild(row);
-  }
+  if (!forkPop) return;
+  forkPop.sync(messages);
   $('forkpop').classList.remove('hidden');
 }
 
@@ -3541,25 +3227,7 @@ function ctxWindow() {
   return (cu && cu.contextWindow) || (m && m.contextWindow) || 0;
 }
 
-function renderLimitSelect(win) {
-  const snap = limitSnapshot(win, compactReserve, !!(sessionState && sessionState.model && current));
-  const sel = document.createElement('select');
-  sel.id = 'ctxlimit';
-  sel.className = 'ctx-sel';
-  sel.title = snap.title;
-  for (const o of snap.options) {
-    const opt = document.createElement('option');
-    opt.value = o.value;
-    opt.textContent = o.label;
-    sel.appendChild(opt);
-  }
-  sel.value = snap.value;
-  sel.disabled = snap.disabled;
-  sel.onchange = () => saveLimit(sel, win);
-  return sel;
-}
-
-/** Núcleo do save do limite (legado + Svelte): IPC + `compactReserve` + texto p/ `note`. */
+/** Núcleo do save do limite (Svelte): IPC + `compactReserve` + texto p/ `note`. */
 async function applyLimitValue(value, win) {
   const model = sessionState && sessionState.model;
   if (!current || !model || !(win > 0) || value === 'custom') return null;
@@ -3582,14 +3250,6 @@ async function applyLimitValue(value, win) {
   }
 }
 
-async function saveLimit(sel, win) {
-  const model = sessionState && sessionState.model;
-  if (!current || !model || !(win > 0) || sel.value === 'custom') return;
-  sel.disabled = true;
-  const text = await applyLimitValue(sel.value, win);
-  if (text != null) note(text);
-  renderCtxPop();
-}
 
 async function refreshCompactLimit() {
   const model = sessionState && sessionState.model;
@@ -3851,6 +3511,37 @@ function updateLoadMore(meta) {
   bar.classList.remove('hidden');
 }
 
+let lastMessages = [];
+
+/** Composição estimada do contexto por categoria (chars/4, mesma heurística). */
+export function ctxComposition(messages) {
+  const out = { system: 0, user: 0, assistant: 0, tools: 0, total: 0 };
+  for (const m of messages || []) {
+    if (!m) continue;
+    let text = 0;
+    let tool = 0;
+    for (const b of Array.isArray(m.content) ? m.content : []) {
+      if (!b) continue;
+      if (b.type === 'text' || b.type === 'thinking') text += String(b.text || b.thinking || '').length;
+      else if (b.type === 'toolCall') {
+        tool += String(b.name || '').length;
+        try { tool += JSON.stringify(b.arguments || {}).length; } catch { /* parcial */ }
+      } else if (b.type === 'toolResult') {
+        tool += String(b.text || '').length;
+        try { tool += JSON.stringify(b.content || '').length; } catch { /* parcial */ }
+      }
+    }
+    const tk = Math.ceil(text / 4);
+    const tl = Math.ceil(tool / 4);
+    if (m.role === 'system') out.system += tk + tl;
+    else if (m.role === 'user') out.user += tk;
+    else if (m.role === 'assistant') { out.assistant += tk; out.tools += tl; }
+    else out.tools += tk + tl;
+  }
+  out.total = out.system + out.user + out.assistant + out.tools;
+  return out;
+}
+
 function messages0(meta) {
   // `oversized` agora só conta mensagens truncadas (continuam no histórico).
   return (meta.total || 0) - (meta.omitted || 0);
@@ -3998,22 +3689,7 @@ export function tabsSnapshot(list, active) {
 function renderTabs() {
   // Toda mutação de aba passa por aqui: persiste sem RPC novo.
   saveTabs();
-  if (tabBar) { tabBar.sync(); return; }
-  const host = $('tabs');
-  if (!host) return;
-  clear(host);
-  for (const t of tabsSnapshot(tabs, activeTab)) {
-    const tab = el('div', 'tab' + (t.active ? ' active' : ''));
-    tab.title = t.titleAttr;
-    tab.appendChild(el('span', 'tab-dot' + t.dot));
-    tab.appendChild(el('span', 'tab-proj', t.project));
-    tab.appendChild(el('span', 'tab-title', t.title));
-    const x = el('button', 'tab-close', '✕');
-    x.onclick = (e) => { e.stopPropagation(); closeTab(t.key); };
-    tab.appendChild(x);
-    tab.onclick = () => switchTab(t.key);
-    host.appendChild(tab);
-  }
+  if (tabBar) tabBar.sync();
 }
 
 async function switchTab(key) {
@@ -4072,6 +3748,9 @@ async function closeTab(key) {
   stopLive(key);
   // Aba fechada leva os avisos junto: reabrir a mesma key não pode herdar chip velho.
   healthBySession.delete(key);
+  // A central de notificações soma todas as sessões: fechar uma aba tira os
+  // avisos dela da contagem.
+  renderNotify();
   // Aba fechada sai do vigia: sem isto uma sonda pendente poderia destravar a chave
   // reaberta logo depois (mesma key, outro processo).
   delete lastProbeAt[key];
@@ -4398,7 +4077,6 @@ function runModelArg(args) {
   const hits = findModels(q);
   if (hits.length === 1) { applyModel(hits[0]); return; }
   if ($('modelpop').classList.contains('hidden')) $('modeltoggle').click();
-  $('modelsearch').value = q;
   renderModelList(q);
   if (!hits.length) note(t('model.not_found', { q }));
   else note(hits.length + ' modelos para "' + q + '" — escolha no seletor');
@@ -4490,17 +4168,7 @@ function renderPalette() {
   // Palette `/` e cmdk dividem o overlay: a lista visível é a da palette.
   $('cmdklist').classList.add('hidden');
   $('palettelist').classList.remove('hidden');
-  if (palettePane) { palettePane.sync(); return; }
-  const host = $('palettelist');
-  clear(host);
-  items.forEach((c, i) => {
-    const row = el('div', 'palette-row' + (i === palette.index ? ' sel' : ''));
-    row.appendChild(el('span', 'pname', '/' + c.name));
-    row.appendChild(el('span', 'pdesc', c.description || ''));
-    row.appendChild(el('span', 'psrc', c.app ? 'pi' : (c.source || '')));
-    row.onclick = () => { palette.index = i; applyPaletteItem(false); };
-    host.appendChild(row);
-  });
+  if (palettePane) palettePane.sync();
 }
 
 function applyPaletteItem(run) {
@@ -4628,28 +4296,10 @@ function renderCmdk() {
   // palette `/` e `clear()` nele destruiria os nós dele.
   $('palettelist').classList.add('hidden');
   $('cmdklist').classList.remove('hidden');
-  if (cmdkPane) { cmdkPane.sync(); return; }
-  const host = $('cmdklist');
-  clear(host);
-  if (!cmdk.items.length) {
-    host.appendChild(el('div', 'model-empty', t('palette.empty')));
-  } else {
-    let k = 0;
-    for (const g of groups) {
-      if (!g.rows.length) continue;
-      if (g.label) host.appendChild(el('div', 'palette-group', g.label));
-      for (const it of g.rows) {
-        const i = k++;
-        const row = el('div', 'palette-row' + (i === cmdk.index ? ' sel' : ''));
-        row.appendChild(el('span', 'pname', it.title));
-        row.appendChild(el('span', 'pdesc', it.desc || ''));
-        row.appendChild(el('span', 'psrc', it.src || ''));
-        row.onclick = () => runCmdkItem(i);
-        host.appendChild(row);
-      }
-    }
-  }
+  // O overlay precisa ficar visível antes do early-path: no caminho Svelte o
+  // `return` antigo pulava este `remove('hidden')` e o Ctrl+K não abria.
   $('palette').classList.remove('hidden');
+  if (cmdkPane) cmdkPane.sync();
 }
 
 function runCmdkItem(i) {
@@ -4707,12 +4357,8 @@ document.addEventListener('keydown', (e) => {
 function checkCommands(list) {
   const has = list.some(c => String((c && c.sourceInfo && c.sourceInfo.source) || '').includes('pi-subagents'));
   caps.subagents = has;
-  if (has) {
-    const warn = $('subs').querySelector('.warn-banner');
-    if (warn) warn.remove();
-  } else {
-    applySubsWarning();
-  }
+  // Aviso de extensão agora é renderizado pelo componente (snapshot.warn).
+  if (subsPane) subsPane.sync();
   debugNote('pi-subagents carregado=' + has);
 }
 
@@ -4720,15 +4366,6 @@ function noSubsMessage() {
   return caps.subagents === false ? t('panel.no_subs_ext') : t('panel.no_subs');
 }
 
-function applySubsWarning() {
-  const host = $('subs');
-  // Com o painel em Svelte o banner é renderizado pelo componente (snapshot.warn).
-  if (subsPane) return;
-  // Só avisa quando a extensão de fato não carregou: sem esta condição o painel
-  // repetia "nenhum subagent" (banner + vazio) depois de cada setEmpty.
-  if (!host || caps.subagents !== false || host.querySelector('.warn-banner')) return;
-  host.insertBefore(el('div', 'warn-banner', noSubsMessage()), host.firstChild);
-}
 
 /* Cada aba carrega só o que precisa. Antes `openPkgs` pagava `pi_list` (241 ms)
  * + `pi_mcp_list` (1519 ms) em série mesmo abrindo "Instalados". */
@@ -5097,21 +4734,35 @@ function switchPkgPane(name) {
   }
 }
 
-function openPkgs() {
-  $('settingspop').classList.add('hidden');
-  $('pkgs').classList.remove('hidden');
-  // `switchPkgPane('installed')` já dispara `loadInstalled()` — sem `pi mcp list`.
-  switchPkgPane('installed');
-  if (!$('mcpenvrows').childElementCount) addEnvRow();
+/** Aba Debug do modal único: Missões e Diagnóstico. */
+function openDebug() {
+  openSettingsTab('debug');
 }
 
-/** Overlay Debug (⚙): Missões e Diagnóstico saíram do painel direito. */
-function openDebug() {
-  $('settingspop').classList.add('hidden');
-  $('debug').classList.remove('hidden');
-  loadMissions();
-  renderHealthList();
-  renderDiag();
+/** Abre o modal de configurações numa aba (⚙ chama com 'general'). */
+function openSettingsTab(name) {
+  $('settings').classList.remove('hidden');
+  switchSettingsTab(name);
+}
+
+/** Alterna a aba visível; cada aba carrega o que precisa (sem RPC a toa). */
+function switchSettingsTab(name) {
+  for (const b of document.querySelectorAll('#settings-tabs .settings-tab')) {
+    b.classList.toggle('active', b.dataset.pane === name);
+  }
+  for (const p of ['general', 'theme', 'pkgs', 'providers', 'usage', 'debug', 'about']) {
+    const node = $('pane-' + p);
+    if (node) node.classList.toggle('hidden', p !== name);
+  }
+  if (name === 'pkgs') {
+    switchPkgPane('installed');
+    // Primeira abertura: uma linha de env vazia pronta para editar.
+    if (!$('mcpenvrows').childElementCount) addEnvRow();
+  }
+  if (name === 'debug') { loadMissions(); renderHealthList(); renderDiag(); }
+  if (name === 'providers') loadProvidersTab();
+  if (name === 'usage') loadUsageTab();
+  if (name === 'about') openAbout();
 }
 
 /* =============== sobre =============== */
@@ -5119,8 +4770,6 @@ function openDebug() {
 /** Overlay "Sobre": versão do app, do `pi` e os caminhos que o app usa de fato
  *  (`app_info` resolve o binário como `pi_bin()`; mostrar `pi` do PATH seria mentira). */
 async function openAbout() {
-  $('settingspop').classList.add('hidden');
-  $('about').classList.remove('hidden');
   const host = $('aboutlist');
   const add = (label, value) => {
     const row = el('div', 'file-row');
@@ -5159,21 +4808,23 @@ function themeNoteText(res, prefix) {
   return parts.join(' · ');
 }
 
-/** Linha de status do overlay: quantas chaves entraram, quais foram ignoradas e o erro de parse. */
-function showThemeNote(res, prefix) {
-  $('themenote').textContent = themeNoteText(res, prefix);
-}
-
-function openTheme() {
-  $('settingspop').classList.add('hidden');
-  $('theme').classList.remove('hidden');
-  $('themejson').focus();
-}
 
 /* =============== auth do provider (perto da versão do pi) =============== */
 let authProvider = null;
 let authTimer = null;
 let authProvidersCache = [];
+/* Providers ocultados pelo usuário na aba Providers (só esconde da lista; não
+   mexe em credencial — built-in do CLI não é removível). */
+let hiddenProviders = new Set();
+function loadHiddenProviders() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('hidden-providers') || '[]');
+    hiddenProviders = new Set(Array.isArray(raw) ? raw.filter(x => typeof x === 'string') : []);
+  } catch { hiddenProviders = new Set(); }
+}
+function saveHiddenProviders() {
+  try { localStorage.setItem('hidden-providers', JSON.stringify([...hiddenProviders])); } catch { /* sem storage */ }
+}
 
 async function openProvPicker() {
   $('provpick').classList.remove('hidden');
@@ -5203,15 +4854,196 @@ function renderProviders(filter) {
 
     if (p.status === 'ready') {
       row.appendChild(el('span', 'cat-installed', 'pronto'));
+    } else if (p.reason === 'provider_not_found') {
+      // Provider que só existe por extensão (commandcode): `pi auth login` não
+      // conhece o nome, então o botão "logar" só daria erro.
+      row.appendChild(el('span', 'prov-nocred', 'via extensão'));
     } else if (p.configured) {
       row.appendChild(el('span', 'prov-nocred', 'sem credencial'));
     }
 
-    const btn = el('button', 'ghost', 'logar');
-    btn.onclick = () => { closeProvPicker(); startLogin(p.name); };
-    row.appendChild(btn);
+    if (p.reason !== 'provider_not_found') {
+      const btn = el('button', 'ghost', 'logar');
+      btn.onclick = () => { closeProvPicker(); startLogin(p.name); };
+      row.appendChild(btn);
+    }
     host.appendChild(row);
   }
+}
+
+/* =============== aba Custo (histórico de tokens/custo) =============== */
+/** Agrega o histórico (Rust varre os .jsonl): custo e tokens por dia/projeto. */
+async function loadUsageTab() {
+  const st = $('usagestatus');
+  if (st) st.textContent = 'lendo histórico…';
+  try {
+    const data = JSON.parse(String(await inv('usage_stats', { days: 30 })));
+    renderUsageTab(data);
+    if (st) st.textContent = '';
+  } catch (e) {
+    if (st) st.textContent = 'falha ao ler o histórico: ' + String(e);
+  }
+}
+
+function usageKv(label, value) {
+  const box = el('div', 'usage-kv');
+  box.appendChild(el('span', 'usage-kv-k', label));
+  box.appendChild(el('span', 'usage-kv-v', value));
+  return box;
+}
+
+function renderUsageTab(data) {
+  const d = data || {};
+  const totals = d.totals || {};
+  const totHost = $('usagetotals');
+  if (totHost) {
+    clear(totHost);
+    totHost.append(
+      usageKv('sessões', String(totals.sessions || 0)),
+      usageKv('tokens', fmtTokens(totals.tokens || 0)),
+      usageKv('custo', fmtCost(totals.cost || 0)),
+    );
+  }
+
+  const daysHost = $('usagedays');
+  if (daysHost) {
+    clear(daysHost);
+    const days = Array.isArray(d.days) ? d.days : [];
+    if (!days.length) setEmpty(daysHost, 'sem histórico de custo');
+    const max = Math.max(1e-9, ...days.map(x => Number(x.cost) || 0));
+    for (const x of days) {
+      const cost = Number(x.cost) || 0;
+      const row = el('div', 'usage-bar-row');
+      row.appendChild(el('span', 'usage-bar-label', String(x.date || '').slice(5)));
+      const bar = el('div', 'usage-bar');
+      const fill = el('div', 'usage-bar-fill');
+      fill.style.width = Math.round((cost / max) * 100) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el('span', 'usage-bar-val', fmtCost(cost)));
+      row.title = (x.date || '') + ' · ' + fmtTokens(x.tokens || 0) + ' tokens';
+      daysHost.appendChild(row);
+    }
+  }
+
+  const projHost = $('usageprojects');
+  if (projHost) {
+    clear(projHost);
+    const projects = Array.isArray(d.projects) ? d.projects : [];
+    if (!projects.length) setEmpty(projHost, 'sem sessões com usage');
+    for (const p of projects.slice(0, 15)) {
+      const row = el('div', 'file-row');
+      row.appendChild(el('span', 'file-name', String(p.name || '?')));
+      row.appendChild(el('span', 'file-count', String(p.sessions || 0) + ' sess'));
+      row.appendChild(el('span', 'file-dir', fmtTokens(p.tokens || 0)));
+      row.appendChild(el('span', 'git-add', fmtCost(p.cost || 0)));
+      projHost.appendChild(row);
+    }
+  }
+}
+
+/* =============== aba Providers (modal) =============== */
+/** Carrega a lista de providers e pinta a aba do modal (logar/remover). */
+async function loadProvidersTab() {
+  const status = $('provstatus');
+  if (status) status.textContent = 'carregando…';
+  try {
+    authProvidersCache = JSON.parse(String(await inv('auth_providers')));
+    if (status) status.textContent = '';
+  } catch (e) {
+    authProvidersCache = [];
+    if (status) status.textContent = 'falha ao listar: ' + String(e);
+  }
+  renderProvidersTab();
+}
+
+function renderProvidersTab() {
+  const host = $('provtab');
+  if (!host) return;
+  clear(host);
+  const q = String(($('provsearchtab') && $('provsearchtab').value) || '').toLowerCase().trim();
+  const all = Array.isArray(authProvidersCache) ? authProvidersCache : [];
+  const visible = all.filter(p => p && p.name && !hiddenProviders.has(p.name));
+  const list = visible.filter(p => !q || p.name.toLowerCase().includes(q));
+  if (!all.length) { setEmpty(host, 'nenhum provedor'); return; }
+  if (!list.length) {
+    setEmpty(host, visible.length ? 'nenhum provedor para "' + q + '"' : 'todos ocultos (use Atualizar para voltar)');
+    return;
+  }
+  for (const p of list) {
+    if (!p || !p.name) continue;
+    const row = el('div', 'cat-row prov-row');
+    row.appendChild(el('span', 'cat-name', p.name));
+    if (p.status === 'ready') row.appendChild(el('span', 'cat-installed', 'pronto'));
+    else if (p.reason === 'provider_not_found') row.appendChild(el('span', 'prov-nocred', 'via extensão'));
+    else if (p.configured) row.appendChild(el('span', 'prov-nocred', 'sem credencial'));
+
+    if (p.reason !== 'provider_not_found') {
+      const login = el('button', 'ghost', p.status === 'ready' ? 'relogar' : 'logar');
+      login.title = 'abre um terminal com pi auth login ' + p.name;
+      login.onclick = () => startLogin(p.name);
+      row.appendChild(login);
+    }
+
+    const del = el('button', 'ghost', 'remover');
+    del.title = 'pi auth logout ' + p.name + ' (apaga a credencial de auth.json)';
+    del.onclick = async () => {
+      del.disabled = true;
+      const st = $('provstatus');
+      if (st) st.textContent = 'removendo ' + p.name + '…';
+      const done = [];
+      // 1) credencial do auth.json (via CLI).
+      try {
+        await inv('auth_logout', { provider: p.name });
+        done.push('auth.json');
+      } catch { /* sem credencial no auth.json */ }
+      // 2) provider custom do models.json (único jeito de remover built-in
+      //    configurado por extensão — o logout do CLI não toca nesse arquivo).
+      try {
+        const out = String(await inv('models_provider_remove', { provider: p.name }));
+        done.push(out);
+      } catch (e) {
+        if (!done.length) done.push(String(e));
+      }
+      if (st) st.textContent = done.length ? done.join(' · ') : p.name + ': nada para remover';
+      await loadProvidersTab();
+    };
+    row.appendChild(del);
+
+    const hideBtn = el('button', 'ghost', 'ocultar');
+    hideBtn.title = 'ocultar ' + p.name + ' desta lista (não mexe em credencial)';
+    hideBtn.onclick = () => {
+      hiddenProviders.add(p.name);
+      saveHiddenProviders();
+      renderProvidersTab();
+    };
+    row.appendChild(hideBtn);
+    host.appendChild(row);
+  }
+}
+
+/* =============== monitor de memória (app + pi) =============== */
+let memTimer = null;
+function fmtMb(kb) {
+  const n = Number(kb) || 0;
+  if (!n) return '—';
+  return n >= 1024 ? Math.round(n / 1024) + ' MB' : n + ' kB';
+}
+async function updateMem() {
+  const node = $('meminfo');
+  if (!node) return;
+  try {
+    const m = JSON.parse(String(await inv('mem_usage')));
+    node.textContent = 'app ' + fmtMb(m.appKb) + ' · pi ' + fmtMb(m.piKb)
+      + (m.piCount ? ' (' + m.piCount + ')' : '');
+    node.title = 'RSS do sightdeck: ' + fmtMb(m.appKb)
+      + '\nRSS do pi em execução (' + m.piCount + ' processo(s)): ' + fmtMb(m.piKb);
+  } catch { /* sem /proc ou comando indisponível */ }
+}
+function startMemMonitor() {
+  if (memTimer) return;
+  updateMem();
+  memTimer = setInterval(updateMem, 5000);
 }
 
 async function checkAuth() {
@@ -5229,6 +5061,9 @@ async function checkAuth() {
     const st = JSON.parse(String(await inv('auth_status', { provider })));
     const ready = !!st && st.status === 'ready';
     const chip = $('authchip');
+    // `provider_not_found` = provider de extensão (ex.: commandcode): quem
+    // autentica é a extensão, não o CLI — o chip "logar" seria um botão morto.
+    if (st && st.reason === 'provider_not_found') { chip.classList.add('hidden'); return; }
     chip.classList.remove('hidden');
     chip.classList.toggle('ok', ready);
     chip.classList.toggle('warn', !ready);
@@ -5348,23 +5183,35 @@ export function attachmentsSnapshot(images) {
 function renderAttachments() {
   const row = $('attachrow');
   if (row) row.classList.toggle('hidden', pendingImages.length === 0);
-  if (attachmentsPane) { attachmentsPane.sync(); return; }
-  clear(row);
-  pendingImages.forEach((img, i) => {
-    const box = el('div', 'attach');
-    const im = document.createElement('img');
-    im.src = img.dataUrl;
-    im.alt = 'imagem colada';
-    const del = el('button', 'tiny', '×');
-    del.title = 'Remover imagem';
-    del.onclick = () => { pendingImages.splice(i, 1); renderAttachments(); };
-    box.append(im, del);
-    row.appendChild(box);
-  });
-  row.classList.toggle('hidden', pendingImages.length === 0);
+  if (attachmentsPane) attachmentsPane.sync();
 }
 
 /** Imagem enviada, exibida no transcript. */
+/** Imagem que uma tool leu: o histórico só traz `img: {mimeType, bytes}`, então o
+ *  arquivo é lido do disco (uma vez) pelo caminho da própria chamada. */
+export function renderToolImages(entry, raw) {
+  if (!entry || entry.imgsDone || !entry.body) return;
+  const content = raw && (raw.content || raw);
+  if (!Array.isArray(content)) return;
+  const blocks = content.filter(b => b && ((b.type === 'image' && b.data) || (b.img && b.img.mimeType)));
+  if (!blocks.length) return;
+  entry.imgsDone = true;
+  const row = el('div', 'tool-imgs');
+  entry.body.appendChild(row);
+  for (const b of blocks) {
+    if (b.type === 'image' && b.data) {
+      row.appendChild(thumb('data:' + (b.mimeType || 'image/png') + ';base64,' + b.data));
+      continue;
+    }
+    const box = el('div', 'img-missing', b.text || 'imagem');
+    row.appendChild(box);
+    if (!entry.path) continue;
+    inv('read_image_data', { path: entry.path })
+      .then(url => { if (box.isConnected) box.replaceWith(thumb(url)); })
+      .catch(err => { box.textContent = String((err && err.message) || err); });
+  }
+}
+
 function thumb(dataUrl) {
   const box = el('div', 'msg-img');
   const im = document.createElement('img');
@@ -5484,23 +5331,9 @@ $('detail').addEventListener('mousedown', (e) => { if (e.target === $('detail'))
 $('modeltoggle').onclick = (e) => {
   e.stopPropagation();
   $('modelpop').classList.toggle('hidden');
-  if (!$('modelpop').classList.contains('hidden')) {
-    if (modelPop) modelPop.open();
-    else {
-      $('modelsearch').value = '';
-      renderModelList('');
-      $('modelsearch').focus();
-    }
-  }
+  if (!$('modelpop').classList.contains('hidden') && modelPop) modelPop.open();
 };
-$('modelsearch').oninput = (e) => renderModelList(e.target.value);
-$('modelsearch').onkeydown = (e) => { if (e.key === 'Escape') closeModelPop(); };
 $('thinkbtn').onclick = (e) => { e.stopPropagation(); $('modeltoggle').click(); };
-$('thinkslider').oninput = (e) => {
-  const lv = levelList[Number(e.target.value)];
-  if (lv) $('thinkname').textContent = lv;
-};
-$('thinkslider').onchange = (e) => modelPopHost.setLevel(e.target.value);
 
 document.addEventListener('click', (e) => {
   if (!$('modelpop').classList.contains('hidden')
@@ -5566,16 +5399,6 @@ function loadSettings() {
     uiSettings.notifyDesktop = raw.notifyDesktop !== false;
     uiSettings.notifySound = raw.notifySound !== false;
   } catch { /* defaults */ }
-  // Caminho novo (Svelte) lê os valores ao montar; o legado (fallback) precisa dos
-  // próprios controles sincronizados. Guardo por existência: um dos dois pode não estar.
-  const setChecked = (id, v) => { const n = $(id); if (n) n.checked = v; };
-  setChecked('setExpTools', uiSettings.expandTools);
-  setChecked('setExpThink', uiSettings.expandThink);
-  setChecked('setShowHidden', uiSettings.showHidden);
-  setChecked('setNotifyDesktop', uiSettings.notifyDesktop);
-  setChecked('setNotifySound', uiSettings.notifySound);
-  const legacySel = $('langsellegacy');
-  if (legacySel) legacySel.value = getLangPref();
   try {
     document.documentElement.lang = getLang() === 'pt' ? 'pt-BR' : 'en';
   } catch { /* sem DOM */ }
@@ -5591,8 +5414,13 @@ function saveSettings() {
 
 $('settingsbtn').onclick = (e) => {
   e.stopPropagation();
-  $('settingspop').classList.toggle('hidden');
+  openSettingsTab('general');
 };
+$('settingsback').onclick = () => $('settings').classList.add('hidden');
+// Fechável: clique no scrim (fora da caixa) fecha.
+$('settings').addEventListener('mousedown', (e) => {
+  if (e.target === $('settings')) $('settings').classList.add('hidden');
+});
 /* Host do componente Svelte de Configurações: passa `t`/estado e recebe as
    mudanças, sem o componente importar este módulo (evita ciclo). */
 const settingsHost = {
@@ -5620,24 +5448,11 @@ const settingsHost = {
 
 /* Tela nova e tela antiga convivem: monta o Svelte e só esconde o markup legado
    quando o mount funciona. Sem Svelte, o popover continua funcionando como hoje. */
-let settingsMounted = null;
 try {
-  settingsMounted = mountSettings(settingsHost);
+  mountSettings(settingsHost);
 } catch (e) {
-  debugNote('settings svelte: mount falhou — usando o markup legado (' + e + ')');
+  debugNote('settings svelte: mount falhou (' + e + ')');
 }
-const legacySettings = $('settings-legacy');
-if (legacySettings) legacySettings.classList.toggle('hidden', !!settingsMounted);
-
-/* Handlers do caminho legado: só valem quando o Svelte não montou, mas ficam
-   ligados (idempotentes) porque os controles seguem no DOM como fallback. */
-const legacyBind = (id, fn) => { const n = $(id); if (n) n.onchange = fn; };
-legacyBind('setExpTools', (e) => settingsHost.setSetting('expandTools', e.target.checked));
-legacyBind('setExpThink', (e) => settingsHost.setSetting('expandThink', e.target.checked));
-legacyBind('setShowHidden', (e) => settingsHost.setSetting('showHidden', e.target.checked));
-legacyBind('setNotifyDesktop', (e) => settingsHost.setSetting('notifyDesktop', e.target.checked));
-legacyBind('setNotifySound', (e) => settingsHost.setSetting('notifySound', e.target.checked));
-legacyBind('langsellegacy', (e) => settingsHost.setLang(e.target.value));
 
 async function runUpdate(scope) {
   const out = $('updOut');
@@ -5651,20 +5466,6 @@ async function runUpdate(scope) {
 }
 $('updExt').onclick = () => runUpdate('extensions');
 $('updPi').onclick = () => runUpdate('self');
-$('pkgbtn').onclick = () => openPkgs();
-$('themebtn').onclick = () => openTheme();
-$('themeback').onclick = () => $('theme').classList.add('hidden');
-$('themeapply').onclick = () => showThemeNote(applyTheme($('themejson').value), null);
-$('themeexport').onclick = () => {
-  const current = themeFromDom();
-  $('themejson').value = JSON.stringify(current, null, 2);
-  showThemeNote(validateTheme(current), t('theme.exported'));
-};
-$('themereset').onclick = () => {
-  resetTheme();
-  $('themejson').value = '';
-  $('themenote').textContent = t('theme.restored');
-};
 
 /* Host do diálogo Svelte de Tema: presets + JSON usam o mesmo motor
    (`applyTheme`/`validateTheme`/`themeFromDom`/`resetTheme`), sem o componente
@@ -5707,14 +5508,11 @@ const themeHost = {
 
 /* Diálogo novo e overlay legado convivem: monta o Svelte e só esconde o markup
    legado quando o mount funciona. Sem Svelte, o overlay continua como hoje. */
-let themeMounted = null;
 try {
-  themeMounted = mountTheme(themeHost);
+  mountTheme(themeHost);
 } catch (e) {
-  debugNote('theme svelte: mount falhou — usando o overlay legado (' + e + ')');
+  debugNote('theme svelte: mount falhou (' + e + ')');
 }
-const legacyTheme = $('theme-legacy');
-if (legacyTheme) legacyTheme.classList.toggle('hidden', !!themeMounted);
 
 /* Hosts dos pops do composer (Fase 2): snapshots puros entram no componente,
    ações voltam para as funções deste módulo. O componente nunca importa este
@@ -5724,13 +5522,18 @@ const modelPopHost = {
   getLangPref,
   snapshot(filter) {
     return {
-      list: modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter),
+      list: modelListSnapshot(modelsByProvider, sessionState && sessionState.model ? sessionState.model.id : '', filter, modelFavs),
       levels: levelsSnapshot(levelList, sessionState && sessionState.thinkingLevel),
     };
   },
   async apply(id) {
     const m = allModels.find(x => x && x.id === id);
     await applyModel(m);
+  },
+  toggleFav(id) {
+    if (modelFavs.has(id)) modelFavs.delete(id); else modelFavs.add(id);
+    saveModelFavs();
+    renderModelList();
   },
   previewLevel(i) {
     return levelList[Number(i)] || '';
@@ -5760,6 +5563,7 @@ const ctxPopHost = {
       tabs, curKey: current && current.key,
       reserve: compactReserve, win: ctxWindow(),
       canEdit: !!(sessionState && sessionState.model && current),
+      messages: lastMessages,
     });
   },
   async saveLimit(value) {
@@ -5846,15 +5650,7 @@ const typingHost = {
 try {
   typingPane = mountTyping(typingHost);
 } catch (e) {
-  debugNote('typing svelte: mount falhou — usando o render legado (' + e + ')');
-}
-const legacyTyping = $('typing-legacy');
-if (legacyTyping) legacyTyping.classList.toggle('hidden', !!typingPane);
-for (const id of ['modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy']) {
-  const n = $(id);
-  if (!n) continue;
-  const mounted = id === 'modelpop-legacy' ? modelPop : id === 'ctxpop-legacy' ? ctxPop : forkPop;
-  n.classList.toggle('hidden', !!mounted);
+  debugNote('typing svelte: mount falhou (' + e + ')');
 }
 
 /* Barra de abas em Svelte (Fase 3): o snapshot vem deste módulo e as ações
@@ -5906,7 +5702,7 @@ const sessionTreeHost = {
 try {
   sessionTree = mountSessionTree(sessionTreeHost);
 } catch (e) {
-  debugNote('sidebar svelte: mount falhou — usando o render legado (' + e + ')');
+  debugNote('sidebar svelte: mount falhou (' + e + ')');
 }
 
 /* Resultados da busca global em Svelte (Fase 3c): snapshot dos itens acumulados
@@ -5998,7 +5794,7 @@ const subsHost = {
   snapshot: (now) => subsSnapshot(
     lastSnap && lastSnap.runs,
     lastDiskList,
-    { now, warn: caps.subagents === false, emptyLabel: noSubsMessage() },
+    { now, warn: caps.subagents === false, emptyLabel: noSubsMessage(), error: subsError },
   ),
   openChild(id) {
     const c = (lastDiskList || []).find(x => String(x.id) === id);
@@ -6010,12 +5806,19 @@ try {
 } catch (e) {
   debugNote('subs svelte: mount falhou — usando o render legado (' + e + ')');
 }
-$('debugbtn').onclick = () => openDebug();
-// Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
-$('healthchip').onclick = () => openDebug();
-$('aboutbtn').onclick = () => openAbout();
-$('aboutback').onclick = () => $('about').classList.add('hidden');
-$('debugback').onclick = () => $('debug').classList.add('hidden');
+// Aviso de extensão não tem overlay próprio: o chip do topo abre a lista, com dispensa
+// por aviso e o atalho pro Diagnóstico (que lista as linhas RPC cruas).
+$('healthchip').onclick = (e) => { e.stopPropagation(); toggleNotify(); };
+$('notifyclose').onclick = () => toggleNotify(false);
+$('notifydebug').onclick = () => { toggleNotify(false); openDebug(); };
+$('notifyrestore').onclick = () => unmuteHealth();
+// Fecha ao clicar fora (o clique no próprio popover e no chip não fecha).
+document.addEventListener('click', (e) => {
+  const pop = $('notifypop');
+  if (!pop || pop.classList.contains('hidden')) return;
+  if (pop.contains(e.target) || e.target.closest('#healthchip')) return;
+  toggleNotify(false);
+});
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };
 $('checkupdate').onclick = () => checkUpdate(true);
 $('updatebtn').onclick = async () => {
@@ -6046,11 +5849,6 @@ $('authchip').onclick = () => {
 };
 $('provback').onclick = closeProvPicker;
 $('provsearch').oninput = (e) => renderProviders(e.target.value);
-$('pkgsback').onclick = () => $('pkgs').classList.add('hidden');
-$('pkgsrefresh').onclick = () => {
-  loadPkgs();
-  if (!$('pane-catalog').classList.contains('hidden')) loadCatalog(true);
-};
 $('confirmok').onclick = async () => {
   const action = pendingAction;
   closeConfirm();
@@ -6058,6 +5856,11 @@ $('confirmok').onclick = async () => {
 };
 $('confirmcancel').onclick = closeConfirm;
 document.querySelectorAll('.pkg-tab').forEach(t => { t.onclick = () => switchPkgPane(t.dataset.pane); });
+document.querySelectorAll('#settings-tabs .settings-tab').forEach(t => {
+  t.onclick = () => switchSettingsTab(t.dataset.pane);
+});
+$('provsearchtab').oninput = () => renderProvidersTab();
+$('provrefresh').onclick = () => loadProvidersTab();
 $('catsearch').oninput = () => renderCatalog();
 $('hooksrefresh').onclick = () => { loadHooks(); refreshHooksStatus(); };
 $('setHooks').onchange = (e) => setHooksEnabled(e.target.checked);
@@ -6065,12 +5868,6 @@ $('mcpadd').onclick = mcpAdd;
 $('mcpremove').onclick = mcpRemove;
 $('mcpenvadd').onclick = () => addEnvRow();
 $('mcppreset').onchange = (e) => applyPreset(e.target.value);
-document.addEventListener('click', (e) => {
-  const pop = $('settingspop');
-  if (pop.classList.contains('hidden')) return;
-  if (pop.contains(e.target) || $('settingsbtn').contains(e.target)) return;
-  pop.classList.add('hidden');
-});
 
 // Recarregar/fechar no meio do turno não perde abas nem o parcial em tela.
 window.addEventListener('pagehide', () => {
@@ -6109,6 +5906,9 @@ setEmptyState(true, 'nosession');
 loadSettings();
 loadTreeState();
 loadCachedModels();
+startMemMonitor();
+loadModelFavs();
+loadHiddenProviders();
 loadLastModel();
 loadCachedLevels();
 loadCachedCommands();

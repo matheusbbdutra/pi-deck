@@ -1,5 +1,134 @@
 # STATE — sightdeck
 
+## Perf de boot/render (2026-11-19, fases 1-3)
+
+- **Fase 1** (`bc1431a`): 42 comandos viraram `#[tauri::command(async)]` (saem da
+  thread do IPC; `pty_*` fica sync pela ordem open→write) e o stream não
+  re-renderiza markdown por frame (delta cru + `flushStream` no fim de turno).
+- **Fase 2** (`da65526`): histórico em fatias de 25 com `renderToken` (offscreen
+  segue síncrono por causa do `loadEarlier`), `scrollBottom` coalescido no rAF,
+  `write_stdin` escreve fora do lock global e `stop_session`/`kill_all` matam
+  fora do mutex.
+- **Fase 3**: `session_model` com `contained_in` + stream de linhas (era
+  `read_to_string` de até 26 MB); `hooks_tail` lê só o fim do log; `git_file_diff`
+  capa em 256 KB; `list_sessions` abre cada arquivo uma vez (`read_head_meta`).
+- **Medido**: 749 `.jsonl` / 548 MB de histórico; varredura completa leva ~880 ms
+  de I/O (cache quente). `usage_stats` ficou sem teto por decisão — é async desde
+  a fase 1 e roda só ao abrir a view de uso.
+
+## Onde estamos (2026-11-18, modal fechável + ⚙ direto)
+
+- **⚙ abre direto o modal** `#settings` na aba Geral; o popover foi REMOVIDO
+  (ações de manutenção — verificar atualização, atualizar extensões/pi — foram
+  para a aba **Sobre**).
+- **Modal de verdade**: `.overlay.modal` ganhou scrim (`rgba(0,0,0,.55)`),
+  caixa centralizada `.modal-box` (`min(920px,92vw)`, `max-height:86vh`,
+  borda/raio/sombra). Fecha por: botão × (`settingsback`), clique no scrim
+  (`mousedown` fora da caixa) e **Esc** (handler no keydown global).
+- Handlers órfãos removidos (`settingsopen`, `pkgbtn`, `themebtn`, `debugbtn`,
+  `aboutbtn`, click-outside do popover) — quebravam o boot com null.
+  `openPkgs()` removida; `switchSettingsTab('pkgs')` garante a 1ª linha de env
+  do MCP.
+- Teste de integridade atualizado (sem `aboutbtn`/`#about`; agora `settings`,
+  `settings-tabs`, `pane-*`, `checkupdate`, `updExt`, `updPi`, `updOut`).
+- Verificado: `test:ui` **145/145**, `build:ui` ✓ (396 ms), `node --check` OK,
+  reload do dev sem erros.
+
+## Onde estamos (2026-11-18, modal único de configurações com abas)
+
+- **Modal único**: o ⚙ abre o popover (menu) e cada item abre `#settings` na aba
+  correspondente. Abas: **Geral** (toggles + idioma + hooks), **Tema**
+  (presets), **Pacotes** (instalados/catálogo/MCP/hooks), **Debug**
+  (missões/avisos/diagnóstico) e **Sobre**. Os overlays antigos
+  (`#theme`, `#pkgs`, `#debug`, `#about`) foram removidos; `#provpick` segue
+  como overlay próprio (login).
+- `switchSettingsTab(name)` alterna panes e só carrega o que a aba precisa
+  (`switchPkgPane('installed')`, `loadMissions/renderHealthList/renderDiag`,
+  `openAbout`). Abas usam classe própria `.settings-tab` para não colidir com o
+  seletor global `.pkg-tab` do `switchPkgPane`.
+- **Lista de modelos**: `.model-row` virou flex com `align-items:center`;
+  `.model-name` flex:1 com ellipsis; `.model-ctx` com `min-width:4em` e
+  alinhado à direita (coluna de contexto deixou de ficar fora de ordem);
+  estrela de favorito em 16px.
+- **Lição (regra global)**: reestruturar HTML por faixa de linhas com
+  `awk`/`sed -i N,M` engoliu o `<aside id="sidebar">` e duplicou IDs. Registrado
+  em `~/.pi/agent/AGENTS.md` §5: usar `edit` por conteúdo e validar com o parser.
+- Verificado: `test:ui` **145/145**, `build:ui` ✓ (376 ms), reload do dev sem
+  erros, zero handlers órfãos e zero IDs duplicados.
+
+## Onde estamos (2026-11-18, ajustes do teste de runtime)
+
+Feedback do usuário na janela dev -> corrigido:
+
+- **Duplicação de placeholders** (2x "nenhum subagent", sidebar presa em
+  "carregando…"): `.empty` estáticos nos containers `#sessions/#subs/#plans/
+  #git/#missions` ficavam ao lado do componente montado. Removidos; o
+  componente é a única fonte.
+- **Lista de modelos sem scroll/grupos**: `ModelPop` não envolvia as linhas em
+  `.model-list` (max-height/overflow). Corrigido -> grupos de provider visíveis
+  e lista rolável.
+- **Cores da aba não mudavam com o tema**: `#7c869c`, `#394055`, `#4f5f80`,
+  `#6f7a92` hardcoded -> `--ink-5`/`--dot-off`.
+- **Presets fracos**: cada preset só cobria 16/46 chaves. Expandidos para a
+  paleta completa (bg-0..4, ink-0..6, bordas, controles, hovers, chips, estados).
+- **Configurações**: popover virou MENU; modal grande `#settings` (novo overlay)
+  concentra os toggles + idioma (componente Settings continua em
+  `#settings-general`). Handlers `settingsopen`/`settingsback`.
+- **ctx popover**: só dados da sessão (agregado de abas removido — `sessAggSnapshot`
+  e `sessShort` deletados), **% de cache hit do input** e **média de tokens por
+  mensagem**. i18n pt/en novos.
+- **Favoritar modelos**: estrela na linha, persistida em `localStorage['model-favs']`,
+  favoritos ordenados no topo do grupo (função `loadModelFavs`/`saveModelFavs`).
+- **Terminal**: sintoma "não digitava" não reproduziu depois do reload; nenhum
+  erro de PTY no log (a única feature no Cargo.toml é `e2e`).
+- **Pendências deste feedback**: transformar Sobre em mini modal; avaliar o
+  restante da UI com o usuário.
+- Verificado: `test:ui` **145/145**, `build:ui` ✓ (362 ms), HMR recarregado.
+
+## Onde estamos (2026-11-18, Fase 7c CONCLUÍDA: legado removido)
+
+- **Branch**: `sprint/svelte-migration`. Sem release/versão — sprint para teste.
+- **Removido nesta etapa**: corpos legados de `renderTabs`, `renderPlans`,
+  `renderMissions`, `paintSubs`, `renderGit`, `renderAttachments`, `setTyping`,
+  `renderPalette`, `renderCmdk`, `renderCtxPop`, `renderModelList`,
+  `fillLevels`, `openForkPop`, `loadSessions`, `runSearch`; helpers órfãos
+  (`liveRunBox`, `diskRunBox`, `rowTiming`, `tickSubsTimes`, `subsClock`,
+  `ensureSubsClock`, `applySubsWarning`, `gitCheck`, `appendAgg`,
+  `appendCtxBlock`, `renderLimitSelect`, `saveLimit`, `showThemeNote`);
+  handlers/DOM legados de Settings e Tema; e os 6 wrappers `*-legacy` do HTML.
+- **Contratos preservados fora dos componentes**: `#thinkbtn`, `#modelname`,
+  `#modelctx`, `#gitcnt`, `#searchmeta`, `#typing`/`#attachrow` (classe hidden),
+  `#palette`/`#cmdkbar`/`#palettefoot`.
+- **Bugs reais achados e corrigidos nesta fase**: (1) early-path do `renderCmdk`
+  pulava o `remove('hidden')` do overlay (Ctrl+K não abria); (2) `fillLevels`
+  não podia virar só sync — ele mantém o chip `#thinkbtn`, que vive fora do pop.
+- **Números**: `main.js` **5524** (de 6136 → −612), `i18n.js` **799** (de 801),
+  `index.html` **314** (de 359 → −45). `oxlint main.js`: 0 funções não usadas,
+  só warnings de estilo pré-existentes.
+- **Verificado**: `test:ui` **146/146**, `build:ui` ✓ (540 ms); teste de
+  integridade agora exige que os wrappers legacy **não existam**.
+
+## Onde estamos (2026-11-18, Fase 7c EM CURSO: remoção do legado)
+
+- **Branch**: `sprint/svelte-migration` (a `main` local tem os mesmos 5 commits;
+  nada foi para `origin`). **Sem release, sem bump de versão** — sprint separada.
+- **Decisão do usuário**: objetivo é migrar, então os fallbacks legados serão
+  REMOVIDOS (não mantidos). `main.js` deve encolher de verdade.
+- **Removido até aqui** (146/146 e build ✓ após cada lote):
+  `renderTabs`, `renderPlans`, `renderMissions`, `paintSubs` + `liveRunBox`,
+  `diskRunBox`, `rowTiming`, `tickSubsTimes`, `subsClock`, `ensureSubsClock`,
+  `applySubsWarning`, `renderGit` (corpo) + `gitCheck`, `renderAttachments`,
+  `setTyping`, `renderPalette` e `renderCmdk` (corpos).
+- **Bug real corrigido**: o early-path do `renderCmdk` retornava antes do
+  `$('palette').classList.remove('hidden')` — o Ctrl+K não abria o overlay.
+  Visibilidade movida para antes do return + asserção no teste de regressão.
+- `subsError` substitui o `setEmpty($('subs'))` legado (mostrado via snapshot).
+- `main.js`: **5829** linhas (era 6136 no início da 7c).
+- **Falta**: `renderCtxPop` + helpers (`appendCtxBlock`/`appendAgg`/
+  `renderLimitSelect`), `renderModelList`/`fillLevels`, `openForkPop`,
+  `loadSessions` legado, `runSearch` legado, handlers/DOM legados do Settings e
+  Tema, e os 6 wrappers `*-legacy` do `index.html`.
+
 ## Onde estamos (2026-11-18, Fase 7b aplicada — FIM DA MIGRAÇÃO)
 
 - **Fase 7b**: guard-rail de integridade em `tests/ui.test.mjs`: (a) todo wrapper

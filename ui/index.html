@@ -19,42 +19,135 @@
 
 <div id="tabs" class="tabs"></div>
 
-<div id="settingspop" class="settings-pop hidden">
-  <!-- Geral/Aparência: componente Svelte (piloto). Lê `uiSettings` e o idioma ao
-       montar; `main.js` injeta `t`/setters via `mountSettings`.
-       Hooks fica aqui porque o estado vem de `hooks_status` (IPC assíncrono). -->
-  <div id="settings-general"></div>
-  <!-- Fallback: markup antigo, escondido quando o componente Svelte monta.
-       Mantém o caminho de hoje vivo (ids diferentes no select para não duplicar). -->
-  <div id="settings-legacy" class="hidden">
-    <label><input type="checkbox" id="setExpTools" /> <span id="lblExpTools">Ferramentas expandidas</span></label>
-    <label><input type="checkbox" id="setExpThink" /> <span id="lblExpThink">Thinking expandido</span></label>
-    <label><input type="checkbox" id="setShowHidden" /> <span id="lblShowHidden">Mostrar projetos ocultos</span></label>
-    <label><input type="checkbox" id="setNotifyDesktop" /> <span id="lblNotifyDesktop">Notificar término em 2º plano</span></label>
-    <label><input type="checkbox" id="setNotifySound" /> <span id="lblNotifySound">Som ao terminar em 2º plano</span></label>
-    <label><span id="lblLang">Idioma</span> <select id="langsellegacy" class="mfield">
-      <option value="auto">Auto (navegador)</option>
-      <option value="pt">Português</option>
-      <option value="en">English</option>
-    </select></label>
+<!-- Modal único de configurações: aberto direto pelo ⚙ (sem popover). -->
+<div id="settings" class="overlay modal hidden">
+  <div class="modal-box">
+  <div class="detail-head">
+    <button id="settingsback" title="Fechar">×</button>
+    <span class="detail-title">Configurações</span>
+    <span class="spacer"></span>
+    <button id="debugrefresh" class="ghost">Atualizar</button>
   </div>
-  <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
-  <div class="settings-sep"></div>
-  <h5 class="settings-group" data-i18n="settings.group_tools">Ferramentas</h5>
-  <button id="themebtn" class="ghost">Tema</button>
-  <button id="pkgbtn" class="ghost">Pacotes e MCP</button>
-  <button id="debugbtn" class="ghost">Debug</button>
-  <button id="aboutbtn" class="ghost">Sobre</button>
-  <div class="settings-sep"></div>
-  <h5 class="settings-group" data-i18n="settings.group_maintenance">Manutenção</h5>
-  <button id="checkupdate" class="ghost">Verificar atualização</button>
-  <div class="settings-actions">
-    <button id="updExt" class="ghost">Atualizar extensões</button>
-    <button id="updPi" class="ghost">Atualizar pi</button>
+  <div class="pkg-tabs" id="settings-tabs">
+    <button class="settings-tab active" data-pane="general">Geral</button>
+    <button class="settings-tab" data-pane="theme">Tema</button>
+    <button class="settings-tab" data-pane="pkgs">Pacotes</button>
+    <button class="settings-tab" data-pane="providers">Providers</button>
+    <button class="settings-tab" data-pane="usage">Custo</button>
+    <button class="settings-tab" data-pane="debug">Debug</button>
+    <button class="settings-tab" data-pane="about">Sobre</button>
   </div>
-  <pre id="updOut" class="upd-out"></pre>
+  <div class="overlay-body">
+    <div id="pane-general" class="pane">
+      <div id="settings-general"></div>
+      <label><input type="checkbox" id="setHooks" /> <span id="lblHooks">Instrumentar hooks</span></label>
+    </div>
+    <div id="pane-theme" class="pane hidden">
+      <div id="theme-svelte"></div>
+    </div>
+    <div id="pane-pkgs" class="pane hidden">
+      <div class="pkg-tabs">
+        <button class="pkg-tab active" data-pane="installed">Instalados</button>
+        <button class="pkg-tab" data-pane="catalog">Catálogo</button>
+        <button class="pkg-tab" data-pane="mcp">MCP</button>
+        <button class="pkg-tab" data-pane="hooks">Hooks</button>
+      </div>
+      <div id="pane-installed" class="pane">
+        <pre id="pkglist" class="pkgs-pre">…</pre>
+      </div>
+      <div id="pane-catalog" class="pane hidden">
+        <input id="catsearch" class="model-search cat-search" placeholder="filtrar o catálogo (npm keywords:pi-package)…" />
+        <div id="catlist" class="cat-list"><div class="model-empty">carregando…</div></div>
+      </div>
+      <div id="pane-mcp" class="pane hidden">
+        <div id="mcplist" class="mcp-list"><div class="model-empty">carregando…</div></div>
+        <details class="mcp-raw">
+          <summary>JSON cru</summary>
+          <pre id="mcpjson" class="pkgs-pre"></pre>
+        </details>
+        <h4>Adicionar servidor</h4>
+        <div class="mcp-form">
+          <select id="mcppreset" class="mfield">
+            <option value="">preset: personalizado…</option>
+            <option value="filesystem">filesystem — npx @modelcontextprotocol/server-filesystem</option>
+            <option value="memory">memory — npx @modelcontextprotocol/server-memory</option>
+            <option value="sequential-thinking">sequential-thinking — npx …server-sequential-thinking</option>
+          </select>
+          <input id="mcpname" class="mfield" placeholder="nome do servidor" />
+          <input id="mcptarget" class="mfield" placeholder="https://… (HTTP) ou comando: npx -y pacote" />
+          <input id="mcpargs" class="mfield" placeholder="argumentos extras (ex.: /home/usuario)" />
+          <div class="env-rows">
+            <div id="mcpenvrows"></div>
+            <button id="mcpenvadd" class="ghost">+ variável de ambiente</button>
+          </div>
+          <label class="mfield checkbox"><input type="checkbox" id="mcplocal" /> projeto (.pi/mcp.json)</label>
+          <div class="settings-actions">
+            <button id="mcpadd" class="primary">Adicionar e testar</button>
+            <button id="mcpremove" class="ghost">Remover pelo nome</button>
+          </div>
+          <p class="hint">O app não guarda segredo. Para token, informe o nome da variável de ambiente do seu shell em vez do valor.</p>
+          <pre id="mcpout" class="upd-out"></pre>
+        </div>
+      </div>
+      <div id="pane-hooks" class="pane hidden">
+        <div class="settings-actions" style="margin-bottom:8px">
+          <button id="hooksrefresh" class="ghost">Atualizar</button>
+          <span id="hooksstatus" class="hint"></span>
+        </div>
+        <pre id="hookslog" class="pkgs-pre">—</pre>
+        <p class="hint">O sightdeck não vê a invocação do hook pelo RPC. Esta aba mostra o log escrito pela extensão
+        <code>sightdeck-hooks</code> (uma linha por hook disparado). Ligue em ⚙ → Instrumentar hooks; sessões abertas
+        precisam de <code>/reload</code>.</p>
+      </div>
+    </div>
+    <div id="pane-debug" class="pane hidden">
+      <h4>Missões</h4>
+      <div id="missions"></div>
+      <h4>Avisos de extensão</h4>
+      <div id="healthlist"><div class="empty">nenhum aviso nesta sessão</div></div>
+      <h4>Diagnóstico</h4>
+      <div id="diag">
+        <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
+        <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
+      </div>
+    </div>
+    <div id="pane-providers" class="pane hidden">
+      <div class="settings-actions" style="margin-bottom:8px">
+        <button id="provrefresh" class="ghost">Atualizar</button>
+        <input id="provsearchtab" class="model-search" placeholder="filtrar providers…" autocomplete="off" />
+        <span id="provstatus" class="hint"></span>
+      </div>
+      <div id="provtab"></div>
+      <p class="hint">Logar abre um terminal com <code>pi auth login &lt;provider&gt;</code>.
+      Remover apaga a credencial de <code>~/.pi/agent/auth.json</code> (env e models.json ficam).
+      Para "editar", basta logar de novo: a credencial nova substitui a antiga.</p>
+    </div>
+    <div id="pane-usage" class="pane hidden">
+      <div class="settings-actions" style="margin-bottom:8px">
+        <button id="usagerefresh" class="ghost">Atualizar</button>
+        <span id="usagestatus" class="hint"></span>
+      </div>
+      <div id="usagetotals" class="usage-totals"></div>
+      <h4>Custo por dia (últimos 30)</h4>
+      <div id="usagedays" class="usage-days"></div>
+      <h4>Por projeto</h4>
+      <div id="usageprojects" class="usage-projects"></div>
+    </div>
+    <div id="pane-about" class="pane hidden">
+      <div id="aboutlist"></div>
+      <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
+      atualiza o pi sozinho: os botões de atualização chamam <code>pi update</code>.</p>
+      <h4>Manutenção</h4>
+      <div class="settings-actions">
+        <button id="checkupdate" class="ghost">Verificar atualização</button>
+        <button id="updExt" class="ghost">Atualizar extensões</button>
+        <button id="updPi" class="ghost">Atualizar pi</button>
+      </div>
+      <pre id="updOut" class="upd-out"></pre>
+    </div>
+  </div>
+  </div>
 </div>
-
 <aside id="sidebar">
   <div class="side-head">
     <span>Sessões</span>
@@ -73,10 +166,21 @@
     <div id="searchmeta" class="search-meta hidden"></div>
     <div id="searchresults" class="sess-list hidden"></div>
   </div>
-  <div id="sessions"><div class="empty">carregando…</div></div>
-  <div class="side-foot"><span id="piversion">pi …</span><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
+  <div id="sessions"></div>
+  <div class="side-foot"><span id="piversion">pi …</span><span id="meminfo" class="mem-info" title="consumo de memória"></span><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
   <div id="colgripaside" class="col-grip col-grip-aside" title="arraste com Ctrl para redimensionar"></div>
 </aside>
+
+<div id="notifypop" class="notify-pop hidden">
+  <div class="notify-head">
+    <b id="notifyhead">Notificações</b>
+    <span class="spacer"></span>
+    <button id="notifydebug" class="tiny" title="abre o Diagnóstico com a lista completa">Debug</button>
+    <button id="notifyclose" class="tiny" title="Fechar">×</button>
+  </div>
+  <div id="notifylist" class="notify-list"></div>
+  <div class="notify-foot"><button id="notifyrestore" class="tiny hidden">restaurar dispensados</button></div>
+</div>
 
 <main>
   <div id="updatebar" class="update-bar hidden">
@@ -103,10 +207,6 @@
   <button id="scrollbottom" class="scroll-bottom hidden" title="Ir para o fim (fim do transcript)">↓</button>
   <div id="typing" class="typing hidden">
     <div id="typing-svelte"></div>
-    <div id="typing-legacy">
-    <span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>
-    <span id="typinglabel" class="tlabel">pensando…</span>
-    </div>
   </div>
   <div id="imgview" class="img-view hidden"><img id="imgviewimg" alt="" /></div>
   <div class="composer">
@@ -139,27 +239,12 @@
       </div>
       <div id="modelpop" class="model-pop hidden">
         <div id="modelpop-svelte"></div>
-        <div id="modelpop-legacy">
-        <input id="modelsearch" class="model-search" placeholder="Search models…" autocomplete="off" />
-        <div id="modellist" class="model-list"></div>
-        <div id="thinkfoot" class="think-foot hidden">
-          <div class="think-foot-row"><span>Thinking</span><span id="thinkname"></span></div>
-          <input id="thinkslider" type="range" min="0" max="0" step="1" value="0" />
-        </div>
-        </div>
       </div>
       <div id="ctxpop" class="model-pop ctx-pop hidden">
         <div id="ctxpop-svelte"></div>
-        <div id="ctxpop-legacy">
-        <div id="ctxrows" class="ctx-rows"></div>
-        </div>
       </div>
       <div id="forkpop" class="model-pop hidden">
         <div id="forkpop-svelte"></div>
-        <div id="forkpop-legacy">
-        <div class="model-group">fork a partir de… · cria sessão nova · a original é preservada</div>
-        <div id="forklist" class="model-list"></div>
-        </div>
       </div>
     </div>
   </div>
@@ -189,15 +274,15 @@
       <button id="panelplans" class="panel-tab" data-pane="plans"
               title="planos de plans/ no projeto da sessão">Plano</button>
     </div>
-    <div id="subs" class="panel-pane"><div class="empty">nenhum subagent</div></div>
-    <div id="plans" class="panel-pane hidden"><div class="empty">nenhum plano</div></div>
+    <div id="subs" class="panel-pane"></div>
+    <div id="plans" class="panel-pane hidden"></div>
   </div>
   <div class="split-grip" id="splitgrip" title="arraste para redimensionar"></div>
   <div class="split-bottom">
     <div class="panel-tabs">
       <span class="panel-tab active" title="Status do repositório git · commit, descartar, stash, push">Git<span id="gitcnt" class="cnt"></span></span>
     </div>
-    <div id="git" class="panel-pane"><div class="empty">sem repositório git</div></div>
+    <div id="git" class="panel-pane"></div>
   </div>
 </section>
 
@@ -208,127 +293,6 @@
       <span class="detail-title" id="detailtitle"></span>
     </div>
     <div class="detail-log" id="detaillog"></div>
-  </div>
-</div>
-
-<div id="debug" class="overlay hidden">
-  <div class="detail-head">
-    <button id="debugback">← voltar</button>
-    <span class="detail-title">Debug</span>
-    <span class="spacer"></span>
-    <button id="debugrefresh" class="ghost">Atualizar</button>
-  </div>
-  <div class="overlay-body">
-    <h4>Missões</h4>
-    <div id="missions"><div class="empty">nenhuma missão</div></div>
-    <h4>Avisos de extensão</h4>
-    <div id="healthlist"><div class="empty">nenhum aviso nesta sessão</div></div>
-    <h4>Diagnóstico</h4>
-    <div id="diag">
-      <div class="history-head"><span id="diaghead">0 linha(s) (máx 200)</span> <button id="diagclear" class="ghost">limpar</button></div>
-      <div id="diaglist"><div class="empty">sem linhas RPC ainda</div></div>
-    </div>
-  </div>
-</div>
-
-<div id="pkgs" class="overlay hidden">
-  <div class="detail-head">
-    <button id="pkgsback">← voltar</button>
-    <span class="detail-title">Pacotes</span>
-    <span class="spacer"></span>
-    <button id="pkgsrefresh" class="ghost">Atualizar</button>
-  </div>
-  <div class="pkg-tabs">
-    <button class="pkg-tab active" data-pane="installed">Instalados</button>
-    <button class="pkg-tab" data-pane="catalog">Catálogo</button>
-    <button class="pkg-tab" data-pane="mcp">MCP</button>
-    <button class="pkg-tab" data-pane="hooks">Hooks</button>
-  </div>
-  <div class="overlay-body">
-    <div id="pane-installed" class="pane">
-      <pre id="pkglist" class="pkgs-pre">…</pre>
-    </div>
-
-    <div id="pane-catalog" class="pane hidden">
-      <input id="catsearch" class="model-search cat-search" placeholder="filtrar o catálogo (npm keywords:pi-package)…" />
-      <div id="catlist" class="cat-list"><div class="model-empty">carregando…</div></div>
-    </div>
-
-    <div id="pane-mcp" class="pane hidden">
-      <div id="mcplist" class="mcp-list"><div class="model-empty">carregando…</div></div>
-      <details class="mcp-raw">
-        <summary>JSON cru</summary>
-        <pre id="mcpjson" class="pkgs-pre"></pre>
-      </details>
-      <h4>Adicionar servidor</h4>
-      <div class="mcp-form">
-        <select id="mcppreset" class="mfield">
-          <option value="">preset: personalizado…</option>
-          <option value="filesystem">filesystem — npx @modelcontextprotocol/server-filesystem</option>
-          <option value="memory">memory — npx @modelcontextprotocol/server-memory</option>
-          <option value="sequential-thinking">sequential-thinking — npx …server-sequential-thinking</option>
-        </select>
-        <input id="mcpname" class="mfield" placeholder="nome do servidor" />
-        <input id="mcptarget" class="mfield" placeholder="https://… (HTTP) ou comando: npx -y pacote" />
-        <input id="mcpargs" class="mfield" placeholder="argumentos extras (ex.: /home/usuario)" />
-        <div class="env-rows">
-          <div id="mcpenvrows"></div>
-          <button id="mcpenvadd" class="ghost">+ variável de ambiente</button>
-        </div>
-        <label class="mfield checkbox"><input type="checkbox" id="mcplocal" /> projeto (.pi/mcp.json)</label>
-        <div class="settings-actions">
-          <button id="mcpadd" class="primary">Adicionar e testar</button>
-          <button id="mcpremove" class="ghost">Remover pelo nome</button>
-        </div>
-        <p class="hint">O app não guarda segredo. Para token, informe o nome da variável de ambiente do seu shell em vez do valor.</p>
-        <pre id="mcpout" class="upd-out"></pre>
-      </div>
-    </div>
-
-    <div id="pane-hooks" class="pane hidden">
-      <div class="settings-actions" style="margin-bottom:8px">
-        <button id="hooksrefresh" class="ghost">Atualizar</button>
-        <span id="hooksstatus" class="hint"></span>
-      </div>
-      <pre id="hookslog" class="pkgs-pre">—</pre>
-      <p class="hint">O sightdeck não vê a invocação do hook pelo RPC. Esta aba mostra o log escrito pela extensão
-      <code>sightdeck-hooks</code> (uma linha por hook disparado). Ligue em ⚙ → Instrumentar hooks; sessões abertas
-      precisam de <code>/reload</code>.</p>
-    </div>
-  </div>
-</div>
-
-<div id="about" class="overlay hidden">
-  <div class="detail-head">
-    <button id="aboutback" title="Fechar">×</button>
-    <span class="detail-title">Sobre</span>
-  </div>
-  <div class="overlay-body">
-    <div id="aboutlist"></div>
-    <p class="hint">O sightdeck é um cliente desktop para o <code>pi</code> — ele não instala nem
-    atualiza o pi sozinho: os botões de atualização chamam <code>pi update</code>.</p>
-  </div>
-</div>
-
-<div id="theme" class="overlay hidden">
-  <div class="detail-head">
-    <button id="themeback" title="Fechar">×</button>
-    <span class="detail-title">Tema</span>
-    <span class="spacer"></span>
-    <button id="themeapply" class="ghost">aplicar</button>
-    <button id="themeexport" class="ghost">exportar atual</button>
-    <button id="themereset" class="ghost">resetar</button>
-  </div>
-  <div class="overlay-body">
-    <div id="theme-svelte"></div>
-    <div id="theme-legacy">
-    <textarea id="themejson" class="theme-json" spellcheck="false"
-      placeholder='{"bg":"#0f1115","accent":"#7aa2f7"}'></textarea>
-    <div id="themenote" class="theme-note">cole um JSON de tokens (--bg, --accent, …) e clique em aplicar</div>
-    <p class="hint">Só as 46 chaves do tema valem; valor precisa ser <code>#rgb</code>, <code>#rrggbb</code>,
-    <code>#rrggbbaa</code>, <code>rgb()</code>, <code>rgba()</code>, <code>hsl()</code> ou <code>hsla()</code> —
-    o resto é ignorado. O tema fica em <code>localStorage['theme']</code> até <b>resetar</b>.</p>
-    </div>
   </div>
 </div>
 

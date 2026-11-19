@@ -63,8 +63,9 @@ let msgSpeed;
 let modelListSnapshot;
 let levelsSnapshot;
 let ctxSnapshot;
-let sessAggSnapshot;
+let ctxComposition;
 let limitSnapshot;
+let renderToolImages;
 let forkSnapshot;
 let tabsSnapshot;
 let sessionsSnapshot;
@@ -108,7 +109,7 @@ beforeAll(async () => {
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
-     sessAggSnapshot, limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping } = await import('../ui/src/main.js'));
+     limitSnapshot, renderToolImages, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping, ctxComposition } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -743,6 +744,23 @@ describe('snapshots dos pops (Fase 2)', () => {
     expect(modelListSnapshot(provs(), '', 'nada').empty).toBe(true);
   });
 
+  it('modelListSnapshot separa favoritos em seção própria (provider/modelo)', () => {
+    const snap = modelListSnapshot(provs(), 'a', '', new Set(['b']));
+    expect(snap.favs.length).toBe(1);
+    expect(snap.favs[0]).toMatchObject({ id: 'b', label: 'acme/Bravo', current: false, fav: true });
+    // o favorito sai da lista principal
+    expect(snap.groups[0].rows.map(r => r.id)).toEqual(['a']);
+    expect(snap.groups[0].rows[0].fav).toBe(false);
+  });
+
+  it('modelListSnapshot: favorito marcado como atual e busca filtra ambos', () => {
+    const cur = modelListSnapshot(provs(), 'b', '', new Set(['b']));
+    expect(cur.favs[0].current).toBe(true);
+    const filtrado = modelListSnapshot(provs(), '', 'bra', new Set(['b']));
+    expect(filtrado.favs.map(f => f.id)).toEqual(['b']);
+    expect(filtrado.groups.length).toBe(0);
+  });
+
   it('levelsSnapshot: vazio, único (sem slider) e múltiplo', () => {
     expect(levelsSnapshot([], 'x')).toEqual({ levels: [], at: 0, name: '', showSlider: false });
     expect(levelsSnapshot(['off'], 'off')).toMatchObject({ at: 0, name: 'off', showSlider: false });
@@ -763,19 +781,6 @@ describe('snapshots dos pops (Fase 2)', () => {
     expect(limitSnapshot(0, null, true).disabled).toBe(true);
   });
 
-  it('sessAggSnapshot agrega, ordena por uso e marca a atual', () => {
-    expect(sessAggSnapshot([], null)).toBe(null);
-    const tabs = [
-      { key: 'k1', label: 'S1', stats: { tokens: { total: 100 }, cost: 0.5, totalMessages: 3, contextUsage: { percent: 10 } } },
-      { key: 'k2', label: 'S2', stats: { tokens: { total: 300 }, cost: 1.5, totalMessages: 5, contextUsage: { percent: 80 } } },
-    ];
-    const agg = sessAggSnapshot(tabs, 'k2');
-    expect(agg.totalLabel).toBe('2 sessões');
-    expect(agg.totalText).toBe('400 · US$ 2.00 · 8 msg');
-    expect(agg.rows.map(r => r.title)).toEqual(['k2', 'k1']);
-    expect(agg.rows[0].n).toBe('● S2');
-    expect(agg.rows[0].cls).toBe('warn');
-  });
 
   it('forkSnapshot normaliza, trunca e rotula', () => {
     expect(forkSnapshot([])).toEqual([]);
@@ -785,13 +790,10 @@ describe('snapshots dos pops (Fase 2)', () => {
     expect(snap[0].title).toMatch(/olá   mundo[\s\S]*fork/);
   });
 
-  it('ctxSnapshot vazio mostra só o agregado (ou nada)', () => {
-    const tabs = [{ key: 'k1', label: 's1', stats: { tokens: { total: 100 }, cost: 0.01, totalMessages: 2 } }];
-    const e = ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, { tabs });
+  it('ctxSnapshot vazio devolve só o vazio (sem agregado de abas)', () => {
+    const e = ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, {});
     expect(e.empty).toBe(true);
-    expect(e.blocks.length).toBe(1);
-    expect(e.blocks[0].t).toBe('agg');
-    expect(ctxSnapshot({ stats: {}, billed: 0, ctxDelta: 0 }, { tabs: [] }).blocks).toEqual([]);
+    expect(e.blocks).toEqual([]);
   });
 
   it('ctxSnapshot cheio ordena blocos e alerta aos 90%', () => {
@@ -803,11 +805,32 @@ describe('snapshots dos pops (Fase 2)', () => {
       },
       billed: 100, ctxDelta: 5000,
     };
-    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true });
+    // Duas respostas com duração: 1.000 tokens de output em 20 s → 50 tok/s.
+    const messages = [
+      { role: 'assistant', usage: { output: 600 }, durationMs: 10000 },
+      { role: 'assistant', usage: { output: 400 }, durationMs: 10000 },
+    ];
+    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true, messages });
     expect(snap.empty).toBe(false);
-    expect(snap.blocks.map(b => b.t)).toEqual(['row', 'alert', 'row', 'limit', 'row', 'row', 'row', 'row', 'row']);
+    // window, alert, auto, limit, cache, cache_hit, io, avg, live, cost, messages
+    expect(snap.blocks.map(b => b.t)).toEqual(['row', 'alert', 'row', 'limit', 'row', 'row', 'row', 'row', 'row', 'row', 'row']);
     expect(snap.blocks[1]).toMatchObject({ kind: 'danger' });
     expect(snap.blocks[2].v).toBe('ligada');
+    expect(snap.blocks[5].k).toBe('Cache hit do input');
+    expect(snap.blocks[7]).toMatchObject({ k: 'Velocidade média', v: '50 tok/s' });
+  });
+
+  it('ctxSnapshot sem duração nas respostas não mostra a velocidade', () => {
+    const view = {
+      stats: {
+        tokens: { total: 190000, input: 100000, output: 90000, cacheRead: 10, cacheWrite: 20 },
+        contextUsage: { tokens: 190000, contextWindow: 200000, percent: 95 },
+        cost: 1.5, totalMessages: 7,
+      },
+      billed: 0, ctxDelta: 0,
+    };
+    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true, messages: [] });
+    expect(snap.blocks.some(b => b.k === 'Velocidade média')).toBe(false);
   });
 });
 
@@ -1354,6 +1377,8 @@ describe('palette global Ctrl+K (Fase 5c)', () => {
     expect(target.querySelectorAll('.palette-row').length).toBe(1);
     expect(document.getElementById('cmdklist').childElementCount).toBeGreaterThan(0);
     expect(target.classList.contains('hidden')).toBe(true);
+    // Regressão da 5c: o early-path retornava antes do remove('hidden') do overlay.
+    expect(document.getElementById('palette').classList.contains('hidden')).toBe(false);
     closeCmdk();
     expect(target.classList.contains('hidden')).toBe(false);
     unmount(inst);
@@ -1399,14 +1424,11 @@ describe('indicador de digitação (Fase 5d)', () => {
 });
 
 describe('integridade da migracao Svelte (Fase 7b)', () => {
-  it('todo wrapper legacy fica escondido quando o mount funciona', () => {
-    // Regressão real (Fase 5d): o markup legado do #typing ficou visível ao lado
-    // do componente e aparecia com o painel oculto. Cada wrapper precisa ser
-    // escondido no boot quando o mount correspondente funciona.
+  it('não existe mais wrapper legacy no HTML (migração completa)', () => {
+    // Fase 7c: com os componentes Svelte assumindo todas as telas, os wrappers
+    // de fallback foram removidos. Se algum voltar, este teste avisa.
     for (const id of ['settings-legacy', 'theme-legacy', 'modelpop-legacy', 'ctxpop-legacy', 'forkpop-legacy', 'typing-legacy']) {
-      const n = document.getElementById(id);
-      if (!n) continue;
-      expect({ id, hidden: n.classList.contains('hidden') }).toEqual({ id, hidden: true });
+      expect({ id, present: !!document.getElementById(id) }).toEqual({ id, present: false });
     }
   });
 
@@ -1416,6 +1438,27 @@ describe('integridade da migracao Svelte (Fase 7b)', () => {
       'tabs', 'sessions', 'searchresults', 'plans', 'missions', 'git', 'subs']) {
       expect({ id, present: !!document.getElementById(id) }).toEqual({ id, present: true });
     }
+  });
+});
+
+describe('inspetor de contexto (Fase 8)', () => {
+  it('ctxComposition separa system/user/assistant/tools por estimativa', () => {
+    const msgs = [
+      { role: 'system', content: [{ type: 'text', text: 'x'.repeat(400) }] },
+      { role: 'user', content: [{ type: 'text', text: 'y'.repeat(400) }] },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'z'.repeat(400) },
+        { type: 'toolCall', name: 'edit', arguments: { a: 1 } },
+      ] },
+      { role: 'tool', content: [{ type: 'toolResult', text: 'w'.repeat(400) }] },
+    ];
+    const comp = ctxComposition(msgs);
+    expect(comp.system).toBe(100);
+    expect(comp.user).toBe(100);
+    expect(comp.assistant).toBe(100);
+    expect(comp.tools).toBeGreaterThan(100);
+    expect(comp.total).toBe(comp.system + comp.user + comp.assistant + comp.tools);
+    expect(ctxComposition([]).total).toBe(0);
   });
 });
 
@@ -1491,8 +1534,26 @@ describe('avisos de extensão no Debug e overlay Sobre', () => {
     expect(rows[1].textContent).toContain('lsp');
   });
 
+  it('toda aba do modal tem o seu pane e vice-versa', () => {
+    // Regressão real: a aba Custo existia, mas 'usage' não estava na lista
+    // de panes do switchSettingsTab — a aba abria vazia.
+    const html = readFileSync(resolve(process.cwd(), 'ui/index.html'), 'utf8');
+    // Só as abas do modal: o painel direito também usa data-pane.
+    const tabsBlock = html.slice(html.indexOf('id="settings-tabs"'));
+    const modalTabs = tabsBlock.slice(0, tabsBlock.indexOf('</div>'));
+    const tabs = [...modalTabs.matchAll(/data-pane="([a-z]+)"/g)].map(m => m[1]);
+    for (const name of tabs) {
+      expect(html.includes(`id="pane-${name}"`), `pane-${name}`).toBe(true);
+    }
+    expect(tabs).toContain('usage');
+  });
+
   it('todo id que o main.js consulta no Sobre/avisos existe no index.html', () => {
-    for (const id of ['about', 'aboutback', 'aboutlist', 'aboutbtn', 'healthlist', 'healthchip']) {
+    // Fase 7d: Sobre e manutenção viraram ABAS do modal único (sem popover).
+    for (const id of ['aboutlist', 'healthlist', 'healthchip', 'settings', 'settings-tabs',
+      'pane-about', 'pane-debug', 'pane-pkgs', 'pane-theme', 'pane-general', 'pane-providers', 'pane-usage',
+      'provtab', 'provstatus', 'provsearchtab', 'meminfo', 'usagetotals', 'usagedays', 'usageprojects',
+      'checkupdate', 'updExt', 'updPi', 'updOut']) {
       expect(document.getElementById(id), id).not.toBeNull();
     }
   });
@@ -1690,5 +1751,41 @@ describe('tokens do turno em voo (mensagem ainda não persistida)', () => {
     );
     expect(view.stats.contextUsage.tokens).toBe(100_000);
     expect(view.stats.contextUsage.percent).toBe(100);
+  });
+});
+
+describe('renderToolImages', () => {
+  it('mostra a imagem embutida que o modelo leu', () => {
+    const body = document.createElement('div');
+    const entry = { body, path: '/tmp/v-extrato2.png' };
+    renderToolImages(entry, {
+      content: [
+        { type: 'text', text: '2 linhas' },
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+      ],
+    });
+    const img = body.querySelector('.tool-imgs img');
+    expect(img).toBeTruthy();
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    expect(entry.imgsDone).toBe(true);
+  });
+
+  it('não repete a imagem quando o resultado chega parcial e depois final', () => {
+    const body = document.createElement('div');
+    const entry = { body, path: '' };
+    const raw = { content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] };
+    renderToolImages(entry, raw);
+    renderToolImages(entry, raw);
+    expect(body.querySelectorAll('.tool-imgs img').length).toBe(1);
+  });
+
+  it('sem caminho na chamada, deixa o marcador em vez de pedir o arquivo', () => {
+    const body = document.createElement('div');
+    const entry = { body, path: '' };
+    renderToolImages(entry, {
+      content: [{ type: 'text', text: '[imagem 176 KB]', img: { mimeType: 'image/png', bytes: 180224 } }],
+    });
+    expect(body.querySelector('.img-missing').textContent).toBe('[imagem 176 KB]');
+    expect(body.querySelector('img')).toBeNull();
   });
 });

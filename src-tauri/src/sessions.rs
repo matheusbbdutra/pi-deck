@@ -151,9 +151,124 @@ export default function (pi) {
 }
 "#;
 
+/// Agrega tokens e custo do histórico de sessões por dia e por projeto.
+/// Lê `usage.cost.total`/`usage.totalTokens` das mensagens assistant nos `.jsonl`
+/// (o dado existe no disco; o TUI não o expõe agregado).
+#[tauri::command(async)]
+pub fn usage_stats(days: Option<usize>) -> Result<String, String> {
+    use std::collections::BTreeMap;
+    use std::io::{BufRead, BufReader};
+
+    let root = sessions_root()?;
+    let keep_days = days.unwrap_or(30).clamp(1, 365);
+    let mut by_day: BTreeMap<String, (u64, f64)> = BTreeMap::new();
+    let mut by_proj: BTreeMap<String, (usize, u64, f64)> = BTreeMap::new();
+    let mut tot_tokens = 0u64;
+    let mut tot_cost = 0f64;
+    let mut tot_sessions = 0usize;
+
+    let Ok(projects) = std::fs::read_dir(&root) else {
+        return Ok("{\"days\":[],\"projects\":[],\"totals\":{\"tokens\":0,\"cost\":0,\"sessions\":0}}".to_string());
+    };
+    for proj in projects.flatten() {
+        let pdir = proj.path();
+        if !pdir.is_dir() {
+            continue;
+        }
+        let pname = proj.file_name().to_string_lossy().trim_matches('-').to_string();
+        let mut proj_sessions = 0usize;
+        let mut proj_tokens = 0u64;
+        let mut proj_cost = 0f64;
+        let Ok(files) = std::fs::read_dir(&pdir) else { continue };
+        for f in files.flatten() {
+            let path = f.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(fh) = std::fs::File::open(&path) else { continue };
+            let mut touched = false;
+            for line in BufReader::new(fh).lines().map_while(Result::ok) {
+                // Filtro barato: só mensagens que trazem `usage` (usually assistant).
+                if !line.contains("\"usage\"") || !line.contains("\"type\":\"message\"") {
+                    continue;
+                }
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+                let Some(usage) = v.get("message").and_then(|m| m.get("usage")) else { continue };
+                let tokens = usage.get("totalTokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                let cost = usage
+                    .get("cost")
+                    .and_then(|c| c.get("total"))
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0);
+                let day = v
+                    .get("timestamp")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.chars().take(10).collect::<String>())
+                    .unwrap_or_default();
+                if !day.is_empty() {
+                    let e = by_day.entry(day).or_insert((0, 0.0));
+                    e.0 += tokens;
+                    e.1 += cost;
+                }
+                proj_tokens += tokens;
+                proj_cost += cost;
+                touched = true;
+            }
+            if touched {
+                proj_sessions += 1;
+            }
+        }
+        if proj_sessions > 0 {
+            tot_tokens += proj_tokens;
+            tot_cost += proj_cost;
+            tot_sessions += proj_sessions;
+            let e = by_proj.entry(pname).or_insert((0, 0, 0.0));
+            e.0 += proj_sessions;
+            e.1 += proj_tokens;
+            e.2 += proj_cost;
+        }
+    }
+
+    // Só os últimos N dias (o histórico inteiro dilui o gráfico).
+    let cutoff = by_day
+        .keys()
+        .rev()
+        .nth(keep_days.saturating_sub(1))
+        .cloned();
+    let mut days: Vec<serde_json::Value> = Vec::new();
+    for (date, (tokens, cost)) in by_day.into_iter().rev() {
+        if let Some(c) = &cutoff {
+            if date.as_str() < c.as_str() {
+                break;
+            }
+        }
+        days.push(serde_json::json!({ "date": date, "tokens": tokens, "cost": cost }));
+    }
+    days.reverse();
+
+    let mut projects: Vec<serde_json::Value> = by_proj
+        .into_iter()
+        .map(|(name, (sessions, tokens, cost))| {
+            serde_json::json!({ "name": name, "sessions": sessions, "tokens": tokens, "cost": cost })
+        })
+        .collect();
+    projects.sort_by(|a, b| {
+        let ca = a.get("cost").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let cb = b.get("cost").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(serde_json::json!({
+        "days": days,
+        "projects": projects,
+        "totals": { "tokens": tot_tokens, "cost": tot_cost, "sessions": tot_sessions },
+    })
+    .to_string())
+}
+
 /// Lista de providers conhecidos pelo pi (com flag `configured`).
 /// O CLI só expõe essa lista no erro de `pi auth login <invalido>`, então é de lá que vem.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_providers() -> Result<String, String> {
     let mut providers: Vec<String> = Vec::new();
 
@@ -173,21 +288,9 @@ pub fn auth_providers() -> Result<String, String> {
         }
     }
 
-    // Fallback: os providers que já têm modelos configurados.
-    if providers.is_empty() {
-        if let Ok(out) = std::process::Command::new(pi_bin()).arg("--list-models").output() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines().skip(1) {
-                if let Some(p) = line.split_whitespace().next() {
-                    if !providers.iter().any(|x| x == p) {
-                        providers.push(p.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // providers com modelo no catálogo
+    // Providers com modelo no catálogo: entram SEMPRE na lista. É aqui que
+    // aparecem os adicionados por extensão/models.json, que não constam no
+    // `Providers:` do CLI. Antes isso era só fallback (quando a lista vinha vazia).
     let mut configured: Vec<String> = Vec::new();
     if let Ok(out) = std::process::Command::new(pi_bin()).arg("--list-models").output() {
         let text = String::from_utf8_lossy(&out.stdout);
@@ -195,6 +298,9 @@ pub fn auth_providers() -> Result<String, String> {
             if let Some(p) = line.split_whitespace().next() {
                 if !configured.iter().any(|x| x == p) {
                     configured.push(p.to_string());
+                }
+                if !providers.iter().any(|x| x == p) {
+                    providers.push(p.to_string());
                 }
             }
         }
@@ -205,32 +311,43 @@ pub fn auth_providers() -> Result<String, String> {
         .map(|p| {
             let configured = configured.iter().any(|c| c == p);
             // Só consulta credencial dos que têm modelo no catálogo (evita 44 chamadas).
-            let status = if configured {
-                std::process::Command::new(pi_bin())
+            // `provider_not_found` = provider que só existe por extensão (ex.:
+            // commandcode): o CLI não tem `auth login` para ele, então a UI não
+            // deve oferecer o botão "logar" (só dava erro).
+            let (status, reason) = if configured {
+                match std::process::Command::new(pi_bin())
                     .args(["auth", "check", "--provider", p, "--json"])
                     .output()
-                    .ok()
-                    .map(|o| {
+                {
+                    Ok(o) => {
                         let out = String::from_utf8_lossy(&o.stdout);
                         let parsed = out.trim();
-                        if parsed.contains("\"ready\"") {
-                            "ready".to_string()
+                        let status = if parsed.contains("\"ready\"") {
+                            "ready"
                         } else if parsed.contains("not_ready") {
-                            "not_ready".to_string()
+                            "not_ready"
                         } else {
-                            "unknown".to_string()
-                        }
-                    })
-                    .unwrap_or_else(|| "unknown".to_string())
+                            "unknown"
+                        };
+                        let reason = if parsed.contains("provider_not_found") {
+                            "provider_not_found"
+                        } else {
+                            ""
+                        };
+                        (status.to_string(), reason.to_string())
+                    }
+                    Err(_) => ("unknown".to_string(), String::new()),
+                }
             } else {
-                String::new()
+                (String::new(), String::new())
             };
 
             format!(
-                "{{\"name\":\"{}\",\"configured\":{},\"status\":\"{}\"}}",
+                "{{\"name\":\"{}\",\"configured\":{},\"status\":\"{}\",\"reason\":\"{}\"}}",
                 escape_json(p),
                 configured,
-                status
+                status,
+                reason
             )
         })
         .collect();
@@ -239,7 +356,7 @@ pub fn auth_providers() -> Result<String, String> {
 }
 
 /// Status de auth do provider: `pi auth check --provider X --json`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auth_status(provider: String) -> Result<String, String> {
     let p = provider.trim();
     if p.is_empty() {
@@ -250,6 +367,37 @@ pub fn auth_status(provider: String) -> Result<String, String> {
         .output()
         .map_err(|e| format!("spawn pi auth: {e}"))?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Remove as credenciais de um provider (`pi auth logout <provider>`).
+/// O CLI apaga o que está em `~/.pi/agent/auth.json`; env e models.json ficam.
+/// Re-login (`auth login`) cobre o caso de "editar" a credencial.
+#[tauri::command(async)]
+pub fn auth_logout(provider: String) -> Result<String, String> {
+    let p = provider.trim();
+    if p.is_empty() {
+        return Err("provider vazio".to_string());
+    }
+    let out = std::process::Command::new(pi_bin())
+        .args(["auth", "logout", p])
+        .output()
+        .map_err(|e| format!("spawn pi auth logout: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() { "pi auth logout falhou".to_string() } else { err });
+    }
+    // O CLI devolve exit 0 mesmo sem remover nada: quando o provider não tem
+    // credencial ele imprime `Unknown provider` e lista as armazenadas.
+    // Sem esta checagem o app dizia "removida" sem ter removido.
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if stdout.contains("Unknown provider") {
+        let stored = stdout
+            .lines()
+            .find(|l| l.contains("Stored credentials:"))
+            .unwrap_or("Stored credentials: (nenhuma)");
+        return Err(format!("{} não tem credencial armazenada — {}", p, stored));
+    }
+    Ok(stdout)
 }
 
 /// Providers aceitos em `open_terminal_login`, verificados contra o `pi` instalado
@@ -309,7 +457,7 @@ fn login_inner(bin_quoted: &str, provider: &str, windows: bool) -> String {
 }
 
 /// Abre um terminal já rodando `pi auth login <provider>` (login é interativo).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_terminal_login(provider: String) -> Result<String, String> {
     let p = validate_login_provider(&provider)?;
     let bin = quote_bin(&pi_bin().to_string_lossy());
@@ -354,7 +502,7 @@ pub fn open_terminal_login(provider: String) -> Result<String, String> {
 }
 
 /// Copia texto para a área de transferência usando utilitário do sistema.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn copy_text(text: String) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -437,7 +585,7 @@ fn pick_file_blocking() -> Result<String, String> {
 /// Lê imagem da área de transferência do sistema e devolve `(base64, mimeType)`.
 /// A WebKitGTK não entrega `image/*` no evento `paste` do webview, então o app
 /// consulta o clipboard do sistema direto. Só lê: nunca escreve no clipboard.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn paste_image() -> Result<(String, String), String> {
     use base64::Engine;
 
@@ -588,6 +736,41 @@ pub fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Remove um provider custom do `~/.pi/agent/models.json` (backup `.json.bak`).
+/// Único jeito de remover provider configurado por extensão/models.json:
+/// `pi auth logout` só mexe no `auth.json`.
+#[tauri::command]
+pub fn models_provider_remove(provider: String) -> Result<String, String> {
+    let p = provider.trim();
+    if p.is_empty() {
+        return Err("provider vazio".to_string());
+    }
+    let home = pick_home(std::env::var_os("HOME"), std::env::var_os("USERPROFILE"))
+        .ok_or("HOME nem USERPROFILE definidos")?;
+    let path = home.join(".pi/agent/models.json");
+    let raw = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("models.json inválido: {e}"))?;
+    let Some(providers) = cfg.get_mut("providers").and_then(|v| v.as_object_mut()) else {
+        return Err("models.json sem objeto providers".to_string());
+    };
+    if !providers.contains_key(p) {
+        return Err(format!("{p} não está em models.json"));
+    }
+    // Backup só na primeira vez: não sobrescreve um backup bom anterior.
+    let backup = path.with_extension("json.bak");
+    if !backup.exists() {
+        fs::write(&backup, &raw).map_err(|e| format!("backup: {e}"))?;
+    }
+    providers.remove(p);
+    let pretty = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    fs::write(&path, pretty + "\n").map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!(
+        "{p} removido do models.json (backup em {})",
+        backup.display()
+    ))
+}
+
 /// Caminhos e SO para o "Sobre": sem isso a UI só teria as versões e o usuário
 /// não descobre qual binário do `pi` nem onde estão as sessões.
 #[tauri::command]
@@ -687,7 +870,7 @@ fn open_file_in(cwd: &Path, path: &Path) -> Result<PathBuf, String> {
 /// bloco adicionado (`+`) apareça exatamente 1 vez e o troca pelo bloco removido
 /// (`-`). Recusa hunk só de adições (ex.: `write`, só `+`), hunk só de remoções
 /// (reinserção sem âncora) e patch truncado, com erro legível.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn revert_hunk(cwd: String, file: String, hunk: String) -> Result<String, String> {
     revert_hunk_in(Path::new(&cwd), Path::new(&file), &hunk)
 }
@@ -810,7 +993,7 @@ pub fn debug_note(msg: String) -> String {
 }
 
 /// Pacotes instalados (`pi list`), texto cru.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_list() -> Result<String, String> {
     let out = std::process::Command::new(pi_bin())
         .arg("list")
@@ -824,7 +1007,7 @@ pub fn pi_list() -> Result<String, String> {
 }
 
 /// Instala um pacote pelo CLI oficial (`pi install <source>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_install(spec: String, local: bool) -> Result<String, String> {
     let mut cmd = pi_cmd();
     cmd.args(["install", spec.as_str(), "--no-approve"]);
@@ -842,7 +1025,7 @@ pub fn pi_install(spec: String, local: bool) -> Result<String, String> {
 }
 
 /// Adiciona/atualiza servidor MCP via `pi mcp add` (o CLI grava o mcp.json).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_mcp_add(
     name: String,
     url: String,
@@ -887,7 +1070,7 @@ pub fn pi_mcp_add(
 }
 
 /// Remove um pacote instalado (`pi remove <source>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_remove(spec: String, local: bool) -> Result<String, String> {
     let mut cmd = pi_cmd();
     cmd.args(["remove", spec.as_str(), "--no-approve"]);
@@ -905,7 +1088,7 @@ pub fn pi_remove(spec: String, local: bool) -> Result<String, String> {
 }
 
 /// Remove servidor MCP (`pi mcp remove <name>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_mcp_remove(name: String, local: bool) -> Result<String, String> {
     let mut cmd = std::process::Command::new(pi_bin());
     cmd.args(["mcp", "remove", name.as_str()]);
@@ -923,7 +1106,7 @@ pub fn pi_mcp_remove(name: String, local: bool) -> Result<String, String> {
 }
 
 /// Servidores MCP em JSON (`pi mcp list --json`) — evita ler mcp.json e expor `env`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_mcp_list() -> Result<String, String> {
     let out = std::process::Command::new(pi_bin())
         .args(["mcp", "list", "--json"])
@@ -937,7 +1120,7 @@ pub fn pi_mcp_list() -> Result<String, String> {
 }
 
 /// Atualiza pi e/ou extensões pelo próprio CLI (`pi update`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_update(scope: String) -> Result<String, String> {
     let target = match scope.as_str() {
         "self" => "--self",
@@ -962,7 +1145,7 @@ pub fn pi_update(scope: String) -> Result<String, String> {
 }
 
 /// `pi` filhos marcados com SIGHTDECK_CHILD cujo pai morreu (ppid 1) — limpa órfãos de crash.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn kill_orphans() -> Result<usize, String> {
     let entries = fs::read_dir("/proc").map_err(|e| e.to_string())?;
     let mut killed = 0usize;
@@ -1016,7 +1199,7 @@ fn parse_context(raw: &str) -> u64 {
 }
 
 /// Catálogo de modelos direto do CLI (`pi --list-models`) — instantâneo, sem subir sessão.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_models() -> Result<String, String> {
     let out = std::process::Command::new(pi_bin())
         .arg("--list-models")
@@ -1043,21 +1226,26 @@ pub fn pi_models() -> Result<String, String> {
 }
 
 /// Último modelo registrado na sessão (record `model_change`), sem precisar de RPC.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_model(path: String) -> Result<String, String> {
-    let raw = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+    // Mesma validação das outras leituras de sessão: o path vem do webview.
+    let root = sessions_root()?;
+    let file = contained_in(Path::new(&path), &root)?;
+    // Stream de linhas em vez de `read_to_string`: a sessão pode ter 26 MB e só
+    // as linhas `model_change` interessam (a última vence).
+    let handle = fs::File::open(&file).map_err(|e| format!("{path}: {e}"))?;
 
     let mut provider = String::new();
     let mut model_id = String::new();
 
-    for line in raw.lines() {
+    for line in BufReader::new(handle).lines().map_while(Result::ok) {
         if !line.contains("\"type\":\"model_change\"") {
             continue;
         }
-        if let Some(p) = extract_string(line, "\"provider\":\"") {
+        if let Some(p) = extract_string(&line, "\"provider\":\"") {
             provider = p;
         }
-        if let Some(m) = extract_string(line, "\"modelId\":\"") {
+        if let Some(m) = extract_string(&line, "\"modelId\":\"") {
             model_id = m;
         }
     }
@@ -1073,7 +1261,7 @@ pub fn session_model(path: String) -> Result<String, String> {
 }
 
 /// Caminho do log de hooks e se a extensão de instrumentação está instalada.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_status() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/sightdeck-hooks.js"));
@@ -1087,7 +1275,7 @@ pub fn hooks_status() -> Result<String, String> {
 }
 
 /// Instala a extensão que registra hooks em `~/.pi/agent/sightdeck/hooks.log`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_install() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let dir = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions"));
@@ -1097,7 +1285,7 @@ pub fn hooks_install() -> Result<String, String> {
     Ok(format!("instalado em {}", ext.display()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_remove() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let ext = std::path::PathBuf::from(format!("{home}/.pi/agent/extensions/sightdeck-hooks.js"));
@@ -1109,17 +1297,36 @@ pub fn hooks_remove() -> Result<String, String> {
 }
 
 /// Últimas linhas do log de hooks.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_tail(lines: Option<usize>) -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let path = format!("{home}/.pi/agent/sightdeck/hooks.log");
-    let Ok(raw) = fs::read_to_string(&path) else {
+    // Só o fim do arquivo: ele cresce sem teto e é relido a cada poll (2,5 s).
+    let Some(raw) = read_tail(&path, 512 * 1024) else {
         return Ok(String::new());
     };
     let max = lines.unwrap_or(200).clamp(1, 2000);
     let all: Vec<&str> = raw.lines().collect();
     let start = all.len().saturating_sub(max);
     Ok(all[start..].join("\n"))
+}
+
+/// Últimos `max_bytes` do arquivo, sem carregar o resto. Quando corta, a
+/// primeira linha vem pela metade e é descartada.
+fn read_tail(path: &str, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::Start(len - max_bytes)).ok()?;
+    }
+    let mut buf = Vec::with_capacity(max_bytes.min(len) as usize);
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).to_string();
+    if len > max_bytes {
+        return Some(text.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default());
+    }
+    Some(text)
 }
 
 /* ---------- compactação: limite de contexto escolhido pelo usuário ---------- */
@@ -1242,7 +1449,7 @@ pub fn compaction_set(
 }
 
 /// Versão do `pi` instalado.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_version() -> String {
     std::process::Command::new(pi_bin())
         .arg("--version")
@@ -1317,15 +1524,32 @@ fn extract_string(line: &str, key: &str) -> Option<String> {
 
 /// Título = `session_info.name` (setado por `/name`, `--name`) ou a 1ª mensagem do usuário.
 fn read_title(session_file: &Path) -> Option<String> {
-    let file = fs::File::open(session_file).ok()?;
+    read_head_meta(session_file).1
+}
+
+fn read_cwd(session_file: &Path) -> Option<String> {
+    read_head_meta(session_file).0
+}
+
+/// (cwd, título) numa única abertura: `list_sessions` gira ~750 arquivos do
+/// histórico e cada abertura extra é um syscall por sessão.
+fn read_head_meta(session_file: &Path) -> (Option<String>, Option<String>) {
+    let Ok(file) = fs::File::open(session_file) else {
+        return (None, None);
+    };
     let mut name: Option<String> = None;
     let mut first_user: Option<String> = None;
+    let mut cwd: Option<String> = None;
 
     for (idx, line) in BufReader::new(file).lines().enumerate() {
+        let Ok(line) = line else { break };
+        // `cwd` só existe na primeira linha (cabeçalho da sessão).
+        if idx == 0 {
+            cwd = extract_string(&line, "\"cwd\":\"");
+        }
         if idx > 200 {
             break;
         }
-        let Ok(line) = line else { break };
 
         if line.contains("\"type\":\"session_info\"") {
             if let Some(n) = extract_string(&line, "\"name\":\"") {
@@ -1342,8 +1566,12 @@ fn read_title(session_file: &Path) -> Option<String> {
         }
     }
 
-    let picked = name.or(first_user)?;
-    // tira cercas de código e colapsa espacos
+    (cwd, flatten_title(name.or(first_user)))
+}
+
+/// Título colapsado: tira cercas de código, junta espaços e corta em 64 chars.
+fn flatten_title(picked: Option<String>) -> Option<String> {
+    let picked = picked?;
     let flat = picked
         .replace('`', " ")
         .split_whitespace()
@@ -1353,13 +1581,6 @@ fn read_title(session_file: &Path) -> Option<String> {
         return None;
     }
     Some(flat.chars().take(64).collect())
-}
-
-fn read_cwd(session_file: &Path) -> Option<String> {
-    let file = fs::File::open(session_file).ok()?;
-    let mut first = String::new();
-    BufReader::new(file).read_line(&mut first).ok()?;
-    extract_string(&first, "\"cwd\":\"")
 }
 
 fn read_mtime(session_file: &Path) -> u64 {
@@ -1405,7 +1626,7 @@ fn child_state(session_file: &Path) -> &'static str {
 
 /// Últimas `limit` mensagens de um arquivo de sessão (JSONL), precedidas por um record
 /// `__deck_meta` com quantas ficaram de fora. Evita mandar 20 MB+ para o webview.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_session_messages(
     path: String,
     limit: Option<usize>,
@@ -1532,9 +1753,19 @@ fn slim_content(content: &mut serde_json::Value, text_chars: usize, args_bytes: 
         serde_json::Value::Array(blocks) => {
             for block in blocks.iter_mut() {
                 if block.get("type").and_then(|v| v.as_str()) == Some("image") {
+                    // Base64 fica de fora do histórico (693 imagens, mediana de 176 KB):
+                    // o card lê o arquivo pelo caminho da tool call e mostra o que o
+                    // modelo viu. Mime e tamanho vão no bloco para o aviso do card.
+                    let bytes = block.get("data").and_then(|v| v.as_str()).map_or(0, |d| d.len() / 4 * 3);
+                    let mime = block
+                        .get("mimeType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("image/png")
+                        .to_string();
                     *block = serde_json::json!({
                         "type": "text",
-                        "text": "[imagem omitida: mensagem grande]"
+                        "text": format!("[imagem {} KB]", bytes / 1024),
+                        "img": { "mimeType": mime, "bytes": bytes },
                     });
                     continue;
                 }
@@ -1578,7 +1809,7 @@ fn slim_content(content: &mut serde_json::Value, text_chars: usize, args_bytes: 
 
 /// "Exclui" uma sessão movendo o `.jsonl` e o diretório de children para
 /// `<projeto>/.sightdeck-trash/<stem>/`. Nunca apaga de verdade.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_session(file: String) -> Result<String, String> {
     let root = sessions_root()?;
     delete_session_in(Path::new(&file), &root)
@@ -1613,7 +1844,7 @@ fn delete_session_in(file: &Path, root: &Path) -> Result<String, String> {
 
 /// Children da sessão lidos do disco: `<sessão>/<childId>/run-N/session.jsonl`.
 /// Usado quando não há widget ao vivo (sessão aberta do histórico).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_children(dir: String) -> Result<String, String> {
     list_children_in(&std::path::PathBuf::from(&dir), &sessions_root()?)
 }
@@ -1697,7 +1928,7 @@ fn list_children_in(dir: &Path, root: &Path) -> Result<String, String> {
 /// Edições de arquivo da sessão **e dos seus children**, com o patch de cada uma.
 /// `path` = `.jsonl` da sessão; children vêm de `<stem>/<childId>/run-N/session.jsonl`.
 /// O patch é o `details.patch` que a própria tool `edit` já grava no histórico.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn session_edits(path: String) -> Result<String, String> {
     let root = sessions_root()?;
     session_edits_in(Path::new(&path), &root)
@@ -1708,6 +1939,15 @@ pub fn session_edits(path: String) -> Result<String, String> {
 const MAX_PATCH_BYTES: usize = 64 * 1024;
 const MAX_EDIT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_EDIT_ENTRIES: usize = 500;
+
+/// Busca global: guardas por arquivo/total (bytes de mensagem) + orçamento de tempo.
+/// O teto das edições (4 MiB) não serve aqui: cinco sessões grandes já estouravam
+/// e a varredura abortava sem ler as outras centenas de arquivos. Medido em 107
+/// sessões (215 MB): varredura completa em ~2 s; o teto por arquivo só corta
+/// sessão patológica, não a sessão grande do dia a dia.
+const SEARCH_FILE_BYTES: usize = 32 * 1024 * 1024;
+const SEARCH_TOTAL_BYTES: usize = 96 * 1024 * 1024;
+const SEARCH_BUDGET_MS: u128 = 2500;
 
 /// Mesma lógica com o root explícito — testável sem tocar em `HOME`.
 fn session_edits_in(path: &Path, root: &Path) -> Result<String, String> {
@@ -1863,7 +2103,7 @@ fn added_patch(content: &str) -> String {
 
 /// Sidebar: sessões agrupadas por pasta.
 /// `file` = caminho absoluto do `.jsonl` (é o que vai em `pi --session <path>`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_sessions() -> Result<String, String> {
     let root = sessions_root()?;
     let entries = fs::read_dir(&root).map_err(|e| format!("{}: {e}", root.display()))?;
@@ -1890,8 +2130,9 @@ pub fn list_sessions() -> Result<String, String> {
                 continue;
             };
 
-            let cwd = read_cwd(&path).unwrap_or_default();
-            let title = read_title(&path).unwrap_or_default();
+            let (cwd, title) = read_head_meta(&path);
+            let cwd = cwd.unwrap_or_default();
+            let title = title.unwrap_or_default();
             let child_dir = path.with_extension("");
             let children = if child_dir.is_dir() {
                 fs::read_dir(&child_dir)
@@ -1952,14 +2193,51 @@ pub fn list_sessions() -> Result<String, String> {
     Ok(format!("[{json}]"))
 }
 
+/// Bytes de uma imagem que uma tool leu, para o card mostrar o que o modelo viu.
+/// O histórico não guarda base64 (mediana de 176 KB por imagem), então a UI pede
+/// sob demanda pelo caminho da chamada. Só extensão de imagem e até 8 MB.
+#[tauri::command(async)]
+pub fn read_image_data(path: String) -> Result<String, String> {
+    use base64::Engine;
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+    let real = fs::canonicalize(&path).map_err(|e| format!("{path}: {e}"))?;
+    let meta = fs::metadata(&real).map_err(|e| format!("{path}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{path}: não é arquivo"));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(format!("{path}: {} KB acima do teto de 8 MB", meta.len() / 1024));
+    }
+    let ext = real
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        other => return Err(format!("{path}: extensão não suportada ({other})")),
+    };
+    let bytes = fs::read(&real).map_err(|e| format!("{path}: {e}"))?;
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
 /// Busca global no texto das sessões (`<root>/<proj>/<sess>.jsonl`).
 /// `query` casa por substring (case-insensitive) no texto + nomes de tool;
 /// `tool` restringe a mensagens que usam a tool; `errors_only` a `toolResult` com erro.
-/// Pagina com `limit` (1..=100, padrão 20) + `offset`, e para o scan ao estourar o
-/// teto de bytes (`MAX_EDIT_BYTES`, o mesmo das edições): árvore gigante não pode
-/// entupir o IPC do webview. Linha gigante (> `MAX_PATCH_BYTES`) é pulada.
-/// Retorna `{"total","truncated","results":[{"id","file","cwd","title","matches","snippet","tools","hasError"}]}`.
-#[tauri::command]
+/// Pagina com `limit` (1..=100, padrão 20) + `offset`. O scan para por orçamento de
+/// tempo (`SEARCH_BUDGET_MS`) ou de bytes (`SEARCH_FILE_BYTES` por arquivo,
+/// `SEARCH_TOTAL_BYTES` no total) — arquivo grande é cortado, mas a varredura
+/// continua nos seguintes. Linha gigante (> `MAX_PATCH_BYTES`) é pulada.
+/// Retorna `{"total","truncated","files","scannedFiles","results":[{"id","file","cwd","title","matches","snippet","tools","hasError"}]}`.
+#[tauri::command(async)]
 pub fn search_sessions(
     query: String,
     tool: Option<String>,
@@ -1989,6 +2267,32 @@ fn search_sessions_in(
     errors_only: bool,
     limit: Option<usize>,
     offset: Option<usize>,
+) -> Result<String, String> {
+    search_sessions_capped(
+        root,
+        query,
+        tool,
+        errors_only,
+        limit,
+        offset,
+        SEARCH_FILE_BYTES,
+        SEARCH_TOTAL_BYTES,
+        SEARCH_BUDGET_MS,
+    )
+}
+
+/// Mesma busca com as guardas explícitas (os testes apertam os tetos).
+#[allow(clippy::too_many_arguments)]
+fn search_sessions_capped(
+    root: &Path,
+    query: &str,
+    tool: Option<&str>,
+    errors_only: bool,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    file_cap: usize,
+    total_cap: usize,
+    budget_ms: u128,
 ) -> Result<String, String> {
     let q = query.trim().to_lowercase();
     let toolf = tool
@@ -2026,13 +2330,22 @@ fn search_sessions_in(
     files.sort_by_key(|a| std::cmp::Reverse(a.0));
 
     let mut scanned: usize = 0;
+    let mut seen: usize = 0;
+    let mut scanned_files: usize = 0;
     let mut truncated = false;
+    let started = std::time::Instant::now();
     let mut hits: Vec<SearchHit> = Vec::new();
 
     'files: for (mtime, file) in &files {
+        if started.elapsed().as_millis() > budget_ms {
+            truncated = true;
+            break 'files;
+        }
         let Ok(handle) = fs::File::open(file) else {
             continue;
         };
+        scanned_files += 1;
+        let mut file_bytes: usize = 0;
         let mut matches = 0usize;
         let mut snippet = String::new();
         let mut tools: Vec<String> = Vec::new();
@@ -2045,7 +2358,17 @@ fn search_sessions_in(
                 continue;
             }
             scanned += line.len();
-            if scanned > MAX_EDIT_BYTES {
+            file_bytes += line.len();
+            seen += 1;
+            // Corta só este arquivo (não a varredura inteira) quando ele passa do
+            // teto: um `bash` de vários MB não pode esconder as sessões seguintes.
+            if file_bytes > file_cap || scanned > total_cap {
+                truncated = true;
+                break;
+            }
+            // Orçamento de tempo também dentro do arquivo: um `.jsonl` gigante
+            // não pode segurar a busca sozinho.
+            if seen & 255 == 0 && started.elapsed().as_millis() > budget_ms {
                 truncated = true;
                 break 'files;
             }
@@ -2147,12 +2470,14 @@ fn search_sessions_in(
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
+        // cwd e título na mesma abertura (antes eram duas).
+        let (cwd, title) = read_head_meta(file);
         hits.push((
             *mtime,
             stem,
             file.to_string_lossy().to_string(),
-            read_cwd(file).unwrap_or_default(),
-            read_title(file).unwrap_or_default(),
+            cwd.unwrap_or_default(),
+            title.unwrap_or_default(),
             matches,
             snippet,
             tools,
@@ -2185,7 +2510,8 @@ fn search_sessions_in(
         ));
     }
     Ok(format!(
-        "{{\"total\":{total},\"truncated\":{truncated},\"results\":[{body}]}}"
+        "{{\"total\":{total},\"truncated\":{truncated},\"files\":{},\"scannedFiles\":{scanned_files},\"results\":[{body}]}}",
+        files.len()
     ))
 }
 
@@ -2288,6 +2614,86 @@ mod tests {
             body.push_str(&format!("{{\"type\":\"message\",\"id\":{i}}}\n"));
         }
         t.file(rel, &body)
+    }
+
+    // ---------- leitura do cabeçalho da sessão ----------
+
+    #[test]
+    fn read_head_meta_le_cwd_e_titulo_numa_abertura() {
+        let t = Tmp::new("head");
+        let body = concat!(
+            "{\"type\":\"session_start\",\"cwd\":\"/home/u/proj\"}\n",
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"arruma `o` build\"}]}}\n"
+        );
+        let p = t.file("s.jsonl", body);
+        let (cwd, title) = read_head_meta(&p);
+        assert_eq!(cwd.as_deref(), Some("/home/u/proj"));
+        // Cerca de código vira espaço e o espaço em excesso colapsa.
+        assert_eq!(title.as_deref(), Some("arruma o build"));
+        // `read_cwd`/`read_title` são o mesmo caminho: não podem divergir.
+        assert_eq!(read_cwd(&p), cwd);
+        assert_eq!(read_title(&p), title);
+    }
+
+    #[test]
+    fn read_head_meta_sem_arquivo_devolve_none_none() {
+        let t = Tmp::new("head-missing");
+        let (cwd, title) = read_head_meta(&t.at("nao-existe.jsonl"));
+        assert!(cwd.is_none() && title.is_none());
+    }
+
+    #[test]
+    fn read_tail_corta_no_tamanho_e_descarta_linha_parcial() {
+        let t = Tmp::new("tail");
+        let p = t.file("h.log", "linha-1\nlinha-2\nlinha-3\n");
+        let path = p.to_str().expect("path utf-8");
+        // Cabe inteiro: devolve tudo.
+        assert_eq!(read_tail(path, 1024).as_deref(), Some("linha-1\nlinha-2\nlinha-3\n"));
+        // Corta no meio: a primeira linha sobrevivente é inteira.
+        let got = read_tail(path, 12).expect("tail");
+        assert!(!got.starts_with("nha"), "linha parcial vazou: {got:?}");
+        assert!(got.ends_with("linha-3\n"), "fim perdido: {got:?}");
+    }
+
+    // ---------- read_image_data: base64 pronto para o card ----------
+
+    #[test]
+    fn read_image_data_devolve_data_url_com_mime() {
+        let t = Tmp::new("img");
+        let p = t.file("a.png", "PNG");
+        let url = read_image_data(p.to_str().expect("path utf-8").to_string()).expect("imagem");
+        // base64 de "PNG"
+        assert_eq!(url, "data:image/png;base64,UE5H");
+    }
+
+    #[test]
+    fn read_image_data_recusa_extensao_que_nao_e_imagem() {
+        let t = Tmp::new("imgtxt");
+        let p = t.file("a.txt", "x");
+        let err = read_image_data(p.to_str().expect("path utf-8").to_string())
+            .expect_err("extensão não deveria passar");
+        assert!(err.contains("não suportada"), "erro inesperado: {err}");
+    }
+
+    #[test]
+    fn read_image_data_recusa_arquivo_ausente() {
+        let t = Tmp::new("imgsumiu");
+        let err = read_image_data(t.at("nao-existe.png").to_str().expect("path utf-8").to_string())
+            .expect_err("arquivo ausente não deveria passar");
+        assert!(err.contains("nao-existe.png"), "erro inesperado: {err}");
+    }
+
+    #[test]
+    fn slim_message_line_troca_imagem_por_marcador_com_tamanho() {
+        let line = r#"{"type":"message","message":{"role":"toolResult","content":[{"type":"image","data":"AAAA","mimeType":"image/png"}]}}"#;
+        let out = slim_message_line(line, 64 * 1024).expect("linha");
+        assert!(!out.contains("AAAA"), "base64 vazou para o histórico: {out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+        let block = &v["message"]["content"][0];
+        assert_eq!(block["type"], "text");
+        assert_eq!(block["img"]["mimeType"], "image/png");
+        assert_eq!(block["img"]["bytes"], 3);
+        assert!(block["text"].as_str().unwrap_or_default().starts_with("[imagem"));
     }
 
     // ---------- resolve_pi_bin: decisão pura, sem env e sem fs ----------
@@ -2475,7 +2881,7 @@ mod tests {
         assert!(meta.contains("\"total\":3"), "{meta}");
         assert_eq!(out.lines().count(), 4, "meta + 3 mensagens");
         assert!(out.contains("prompt que nao pode sumir"), "texto da mensagem sumiu: {out}");
-        assert!(out.contains("imagem omitida"), "marcador da imagem sumiu: {out}");
+        assert!(out.contains("[imagem"), "marcador da imagem sumiu: {out}");
         assert!(!out.contains(&big), "base64 gigante nao pode ir ao webview");
         assert!(out.contains("\"timestamp\":123"), "timestamp (ordem da row) deve sobreviver");
     }
@@ -2636,6 +3042,50 @@ mod tests {
         assert_eq!(v1["results"].as_array().unwrap().len(), 1, "{p1}");
         assert_eq!(v2["results"].as_array().unwrap().len(), 1, "{p2}");
         assert_ne!(v1["results"][0]["id"], v2["results"][0]["id"], "{p1} vs {p2}");
+    }
+
+    #[test]
+    fn search_reports_coverage_counts() {
+        let t = Tmp::new("searchcov");
+        let root = t.at("sessions");
+        t.file(
+            "sessions/proj/a.jsonl",
+            &search_msg("user", r#""content":"alfa""#),
+        );
+        t.file(
+            "sessions/proj/b.jsonl",
+            &search_msg("user", r#""content":"beta""#),
+        );
+
+        let out = search_sessions_in(&root, "alfa", None, false, None, None).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["files"], 2, "{out}");
+        assert_eq!(v["scannedFiles"], 2, "{out}");
+        assert_eq!(v["truncated"], false, "{out}");
+    }
+
+    #[test]
+    fn search_keeps_scanning_after_a_file_hits_its_cap() {
+        // Um arquivo acima do teto por arquivo corta só ele: as sessões seguintes
+        // continuam sendo lidas (antes, um `bash` gigante abortava tudo).
+        let t = Tmp::new("searchcap");
+        let root = t.at("sessions");
+        let filler = "x".repeat(60 * 1024);
+        let mut big = vec![search_msg("user", r#""content":"alfa""#)];
+        for _ in 0..20 {
+            big.push(search_msg("user", &format!(r#""content":"{filler}""#)));
+        }
+        t.file("sessions/proj/big.jsonl", &big.join("\n"));
+        t.file(
+            "sessions/proj/small.jsonl",
+            &search_msg("user", r#""content":"beta""#),
+        );
+
+        let out = search_sessions_capped(&root, "beta", None, false, None, None, 4096, usize::MAX, 10_000).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"], 1, "{out}");
+        assert_eq!(v["results"][0]["id"], "small", "{out}");
+        assert_eq!(v["truncated"], true, "{out}");
     }
 
     // ---------- session_edits: arquivos editados + patch ----------

@@ -85,6 +85,23 @@
   .auth-chip.warn { background:var(--warn-bg); color:var(--warn); }
   .auth-chip.hidden { display:none; }
 
+  /* central de notificações: botão no rodapé + popover acima dele */
+  .notify-pop { position:fixed; right:12px; top:46px; z-index:40; width:min(460px,calc(100vw - 24px));
+               max-height:min(60vh,520px); display:flex; flex-direction:column; background:var(--bg-2);
+               border:1px solid var(--line); border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  .notify-pop.hidden { display:none; }
+  .notify-head { flex:none; display:flex; align-items:center; gap:6px; padding:7px 10px;
+                 border-bottom:1px solid var(--line); font-family:var(--mono); font-size:11px; }
+  .notify-list { flex:1; overflow:auto; }
+  .notify-row { display:flex; align-items:flex-start; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); }
+  .notify-row:hover { background:var(--hover); }
+  .notify-kind { flex:none; font-family:var(--mono); font-size:9.5px; text-transform:uppercase;
+                 color:var(--warn); padding-top:2px; }
+  .notify-body { flex:1; min-width:0; }
+  .notify-msg { font-size:11.5px; white-space:pre-wrap; word-break:break-word; }
+  .notify-src { font-family:var(--mono); font-size:10px; color:var(--mute); margin-top:2px; }
+  .notify-foot { flex:none; padding:5px 10px; border-top:1px solid var(--line); }
+
   /* tabs de sessão */
   .tabs { grid-column:1/-1; display:flex; align-items:stretch; gap:1px; padding:0 6px;
           border-bottom:1px solid var(--line); background:var(--bg-1);
@@ -97,19 +114,19 @@
   .tab-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1;
                 color:var(--ink-4); }
   .tab.active .tab-title { color:var(--ink-0); }
-  .tab-close { background:none; border:none; color:#7c869c; font-size:11px; padding:2px 3px;
+  .tab-close { background:none; border:none; color:var(--ink-5); font-size:11px; padding:2px 3px;
                cursor:pointer; flex:none; border-radius:3px; }
   .tab-close:hover { color:var(--ink-0); background:var(--err-bg-2); }
   /* estado + projeto por aba: "running" é o turno em andamento, não a aba ativa */
-  .tab-dot { width:6px; height:6px; border-radius:50%; flex:none; background:#394055; }
-  .tab-dot.live { background:#4f5f80; }
+  .tab-dot { width:6px; height:6px; border-radius:50%; flex:none; background:var(--dot-off); }
+  .tab-dot.live { background:var(--ink-5); }
   .tab-dot.busy { background:var(--ok); animation:tabpulse 1.2s ease-in-out infinite; }
   /* pulso só de opacidade: box-shadow inflava o dot para ~16px na barra de 34px */
   @keyframes tabpulse {
     0%, 100% { opacity:1; }
     50% { opacity:.35; }
   }
-  .tab-proj { color:#6f7a92; flex:none; max-width:84px; overflow:hidden;
+  .tab-proj { color:var(--ink-5); flex:none; max-width:84px; overflow:hidden;
               text-overflow:ellipsis; white-space:nowrap; }
   .tab.active .tab-proj { color:var(--accent); }
   .row.user.queued { opacity:.7; }
@@ -399,6 +416,11 @@
   .msg-img { margin-top:6px; }
   .msg-img img { max-width:320px; max-height:240px; border-radius:5px;
                  border:1px solid var(--line); display:block; cursor:zoom-in; }
+  /* imagem que uma tool leu (read de .png): carga sob demanda pelo caminho */
+  .tool-imgs { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .tool-imgs .msg-img { margin-top:0; }
+  .img-missing { font-size:11px; color:var(--mute); border:1px dashed var(--line);
+                 border-radius:4px; padding:3px 7px; align-self:center; max-width:240px; }
   /* visualizador da imagem ampliada */
   .img-view { position:fixed; inset:0; z-index:60; background:rgba(6,8,12,.88);
               display:flex; align-items:center; justify-content:center; cursor:zoom-out; }
@@ -574,13 +596,14 @@
   .model-list { max-height:320px; overflow-y:auto; padding:4px 0 6px; }
   .model-group { padding:8px 10px 3px; font-family:var(--mono); font-size:9.5px;
                  letter-spacing:.08em; color:var(--mute); }
-  .model-row { display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+  .model-row { display:flex; align-items:center; gap:10px;
                padding:5px 10px; font-family:var(--mono); font-size:12px; color:var(--ink-2);
                cursor:pointer; }
-  .model-row:hover { background:#1a2030; }
+  .model-row:hover { background:var(--hover); }
   .model-row.current { color:var(--accent); }
-  .model-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .model-ctx { color:var(--mute); font-size:10.5px; flex:none; }
+  /* nome cresce; contexto tem largura fixa alinhada à direita; estrela no fim */
+  .model-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .model-ctx { color:var(--mute); font-size:10.5px; flex:none; min-width:4em; text-align:right; }
   .model-empty { padding:10px; color:var(--mute); font-size:11px; }
 
   /* detalhe de subagent: ocupa a célula do centro (col 2 / row 3) em vez de
@@ -614,6 +637,12 @@
   .overlay { position:fixed; inset:64px 0 0 0; background:var(--bg); z-index:35;
              display:flex; flex-direction:column; }
   .overlay.hidden { display:none; }
+  /* Modal de verdade (Configurações): scrim + caixa centralizada e fechável. */
+  .overlay.modal { inset:0; background:rgba(0,0,0,.55); align-items:center; justify-content:center; }
+  .overlay.modal .modal-box { display:flex; flex-direction:column; width:min(920px, 92vw);
+                              max-height:86vh; background:var(--bg-1); border:1px solid var(--line-strong);
+                              border-radius:10px; overflow:hidden;
+                              box-shadow:0 24px 64px rgba(0,0,0,.6); }
   .overlay-body { flex:1; overflow:auto; padding:16px 24px; }
   .overlay-body h4 { margin:18px 0 8px; font-size:10px; color:var(--mute); font-weight:600;
                      letter-spacing:.06em; text-transform:uppercase; }
@@ -645,7 +674,34 @@
              font-family:var(--mono); font-size:11.5px; padding:7px 12px; cursor:pointer; }
   .pkg-tab:hover { color:var(--dim); }
   .pkg-tab.active { color:var(--fg); border-bottom-color:var(--accent); }
+  .settings-tab { background:none; border:none; border-bottom:2px solid transparent; color:var(--mute);
+                  font-family:var(--mono); font-size:12px; padding:8px 14px; cursor:pointer; }
+  .settings-tab:hover { color:var(--dim); }
+  .settings-tab.active { color:var(--fg); border-bottom-color:var(--accent); }
   .pane.hidden { display:none; }
+  /* Dashboard de custo (aba Custo) */
+  .usage-totals { display:flex; gap:22px; margin:0 0 14px; }
+  .usage-kv { display:flex; flex-direction:column; }
+  .usage-kv-k { font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); }
+  .usage-kv-v { font-family:var(--mono); font-size:15px; color:var(--fg); }
+  .usage-bar-row { display:flex; align-items:center; gap:8px; padding:2px 0;
+                   font-family:var(--mono); font-size:11px; }
+  .usage-bar-label { width:46px; color:var(--dim); flex:none; }
+  .usage-bar { flex:1; height:6px; background:var(--bg-0); border-radius:3px; overflow:hidden; }
+  .usage-bar-fill { height:100%; background:var(--accent); }
+  .usage-bar-val { width:76px; text-align:right; color:var(--ink-4); flex:none; }
+  /* Inspetor de contexto (popover): composição estimada */
+  .ctx-comp { margin:8px 0 0; }
+  .ctx-comp-head { font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+                   color:var(--mute); margin-bottom:4px; }
+  .ctx-comp-row { display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; }
+  .ctx-comp-label { width:66px; color:var(--dim); flex:none; }
+  .ctx-comp-bar { flex:1; height:5px; background:var(--bg-0); border-radius:3px; overflow:hidden; }
+  .ctx-comp-fill { display:block; height:100%; background:var(--accent); }
+  .ctx-comp-fill.system { background:var(--warn); }
+  .ctx-comp-fill.assistant { background:var(--ok); }
+  .ctx-comp-fill.tools { background:var(--mute); }
+  .ctx-comp-val { width:36px; text-align:right; color:var(--ink-4); flex:none; }
   .cat-search { max-width:520px; margin-bottom:10px; border:1px solid var(--line) !important;
                 border-radius:6px !important; }
   .cat-list { display:flex; flex-direction:column; gap:1px; }
