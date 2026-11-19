@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::fd::AsFd;
+#[cfg(windows)]
+use std::os::windows::io::AsHandle;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -287,27 +290,44 @@ pub fn send_prompt(
     write_stdin(&state.0, &session_id, command.as_bytes())
 }
 
+/// Cópia do cano de escrita do filho, para escrever fora do lock do mapa.
+/// `std::os::fd` não existe no Windows: lá a duplicação é pelo `OwnedHandle`.
+/// A cópia morre no fim da escrita, então não vaza descritor.
+fn clone_stdin(stdin: &ChildStdin) -> std::io::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        stdin.as_fd().try_clone_to_owned().map(std::fs::File::from)
+    }
+    #[cfg(windows)]
+    {
+        stdin.as_handle().try_clone_to_owned().map(std::fs::File::from)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = stdin;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "plataforma sem duplicação de pipe",
+        ))
+    }
+}
+
 /// Escreve no stdin da sessão **fora** do lock global: se o filho parar de drenar
 /// o stdin, o pipe enche (64 KB) e o write bloqueia — segurando o mutex, isso
-/// travaria também `stop_session`, isto é, o próprio cancelamento. O fd é
-/// clonado sob o lock e a escrita acontece depois de soltá-lo.
+/// travaria também `stop_session`, isto é, o próprio cancelamento. O pipe é
+/// duplicado sob o lock e a escrita acontece depois de soltá-lo.
 fn write_stdin(
     map: &Arc<Mutex<HashMap<String, ChildHandle>>>,
     session_id: &str,
     bytes: &[u8],
 ) -> Result<(), String> {
-    let fd = {
+    let mut pipe = {
         let guard = map.lock().map_err(|e| e.to_string())?;
         let handle = guard
             .get(session_id)
             .ok_or_else(|| format!("sessao '{session_id}' nao iniciada"))?;
-        handle
-            .stdin
-            .as_fd()
-            .try_clone_to_owned()
-            .map_err(|e| format!("clonar stdin falhou: {e}"))?
+        clone_stdin(&handle.stdin).map_err(|e| format!("clonar stdin falhou: {e}"))?
     };
-    let mut pipe = std::fs::File::from(fd);
     match pipe.write_all(bytes).and_then(|_| pipe.flush()) {
         Ok(()) => Ok(()),
         Err(e) => {
