@@ -1011,6 +1011,11 @@ async function renderMessages(data, ctx, keepNote) {
   if (target === $('log')) lastMessages = messages;
   const note = keepNote ? target.querySelector('.row.note') : null;
   clear(target);
+  // Rebuild do log principal: enquanto as fatias entram a janela mostraria o topo
+  // do histórico e só no fim saltaria para o rodapé — é o "sobe e desce" da troca
+  // de aba. O log fica preso no fim e escondido até a última fatia.
+  const mainLog = target === $('log');
+  if (mainLog) target.classList.add('rebuilding');
   if (note) target.appendChild(note);
   store.clear();
   if (!ctx) stream = null;
@@ -1098,11 +1103,15 @@ async function renderMessages(data, ctx, keepNote) {
     // Outra renderização tomou o log: o que sobrar aqui não é mais desta sessão.
     if (token !== renderToken) return;
     await new Promise(r => setTimeout(r, 0));
+    // Pinta a próxima fatia já ancorada no fim: sem isto a janela mostra o topo
+    // do histórico e depois salta para o rodapé.
+    if (mainLog) target.scrollTop = target.scrollHeight;
   }
   if (token !== renderToken) return;
   if (target === $('log')) { restoreLocalRows(); reattachStream(); }
   if (ctx) target.scrollTop = 0;
   else { scrollBottom(true); updateScrollBtn(); }
+  if (mainLog) target.classList.remove('rebuilding');
 }
 
 /* =============== subagents: histórico do disco =============== */

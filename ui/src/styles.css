@@ -269,6 +269,9 @@
              padding-left:10px; border-left:2px solid var(--line-think); }
   .row.ext b { color:#9fb0d0; font-weight:500; }
   #log { flex:1; overflow-y:auto; overflow-x:hidden; padding:26px 32px 32px; }
+  /* Rebuild em fatias: esconde o log recém-limpo para não piscar o topo do
+     histórico antes de ancorar no rodapé (visibility preserva o layout). */
+  #log.rebuilding { visibility: hidden; }
   #log > * { width:100%; max-width:820px; margin-left:auto; margin-right:auto; }
   .row { margin:0 0 16px; line-height:1.68; }
   .user { white-space:pre-wrap; word-break:break-word; color:#dbe2f2;
