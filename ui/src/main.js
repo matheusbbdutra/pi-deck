@@ -2403,16 +2403,10 @@ function notifyEntries() {
   return out;
 }
 
-/** Botão do rodapé + lista do popover. Chamado por `renderHealthChip`, que já roda
- *  quando um aviso chega, é dispensado ou a sessão fecha. */
+/** Lista do popover de avisos, aberto pelo chip do topo. Chamado por `renderHealthChip`,
+ *  que já roda quando um aviso chega, é dispensado ou a sessão fecha. */
 export function renderNotify() {
-  const btn = $('notifybtn');
-  if (!btn) return;
   const entries = notifyEntries();
-  btn.classList.toggle('hidden', !entries.length);
-  btn.textContent = '⚠ ' + entries.length;
-  btn.classList.toggle('warn', entries.some(e => e.kind === 'mcp'));
-  btn.title = entries.length ? t('notify.title', { n: entries.length }) : '';
   const pop = $('notifypop');
   if (!pop || pop.classList.contains('hidden')) return;
   const head = $('notifyhead');
@@ -5785,17 +5779,17 @@ try {
 } catch (e) {
   debugNote('subs svelte: mount falhou — usando o render legado (' + e + ')');
 }
-// Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
-$('healthchip').onclick = () => openDebug();
-$('notifybtn').onclick = (e) => { e.stopPropagation(); toggleNotify(); };
+// Aviso de extensão não tem overlay próprio: o chip do topo abre a lista, com dispensa
+// por aviso e o atalho pro Diagnóstico (que lista as linhas RPC cruas).
+$('healthchip').onclick = (e) => { e.stopPropagation(); toggleNotify(); };
 $('notifyclose').onclick = () => toggleNotify(false);
 $('notifydebug').onclick = () => { toggleNotify(false); openDebug(); };
 $('notifyrestore').onclick = () => unmuteHealth();
-// Fecha ao clicar fora (o clique no próprio popover não fecha).
+// Fecha ao clicar fora (o clique no próprio popover e no chip não fecha).
 document.addEventListener('click', (e) => {
   const pop = $('notifypop');
   if (!pop || pop.classList.contains('hidden')) return;
-  if (pop.contains(e.target) || e.target === $('notifybtn')) return;
+  if (pop.contains(e.target) || e.target.closest('#healthchip')) return;
   toggleNotify(false);
 });
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };

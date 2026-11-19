@@ -86,7 +86,7 @@
   .auth-chip.hidden { display:none; }
 
   /* central de notificações: botão no rodapé + popover acima dele */
-  .notify-pop { position:fixed; left:10px; bottom:40px; z-index:40; width:min(460px,calc(100vw - 24px));
+  .notify-pop { position:fixed; right:12px; top:46px; z-index:40; width:min(460px,calc(100vw - 24px));
                max-height:min(60vh,520px); display:flex; flex-direction:column; background:var(--bg-2);
                border:1px solid var(--line); border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
   .notify-pop.hidden { display:none; }
