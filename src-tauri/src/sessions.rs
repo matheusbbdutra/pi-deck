@@ -1228,19 +1228,24 @@ pub fn pi_models() -> Result<String, String> {
 /// Último modelo registrado na sessão (record `model_change`), sem precisar de RPC.
 #[tauri::command(async)]
 pub fn session_model(path: String) -> Result<String, String> {
-    let raw = fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+    // Mesma validação das outras leituras de sessão: o path vem do webview.
+    let root = sessions_root()?;
+    let file = contained_in(Path::new(&path), &root)?;
+    // Stream de linhas em vez de `read_to_string`: a sessão pode ter 26 MB e só
+    // as linhas `model_change` interessam (a última vence).
+    let handle = fs::File::open(&file).map_err(|e| format!("{path}: {e}"))?;
 
     let mut provider = String::new();
     let mut model_id = String::new();
 
-    for line in raw.lines() {
+    for line in BufReader::new(handle).lines().map_while(Result::ok) {
         if !line.contains("\"type\":\"model_change\"") {
             continue;
         }
-        if let Some(p) = extract_string(line, "\"provider\":\"") {
+        if let Some(p) = extract_string(&line, "\"provider\":\"") {
             provider = p;
         }
-        if let Some(m) = extract_string(line, "\"modelId\":\"") {
+        if let Some(m) = extract_string(&line, "\"modelId\":\"") {
             model_id = m;
         }
     }
@@ -1296,13 +1301,32 @@ pub fn hooks_remove() -> Result<String, String> {
 pub fn hooks_tail(lines: Option<usize>) -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let path = format!("{home}/.pi/agent/sightdeck/hooks.log");
-    let Ok(raw) = fs::read_to_string(&path) else {
+    // Só o fim do arquivo: ele cresce sem teto e é relido a cada poll (2,5 s).
+    let Some(raw) = read_tail(&path, 512 * 1024) else {
         return Ok(String::new());
     };
     let max = lines.unwrap_or(200).clamp(1, 2000);
     let all: Vec<&str> = raw.lines().collect();
     let start = all.len().saturating_sub(max);
     Ok(all[start..].join("\n"))
+}
+
+/// Últimos `max_bytes` do arquivo, sem carregar o resto. Quando corta, a
+/// primeira linha vem pela metade e é descartada.
+fn read_tail(path: &str, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::Start(len - max_bytes)).ok()?;
+    }
+    let mut buf = Vec::with_capacity(max_bytes.min(len) as usize);
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf).to_string();
+    if len > max_bytes {
+        return Some(text.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default());
+    }
+    Some(text)
 }
 
 /* ---------- compactação: limite de contexto escolhido pelo usuário ---------- */
@@ -1500,15 +1524,32 @@ fn extract_string(line: &str, key: &str) -> Option<String> {
 
 /// Título = `session_info.name` (setado por `/name`, `--name`) ou a 1ª mensagem do usuário.
 fn read_title(session_file: &Path) -> Option<String> {
-    let file = fs::File::open(session_file).ok()?;
+    read_head_meta(session_file).1
+}
+
+fn read_cwd(session_file: &Path) -> Option<String> {
+    read_head_meta(session_file).0
+}
+
+/// (cwd, título) numa única abertura: `list_sessions` gira ~750 arquivos do
+/// histórico e cada abertura extra é um syscall por sessão.
+fn read_head_meta(session_file: &Path) -> (Option<String>, Option<String>) {
+    let Ok(file) = fs::File::open(session_file) else {
+        return (None, None);
+    };
     let mut name: Option<String> = None;
     let mut first_user: Option<String> = None;
+    let mut cwd: Option<String> = None;
 
     for (idx, line) in BufReader::new(file).lines().enumerate() {
+        let Ok(line) = line else { break };
+        // `cwd` só existe na primeira linha (cabeçalho da sessão).
+        if idx == 0 {
+            cwd = extract_string(&line, "\"cwd\":\"");
+        }
         if idx > 200 {
             break;
         }
-        let Ok(line) = line else { break };
 
         if line.contains("\"type\":\"session_info\"") {
             if let Some(n) = extract_string(&line, "\"name\":\"") {
@@ -1525,8 +1566,12 @@ fn read_title(session_file: &Path) -> Option<String> {
         }
     }
 
-    let picked = name.or(first_user)?;
-    // tira cercas de código e colapsa espacos
+    (cwd, flatten_title(name.or(first_user)))
+}
+
+/// Título colapsado: tira cercas de código, junta espaços e corta em 64 chars.
+fn flatten_title(picked: Option<String>) -> Option<String> {
+    let picked = picked?;
     let flat = picked
         .replace('`', " ")
         .split_whitespace()
@@ -1536,13 +1581,6 @@ fn read_title(session_file: &Path) -> Option<String> {
         return None;
     }
     Some(flat.chars().take(64).collect())
-}
-
-fn read_cwd(session_file: &Path) -> Option<String> {
-    let file = fs::File::open(session_file).ok()?;
-    let mut first = String::new();
-    BufReader::new(file).read_line(&mut first).ok()?;
-    extract_string(&first, "\"cwd\":\"")
 }
 
 fn read_mtime(session_file: &Path) -> u64 {
@@ -2082,8 +2120,9 @@ pub fn list_sessions() -> Result<String, String> {
                 continue;
             };
 
-            let cwd = read_cwd(&path).unwrap_or_default();
-            let title = read_title(&path).unwrap_or_default();
+            let (cwd, title) = read_head_meta(&path);
+            let cwd = cwd.unwrap_or_default();
+            let title = title.unwrap_or_default();
             let child_dir = path.with_extension("");
             let children = if child_dir.is_dir() {
                 fs::read_dir(&child_dir)
@@ -2385,12 +2424,14 @@ fn search_sessions_capped(
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
+        // cwd e título na mesma abertura (antes eram duas).
+        let (cwd, title) = read_head_meta(file);
         hits.push((
             *mtime,
             stem,
             file.to_string_lossy().to_string(),
-            read_cwd(file).unwrap_or_default(),
-            read_title(file).unwrap_or_default(),
+            cwd.unwrap_or_default(),
+            title.unwrap_or_default(),
             matches,
             snippet,
             tools,
@@ -2527,6 +2568,45 @@ mod tests {
             body.push_str(&format!("{{\"type\":\"message\",\"id\":{i}}}\n"));
         }
         t.file(rel, &body)
+    }
+
+    // ---------- leitura do cabeçalho da sessão ----------
+
+    #[test]
+    fn read_head_meta_le_cwd_e_titulo_numa_abertura() {
+        let t = Tmp::new("head");
+        let body = concat!(
+            "{\"type\":\"session_start\",\"cwd\":\"/home/u/proj\"}\n",
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"arruma `o` build\"}]}}\n"
+        );
+        let p = t.file("s.jsonl", body);
+        let (cwd, title) = read_head_meta(&p);
+        assert_eq!(cwd.as_deref(), Some("/home/u/proj"));
+        // Cerca de código vira espaço e o espaço em excesso colapsa.
+        assert_eq!(title.as_deref(), Some("arruma o build"));
+        // `read_cwd`/`read_title` são o mesmo caminho: não podem divergir.
+        assert_eq!(read_cwd(&p), cwd);
+        assert_eq!(read_title(&p), title);
+    }
+
+    #[test]
+    fn read_head_meta_sem_arquivo_devolve_none_none() {
+        let t = Tmp::new("head-missing");
+        let (cwd, title) = read_head_meta(&t.at("nao-existe.jsonl"));
+        assert!(cwd.is_none() && title.is_none());
+    }
+
+    #[test]
+    fn read_tail_corta_no_tamanho_e_descarta_linha_parcial() {
+        let t = Tmp::new("tail");
+        let p = t.file("h.log", "linha-1\nlinha-2\nlinha-3\n");
+        let path = p.to_str().expect("path utf-8");
+        // Cabe inteiro: devolve tudo.
+        assert_eq!(read_tail(path, 1024).as_deref(), Some("linha-1\nlinha-2\nlinha-3\n"));
+        // Corta no meio: a primeira linha sobrevivente é inteira.
+        let got = read_tail(path, 12).expect("tail");
+        assert!(!got.starts_with("nha"), "linha parcial vazou: {got:?}");
+        assert!(got.ends_with("linha-3\n"), "fim perdido: {got:?}");
     }
 
     // ---------- resolve_pi_bin: decisão pura, sem env e sem fs ----------

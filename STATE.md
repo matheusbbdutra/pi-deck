@@ -1,5 +1,21 @@
 # STATE — sightdeck
 
+## Perf de boot/render (2026-11-19, fases 1-3)
+
+- **Fase 1** (`bc1431a`): 42 comandos viraram `#[tauri::command(async)]` (saem da
+  thread do IPC; `pty_*` fica sync pela ordem open→write) e o stream não
+  re-renderiza markdown por frame (delta cru + `flushStream` no fim de turno).
+- **Fase 2** (`da65526`): histórico em fatias de 25 com `renderToken` (offscreen
+  segue síncrono por causa do `loadEarlier`), `scrollBottom` coalescido no rAF,
+  `write_stdin` escreve fora do lock global e `stop_session`/`kill_all` matam
+  fora do mutex.
+- **Fase 3**: `session_model` com `contained_in` + stream de linhas (era
+  `read_to_string` de até 26 MB); `hooks_tail` lê só o fim do log; `git_file_diff`
+  capa em 256 KB; `list_sessions` abre cada arquivo uma vez (`read_head_meta`).
+- **Medido**: 749 `.jsonl` / 548 MB de histórico; varredura completa leva ~880 ms
+  de I/O (cache quente). `usage_stats` ficou sem teto por decisão — é async desde
+  a fase 1 e roda só ao abrir a view de uso.
+
 ## Onde estamos (2026-11-18, modal fechável + ⚙ direto)
 
 - **⚙ abre direto o modal** `#settings` na aba Geral; o popover foi REMOVIDO

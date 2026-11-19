@@ -53,6 +53,23 @@ pub fn git_status(cwd: String) -> Result<String, String> {
     Ok(status_payload(&status_out, numstat_out.as_deref()))
 }
 
+/// Teto do diff mandado ao webview: arquivo untracked de vários MB virava um
+/// único `setMarkdown` gigante (trava de render) e o mesmo tanto de IPC.
+const MAX_DIFF_BYTES: usize = 256 * 1024;
+
+fn cap_diff(mut patch: String) -> String {
+    if patch.len() <= MAX_DIFF_BYTES {
+        return patch;
+    }
+    let mut cut = MAX_DIFF_BYTES;
+    while cut > 0 && !patch.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    patch.truncate(cut);
+    patch.push_str("\n\n… diff truncado (arquivo grande)");
+    patch
+}
+
 /// Patch unificado de UM arquivo do `cwd`: `HEAD` (worktree + índice), depois só
 /// o índice (`--cached`) e por fim `--no-index` contra o device nulo, que é o
 /// caminho do untracked. Texto cru; sem diff, string vazia.
@@ -67,14 +84,14 @@ pub fn git_file_diff(cwd: String, path: String) -> Result<String, String> {
         &["-c", "core.quotepath=false", "diff", "HEAD", "--no-color", "--", &path],
     )?;
     if let Some(patch) = head.filter(|p| !p.trim().is_empty()) {
-        return Ok(patch);
+        return Ok(cap_diff(patch));
     }
     let cached = run_git(
         &cwd,
         &["-c", "core.quotepath=false", "diff", "--cached", "--no-color", "--", &path],
     )?;
     if let Some(patch) = cached.filter(|p| !p.trim().is_empty()) {
-        return Ok(patch);
+        return Ok(cap_diff(patch));
     }
     // `--no-index` sai != 0 quando há diferença (o caso normal): o stdout vale
     // mesmo assim, por isso `run_git_raw` em vez de `run_git`.
@@ -82,7 +99,7 @@ pub fn git_file_diff(cwd: String, path: String) -> Result<String, String> {
         &cwd,
         &["-c", "core.quotepath=false", "diff", "--no-index", "--no-color", "/dev/null", &path],
     )?;
-    Ok(patch)
+    Ok(cap_diff(patch))
 }
 
 /// `path` vem do webview e vira argumento do git: só caminho relativo, sem `..`
