@@ -2323,6 +2323,7 @@ function renderHealthChip() {
   chip.title = st.title;
   // O chip só mostra a contagem; o overlay Debug é onde a lista vira legível.
   if ($('pane-debug') && !$('pane-debug').classList.contains('hidden')) renderHealthList();
+  renderNotify();
   return st;
 }
 
@@ -2357,6 +2358,61 @@ export function renderHealthList(map = current ? healthBySession.get(current.key
   back.onclick = () => unmuteHealth();
   foot.appendChild(back);
   host.appendChild(foot);
+}
+
+/* =============== central de notificações =============== */
+/** Avisos vivos de TODAS as sessões (o ⚠ do header só conta a atual). */
+function notifyEntries() {
+  const out = [];
+  for (const [key, map] of healthBySession) {
+    if (!(map instanceof Map) || !map.size) continue;
+    const tab = tabs.find(x => x.key === key);
+    const label = (tab && tab.label) || prettyId(key);
+    for (const [id, kind] of map) out.push({ key, label, id, kind });
+  }
+  return out;
+}
+
+/** Botão do rodapé + lista do popover. Chamado por `renderHealthChip`, que já roda
+ *  quando um aviso chega, é dispensado ou a sessão fecha. */
+export function renderNotify() {
+  const btn = $('notifybtn');
+  if (!btn) return;
+  const entries = notifyEntries();
+  btn.classList.toggle('hidden', !entries.length);
+  btn.textContent = '⚠ ' + entries.length;
+  btn.classList.toggle('warn', entries.some(e => e.kind === 'mcp'));
+  btn.title = entries.length ? t('notify.title', { n: entries.length }) : '';
+  const pop = $('notifypop');
+  if (!pop || pop.classList.contains('hidden')) return;
+  const head = $('notifyhead');
+  if (head) head.textContent = t('notify.head');
+  const host = $('notifylist');
+  clear(host);
+  if (!entries.length) { setEmpty(host, t('notify.empty')); return; }
+  for (const e of entries) {
+    const row = el('div', 'notify-row');
+    row.appendChild(el('span', 'notify-kind', e.kind));
+    const body = el('div', 'notify-body');
+    body.appendChild(el('div', 'notify-msg', e.id));
+    body.appendChild(el('div', 'notify-src', e.label));
+    row.appendChild(body);
+    const off = el('button', 'tiny', '✕');
+    off.title = t('health.dismiss');
+    off.onclick = () => muteHealth(e.id);
+    row.appendChild(off);
+    host.appendChild(row);
+  }
+  const restore = $('notifyrestore');
+  if (restore) restore.classList.toggle('hidden', !mutedIds().size);
+}
+
+function toggleNotify(force) {
+  const pop = $('notifypop');
+  if (!pop) return;
+  const show = force === undefined ? pop.classList.contains('hidden') : force;
+  pop.classList.toggle('hidden', !show);
+  if (show) renderNotify();
 }
 
 /* Reanexa linhas locais que o histórico do disco ainda não tem. Roda depois do
@@ -2854,6 +2910,30 @@ export function msgSpeed(m) {
   return tpsTxt + ' tok/s · ' + out + ' out · ' + secsTxt + 's';
 }
 
+/** Velocidade média de geração do histórico: soma de `output` ÷ soma do tempo
+ *  das respostas que têm `usage.output` + `durationMs` (média ponderada pelo
+ *  tamanho — a média das taxas daria o mesmo peso a respostas curtas e longas).
+ *  Devolve `37,5 tok/s` ou `null` quando nenhuma resposta tem duração. */
+export function avgMsgSpeed(messages) {
+  let out = 0;
+  let ms = 0;
+  let n = 0;
+  for (const m of Array.isArray(messages) ? messages : []) {
+    const u = m && m.usage;
+    const o = u ? Number(u.output) : NaN;
+    const d = m ? Number(m.durationMs) : NaN;
+    if (!Number.isFinite(o) || !Number.isFinite(d) || d <= 0 || o <= 0) continue;
+    out += o;
+    ms += d;
+    n++;
+  }
+  if (!n || ms <= 0) return null;
+  const tps = out / (ms / 1000);
+  // Mesma régua de `msgSpeed`, sem o ",0" que só polui (50,0 → 50).
+  const txt = tps >= 100 ? String(Math.round(tps)) : tps.toFixed(1).replace('.', ',').replace(/,0$/, '');
+  return txt + ' tok/s';
+}
+
 /** Stats do RPC + parcial em voo, sem tocar no cache por aba. */
 export function liveStatsView(data, live) {
   const stats = data || {};
@@ -2947,12 +3027,10 @@ export function ctxSnapshot(view, opts) {
       v: t('ctx.cache_hit_value', { pct: Math.round((cacheRead / (cacheRead + rawIn)) * 100) }), dim: true });
   }
   blocks.push({ t: 'row', k: t('ctx.io'), v: fmtTokens(tok.input) + ' / ' + fmtTokens(tok.output) });
-  const msgs = Number(st.totalMessages) || 0;
-  const totalTok = Number(tok.total) || 0;
-  if (msgs > 0 && totalTok > 0) {
-    blocks.push({ t: 'row', k: t('ctx.avg'),
-      v: t('ctx.avg_value', { n: fmtTokens(Math.round(totalTok / msgs)) }), dim: true });
-  }
+  // Velocidade média de geração (tok/s), não tokens de cache: `tokens.total`
+  // soma cacheRead e não é "por mensagem". Só respostas com duração entram.
+  const speed = avgMsgSpeed(o.messages);
+  if (speed) blocks.push({ t: 'row', k: t('ctx.avg'), v: t('ctx.avg_value', { n: speed }), dim: true });
   if (view.billed || view.ctxDelta) {
     blocks.push({ t: 'row', k: t('ctx.live'),
       v: t('ctx.live_value', { b: fmtTokens(view.billed), c: fmtTokens(view.ctxDelta) }) });
@@ -3623,6 +3701,9 @@ async function closeTab(key) {
   stopLive(key);
   // Aba fechada leva os avisos junto: reabrir a mesma key não pode herdar chip velho.
   healthBySession.delete(key);
+  // A central de notificações soma todas as sessões: fechar uma aba tira os
+  // avisos dela da contagem.
+  renderNotify();
   // Aba fechada sai do vigia: sem isto uma sonda pendente poderia destravar a chave
   // reaberta logo depois (mesma key, outro processo).
   delete lastProbeAt[key];
@@ -4726,13 +4807,19 @@ function renderProviders(filter) {
 
     if (p.status === 'ready') {
       row.appendChild(el('span', 'cat-installed', 'pronto'));
+    } else if (p.reason === 'provider_not_found') {
+      // Provider que só existe por extensão (commandcode): `pi auth login` não
+      // conhece o nome, então o botão "logar" só daria erro.
+      row.appendChild(el('span', 'prov-nocred', 'via extensão'));
     } else if (p.configured) {
       row.appendChild(el('span', 'prov-nocred', 'sem credencial'));
     }
 
-    const btn = el('button', 'ghost', 'logar');
-    btn.onclick = () => { closeProvPicker(); startLogin(p.name); };
-    row.appendChild(btn);
+    if (p.reason !== 'provider_not_found') {
+      const btn = el('button', 'ghost', 'logar');
+      btn.onclick = () => { closeProvPicker(); startLogin(p.name); };
+      row.appendChild(btn);
+    }
     host.appendChild(row);
   }
 }
@@ -4841,12 +4928,15 @@ function renderProvidersTab() {
     const row = el('div', 'cat-row prov-row');
     row.appendChild(el('span', 'cat-name', p.name));
     if (p.status === 'ready') row.appendChild(el('span', 'cat-installed', 'pronto'));
+    else if (p.reason === 'provider_not_found') row.appendChild(el('span', 'prov-nocred', 'via extensão'));
     else if (p.configured) row.appendChild(el('span', 'prov-nocred', 'sem credencial'));
 
-    const login = el('button', 'ghost', p.status === 'ready' ? 'relogar' : 'logar');
-    login.title = 'abre um terminal com pi auth login ' + p.name;
-    login.onclick = () => startLogin(p.name);
-    row.appendChild(login);
+    if (p.reason !== 'provider_not_found') {
+      const login = el('button', 'ghost', p.status === 'ready' ? 'relogar' : 'logar');
+      login.title = 'abre um terminal com pi auth login ' + p.name;
+      login.onclick = () => startLogin(p.name);
+      row.appendChild(login);
+    }
 
     const del = el('button', 'ghost', 'remover');
     del.title = 'pi auth logout ' + p.name + ' (apaga a credencial de auth.json)';
@@ -4924,6 +5014,9 @@ async function checkAuth() {
     const st = JSON.parse(String(await inv('auth_status', { provider })));
     const ready = !!st && st.status === 'ready';
     const chip = $('authchip');
+    // `provider_not_found` = provider de extensão (ex.: commandcode): quem
+    // autentica é a extensão, não o CLI — o chip "logar" seria um botão morto.
+    if (st && st.reason === 'provider_not_found') { chip.classList.add('hidden'); return; }
     chip.classList.remove('hidden');
     chip.classList.toggle('ok', ready);
     chip.classList.toggle('warn', !ready);
@@ -5643,6 +5736,17 @@ try {
 }
 // Aviso de extensão não tem overlay próprio: o Diagnóstico já lista as linhas RPC.
 $('healthchip').onclick = () => openDebug();
+$('notifybtn').onclick = (e) => { e.stopPropagation(); toggleNotify(); };
+$('notifyclose').onclick = () => toggleNotify(false);
+$('notifydebug').onclick = () => { toggleNotify(false); openDebug(); };
+$('notifyrestore').onclick = () => unmuteHealth();
+// Fecha ao clicar fora (o clique no próprio popover não fecha).
+document.addEventListener('click', (e) => {
+  const pop = $('notifypop');
+  if (!pop || pop.classList.contains('hidden')) return;
+  if (pop.contains(e.target) || e.target === $('notifybtn')) return;
+  toggleNotify(false);
+});
 $('debugrefresh').onclick = () => { loadMissions(); renderDiag(); renderHealthList(); };
 $('checkupdate').onclick = () => checkUpdate(true);
 $('updatebtn').onclick = async () => {

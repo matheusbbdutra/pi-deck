@@ -311,32 +311,43 @@ pub fn auth_providers() -> Result<String, String> {
         .map(|p| {
             let configured = configured.iter().any(|c| c == p);
             // Só consulta credencial dos que têm modelo no catálogo (evita 44 chamadas).
-            let status = if configured {
-                std::process::Command::new(pi_bin())
+            // `provider_not_found` = provider que só existe por extensão (ex.:
+            // commandcode): o CLI não tem `auth login` para ele, então a UI não
+            // deve oferecer o botão "logar" (só dava erro).
+            let (status, reason) = if configured {
+                match std::process::Command::new(pi_bin())
                     .args(["auth", "check", "--provider", p, "--json"])
                     .output()
-                    .ok()
-                    .map(|o| {
+                {
+                    Ok(o) => {
                         let out = String::from_utf8_lossy(&o.stdout);
                         let parsed = out.trim();
-                        if parsed.contains("\"ready\"") {
-                            "ready".to_string()
+                        let status = if parsed.contains("\"ready\"") {
+                            "ready"
                         } else if parsed.contains("not_ready") {
-                            "not_ready".to_string()
+                            "not_ready"
                         } else {
-                            "unknown".to_string()
-                        }
-                    })
-                    .unwrap_or_else(|| "unknown".to_string())
+                            "unknown"
+                        };
+                        let reason = if parsed.contains("provider_not_found") {
+                            "provider_not_found"
+                        } else {
+                            ""
+                        };
+                        (status.to_string(), reason.to_string())
+                    }
+                    Err(_) => ("unknown".to_string(), String::new()),
+                }
             } else {
-                String::new()
+                (String::new(), String::new())
             };
 
             format!(
-                "{{\"name\":\"{}\",\"configured\":{},\"status\":\"{}\"}}",
+                "{{\"name\":\"{}\",\"configured\":{},\"status\":\"{}\",\"reason\":\"{}\"}}",
                 escape_json(p),
                 configured,
-                status
+                status,
+                reason
             )
         })
         .collect();

@@ -167,9 +167,20 @@
     <div id="searchresults" class="sess-list hidden"></div>
   </div>
   <div id="sessions"></div>
-  <div class="side-foot"><span id="piversion">pi …</span><span id="meminfo" class="mem-info" title="consumo de memória"></span><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
+  <div class="side-foot"><span id="piversion">pi …</span><span id="meminfo" class="mem-info" title="consumo de memória"></span><button id="notifybtn" class="ghost small health-chip hidden" title=""></button><span id="authchip" class="auth-chip hidden"></span><button id="termbtn" class="ghost small" title="Terminal (Ctrl+`)">&gt;_</button></div>
   <div id="colgripaside" class="col-grip col-grip-aside" title="arraste com Ctrl para redimensionar"></div>
 </aside>
+
+<div id="notifypop" class="notify-pop hidden">
+  <div class="notify-head">
+    <b id="notifyhead">Notificações</b>
+    <span class="spacer"></span>
+    <button id="notifydebug" class="tiny" title="abre o Diagnóstico com a lista completa">Debug</button>
+    <button id="notifyclose" class="tiny" title="Fechar">×</button>
+  </div>
+  <div id="notifylist" class="notify-list"></div>
+  <div class="notify-foot"><button id="notifyrestore" class="tiny hidden">restaurar dispensados</button></div>
+</div>
 
 <main>
   <div id="updatebar" class="update-bar hidden">

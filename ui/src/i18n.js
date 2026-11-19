@@ -305,8 +305,8 @@ export const STRINGS = {
     'ctx.cache_value': 'read {r} · write {w}',
     'ctx.cache_hit': 'Cache hit do input',
     'ctx.cache_hit_value': '{pct}% veio do cache',
-    'ctx.avg': 'Média por mensagem',
-    'ctx.avg_value': '~{n} tokens',
+    'ctx.avg': 'Velocidade média',
+    'ctx.avg_value': '{n}',
     'ctx.composition': 'Composição (estimada)',
     'ctx.comp_system': 'system',
     'ctx.comp_user': 'usuário',
@@ -411,6 +411,9 @@ export const STRINGS = {
     'export.done': 'exportado: {x}',
     'turn.interrupted': 'turno interrompido',
     'health.more': '… +{n} aviso(s)',
+    'notify.head': 'Notificações',
+    'notify.title': '{n} aviso(s) de extensão no total (todas as sessões)',
+    'notify.empty': 'nenhum aviso agora',
     'update.install': 'Baixar e instalar'
   },
   en: {
@@ -672,8 +675,8 @@ export const STRINGS = {
     'ctx.cache_value': 'read {r} · write {w}',
     'ctx.cache_hit': 'Input cache hit',
     'ctx.cache_hit_value': '{pct}% came from cache',
-    'ctx.avg': 'Average per message',
-    'ctx.avg_value': '~{n} tokens',
+    'ctx.avg': 'Average speed',
+    'ctx.avg_value': '{n}',
     'ctx.composition': 'Composition (estimated)',
     'ctx.comp_system': 'system',
     'ctx.comp_user': 'user',
@@ -778,6 +781,9 @@ export const STRINGS = {
     'export.done': 'exported: {x}',
     'turn.interrupted': 'turn interrupted',
     'health.more': '… +{n} warning(s)',
+    'notify.head': 'Notifications',
+    'notify.title': '{n} extension warning(s) across all sessions',
+    'notify.empty': 'no warnings right now',
     'update.install': 'Download and install'
   },
 };

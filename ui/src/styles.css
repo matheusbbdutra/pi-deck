@@ -85,6 +85,23 @@
   .auth-chip.warn { background:var(--warn-bg); color:var(--warn); }
   .auth-chip.hidden { display:none; }
 
+  /* central de notificações: botão no rodapé + popover acima dele */
+  .notify-pop { position:fixed; left:10px; bottom:40px; z-index:40; width:min(460px,calc(100vw - 24px));
+               max-height:min(60vh,520px); display:flex; flex-direction:column; background:var(--bg-2);
+               border:1px solid var(--line); border-radius:6px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  .notify-pop.hidden { display:none; }
+  .notify-head { flex:none; display:flex; align-items:center; gap:6px; padding:7px 10px;
+                 border-bottom:1px solid var(--line); font-family:var(--mono); font-size:11px; }
+  .notify-list { flex:1; overflow:auto; }
+  .notify-row { display:flex; align-items:flex-start; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); }
+  .notify-row:hover { background:var(--hover); }
+  .notify-kind { flex:none; font-family:var(--mono); font-size:9.5px; text-transform:uppercase;
+                 color:var(--warn); padding-top:2px; }
+  .notify-body { flex:1; min-width:0; }
+  .notify-msg { font-size:11.5px; white-space:pre-wrap; word-break:break-word; }
+  .notify-src { font-family:var(--mono); font-size:10px; color:var(--mute); margin-top:2px; }
+  .notify-foot { flex:none; padding:5px 10px; border-top:1px solid var(--line); }
+
   /* tabs de sessão */
   .tabs { grid-column:1/-1; display:flex; align-items:stretch; gap:1px; padding:0 6px;
           border-bottom:1px solid var(--line); background:var(--bg-1);

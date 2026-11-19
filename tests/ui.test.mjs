@@ -804,14 +804,32 @@ describe('snapshots dos pops (Fase 2)', () => {
       },
       billed: 100, ctxDelta: 5000,
     };
-    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true });
+    // Duas respostas com duração: 1.000 tokens de output em 20 s → 50 tok/s.
+    const messages = [
+      { role: 'assistant', usage: { output: 600 }, durationMs: 10000 },
+      { role: 'assistant', usage: { output: 400 }, durationMs: 10000 },
+    ];
+    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true, messages });
     expect(snap.empty).toBe(false);
     // window, alert, auto, limit, cache, cache_hit, io, avg, live, cost, messages
     expect(snap.blocks.map(b => b.t)).toEqual(['row', 'alert', 'row', 'limit', 'row', 'row', 'row', 'row', 'row', 'row', 'row']);
     expect(snap.blocks[1]).toMatchObject({ kind: 'danger' });
     expect(snap.blocks[2].v).toBe('ligada');
     expect(snap.blocks[5].k).toBe('Cache hit do input');
-    expect(snap.blocks[7].k).toBe('Média por mensagem');
+    expect(snap.blocks[7]).toMatchObject({ k: 'Velocidade média', v: '50 tok/s' });
+  });
+
+  it('ctxSnapshot sem duração nas respostas não mostra a velocidade', () => {
+    const view = {
+      stats: {
+        tokens: { total: 190000, input: 100000, output: 90000, cacheRead: 10, cacheWrite: 20 },
+        contextUsage: { tokens: 190000, contextWindow: 200000, percent: 95 },
+        cost: 1.5, totalMessages: 7,
+      },
+      billed: 0, ctxDelta: 0,
+    };
+    const snap = ctxSnapshot(view, { autoOn: true, tabs: [], curKey: null, reserve: null, win: 200000, canEdit: true, messages: [] });
+    expect(snap.blocks.some(b => b.k === 'Velocidade média')).toBe(false);
   });
 });
 
