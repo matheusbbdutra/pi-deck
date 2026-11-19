@@ -35,6 +35,9 @@ versioning follows [SemVer](https://semver.org/).
 - **`scrollBottom` no `requestAnimationFrame`**, coalescendo os deltas de token.
 
 ### Fixed
+- **Troca de aba não pula mais o scroll**: o rebuild em fatias limpava o log (topo) e só no fim
+  saltava para o rodapé; agora cada fatia entra ancorada no fim e o log fica oculto durante o
+  rebuild (`#log.rebuilding`), aparecendo já pronto.
 - **Aviso de extensão duplicado**: o chip do topo virou o único ponto de entrada e abre a lista
   com dispensa por aviso + atalho para o Diagnóstico.
 - **`session_model`** agora passa por `contained_in` — era o único caminho do webview sem a
