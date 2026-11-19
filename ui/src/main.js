@@ -1083,6 +1083,7 @@ async function renderMessages(data, ctx, keepNote) {
       entry.root.classList.add(m.isError ? 'err' : 'ok');
       entry.icon.textContent = m.isError ? '✕' : '✓';
       applyToolResult(entry, m);
+      renderToolImages(entry, m);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
     }
   };
@@ -2685,6 +2686,7 @@ listen('rpc-line', (ev) => {
       entry.root.classList.add(rec.isError ? 'err' : 'ok');
       entry.icon.textContent = rec.isError ? '✕' : '✓';
       applyToolResult(entry, rec.result);
+      renderToolImages(entry, rec.result);
       if (uiSettings.expandTools) entry.root.classList.remove('collapsed');
       // Tokens crescem também entre tool calls: atualiza o chip sem esperar o turno.
       {
@@ -5185,6 +5187,31 @@ function renderAttachments() {
 }
 
 /** Imagem enviada, exibida no transcript. */
+/** Imagem que uma tool leu: o histórico só traz `img: {mimeType, bytes}`, então o
+ *  arquivo é lido do disco (uma vez) pelo caminho da própria chamada. */
+export function renderToolImages(entry, raw) {
+  if (!entry || entry.imgsDone || !entry.body) return;
+  const content = raw && (raw.content || raw);
+  if (!Array.isArray(content)) return;
+  const blocks = content.filter(b => b && ((b.type === 'image' && b.data) || (b.img && b.img.mimeType)));
+  if (!blocks.length) return;
+  entry.imgsDone = true;
+  const row = el('div', 'tool-imgs');
+  entry.body.appendChild(row);
+  for (const b of blocks) {
+    if (b.type === 'image' && b.data) {
+      row.appendChild(thumb('data:' + (b.mimeType || 'image/png') + ';base64,' + b.data));
+      continue;
+    }
+    const box = el('div', 'img-missing', b.text || 'imagem');
+    row.appendChild(box);
+    if (!entry.path) continue;
+    inv('read_image_data', { path: entry.path })
+      .then(url => { if (box.isConnected) box.replaceWith(thumb(url)); })
+      .catch(err => { box.textContent = String((err && err.message) || err); });
+  }
+}
+
 function thumb(dataUrl) {
   const box = el('div', 'msg-img');
   const im = document.createElement('img');

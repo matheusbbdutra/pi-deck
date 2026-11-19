@@ -65,6 +65,7 @@ let levelsSnapshot;
 let ctxSnapshot;
 let ctxComposition;
 let limitSnapshot;
+let renderToolImages;
 let forkSnapshot;
 let tabsSnapshot;
 let sessionsSnapshot;
@@ -108,7 +109,7 @@ beforeAll(async () => {
      healthChipState, renderHealthList, muteHealth, unmuteHealth, dropQueuedRows, normalizeRowText, answerAlreadyRendered, isLiveRun, elapsedFor,
      renderSubs, renderedAnswerNode, reattachPlan, estimateMessageTokens, liveTurnTokens,
      liveStatsView, msgSpeed, modelListSnapshot, levelsSnapshot, ctxSnapshot,
-     limitSnapshot, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping, ctxComposition } = await import('../ui/src/main.js'));
+     limitSnapshot, renderToolImages, forkSnapshot, tabsSnapshot, sessionsSnapshot, searchSnapshot, plansSnapshot, missionsSnapshot, gitSnapshot, subsSnapshot, attachmentsSnapshot, paletteSnapshot, cmdkSnapshot, openCmdk, closeCmdk, typingSnapshot, setTyping, ctxComposition } = await import('../ui/src/main.js'));
 });
 
 describe('appendCapped', () => {
@@ -1750,5 +1751,41 @@ describe('tokens do turno em voo (mensagem ainda não persistida)', () => {
     );
     expect(view.stats.contextUsage.tokens).toBe(100_000);
     expect(view.stats.contextUsage.percent).toBe(100);
+  });
+});
+
+describe('renderToolImages', () => {
+  it('mostra a imagem embutida que o modelo leu', () => {
+    const body = document.createElement('div');
+    const entry = { body, path: '/tmp/v-extrato2.png' };
+    renderToolImages(entry, {
+      content: [
+        { type: 'text', text: '2 linhas' },
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+      ],
+    });
+    const img = body.querySelector('.tool-imgs img');
+    expect(img).toBeTruthy();
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+    expect(entry.imgsDone).toBe(true);
+  });
+
+  it('não repete a imagem quando o resultado chega parcial e depois final', () => {
+    const body = document.createElement('div');
+    const entry = { body, path: '' };
+    const raw = { content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] };
+    renderToolImages(entry, raw);
+    renderToolImages(entry, raw);
+    expect(body.querySelectorAll('.tool-imgs img').length).toBe(1);
+  });
+
+  it('sem caminho na chamada, deixa o marcador em vez de pedir o arquivo', () => {
+    const body = document.createElement('div');
+    const entry = { body, path: '' };
+    renderToolImages(entry, {
+      content: [{ type: 'text', text: '[imagem 176 KB]', img: { mimeType: 'image/png', bytes: 180224 } }],
+    });
+    expect(body.querySelector('.img-missing').textContent).toBe('[imagem 176 KB]');
+    expect(body.querySelector('img')).toBeNull();
   });
 });

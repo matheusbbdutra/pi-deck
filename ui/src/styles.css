@@ -416,6 +416,11 @@
   .msg-img { margin-top:6px; }
   .msg-img img { max-width:320px; max-height:240px; border-radius:5px;
                  border:1px solid var(--line); display:block; cursor:zoom-in; }
+  /* imagem que uma tool leu (read de .png): carga sob demanda pelo caminho */
+  .tool-imgs { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  .tool-imgs .msg-img { margin-top:0; }
+  .img-missing { font-size:11px; color:var(--mute); border:1px dashed var(--line);
+                 border-radius:4px; padding:3px 7px; align-self:center; max-width:240px; }
   /* visualizador da imagem ampliada */
   .img-view { position:fixed; inset:0; z-index:60; background:rgba(6,8,12,.88);
               display:flex; align-items:center; justify-content:center; cursor:zoom-out; }

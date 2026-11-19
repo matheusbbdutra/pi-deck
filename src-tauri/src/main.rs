@@ -37,6 +37,7 @@ fn main() {
             sessions::list_sessions,
             sessions::list_children,
             sessions::read_session_messages,
+            sessions::read_image_data,
             sessions::search_sessions,
             sessions::session_edits,
             sessions::session_model,

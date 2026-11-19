@@ -1753,9 +1753,19 @@ fn slim_content(content: &mut serde_json::Value, text_chars: usize, args_bytes: 
         serde_json::Value::Array(blocks) => {
             for block in blocks.iter_mut() {
                 if block.get("type").and_then(|v| v.as_str()) == Some("image") {
+                    // Base64 fica de fora do histórico (693 imagens, mediana de 176 KB):
+                    // o card lê o arquivo pelo caminho da tool call e mostra o que o
+                    // modelo viu. Mime e tamanho vão no bloco para o aviso do card.
+                    let bytes = block.get("data").and_then(|v| v.as_str()).map_or(0, |d| d.len() / 4 * 3);
+                    let mime = block
+                        .get("mimeType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("image/png")
+                        .to_string();
                     *block = serde_json::json!({
                         "type": "text",
-                        "text": "[imagem omitida: mensagem grande]"
+                        "text": format!("[imagem {} KB]", bytes / 1024),
+                        "img": { "mimeType": mime, "bytes": bytes },
                     });
                     continue;
                 }
@@ -2181,6 +2191,42 @@ pub fn list_sessions() -> Result<String, String> {
         .join(",");
 
     Ok(format!("[{json}]"))
+}
+
+/// Bytes de uma imagem que uma tool leu, para o card mostrar o que o modelo viu.
+/// O histórico não guarda base64 (mediana de 176 KB por imagem), então a UI pede
+/// sob demanda pelo caminho da chamada. Só extensão de imagem e até 8 MB.
+#[tauri::command(async)]
+pub fn read_image_data(path: String) -> Result<String, String> {
+    use base64::Engine;
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+    let real = fs::canonicalize(&path).map_err(|e| format!("{path}: {e}"))?;
+    let meta = fs::metadata(&real).map_err(|e| format!("{path}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{path}: não é arquivo"));
+    }
+    if meta.len() > MAX_BYTES {
+        return Err(format!("{path}: {} KB acima do teto de 8 MB", meta.len() / 1024));
+    }
+    let ext = real
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        other => return Err(format!("{path}: extensão não suportada ({other})")),
+    };
+    let bytes = fs::read(&real).map_err(|e| format!("{path}: {e}"))?;
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 /// Busca global no texto das sessões (`<root>/<proj>/<sess>.jsonl`).
@@ -2609,6 +2655,47 @@ mod tests {
         assert!(got.ends_with("linha-3\n"), "fim perdido: {got:?}");
     }
 
+    // ---------- read_image_data: base64 pronto para o card ----------
+
+    #[test]
+    fn read_image_data_devolve_data_url_com_mime() {
+        let t = Tmp::new("img");
+        let p = t.file("a.png", "PNG");
+        let url = read_image_data(p.to_str().expect("path utf-8").to_string()).expect("imagem");
+        // base64 de "PNG"
+        assert_eq!(url, "data:image/png;base64,UE5H");
+    }
+
+    #[test]
+    fn read_image_data_recusa_extensao_que_nao_e_imagem() {
+        let t = Tmp::new("imgtxt");
+        let p = t.file("a.txt", "x");
+        let err = read_image_data(p.to_str().expect("path utf-8").to_string())
+            .expect_err("extensão não deveria passar");
+        assert!(err.contains("não suportada"), "erro inesperado: {err}");
+    }
+
+    #[test]
+    fn read_image_data_recusa_arquivo_ausente() {
+        let t = Tmp::new("imgsumiu");
+        let err = read_image_data(t.at("nao-existe.png").to_str().expect("path utf-8").to_string())
+            .expect_err("arquivo ausente não deveria passar");
+        assert!(err.contains("nao-existe.png"), "erro inesperado: {err}");
+    }
+
+    #[test]
+    fn slim_message_line_troca_imagem_por_marcador_com_tamanho() {
+        let line = r#"{"type":"message","message":{"role":"toolResult","content":[{"type":"image","data":"AAAA","mimeType":"image/png"}]}}"#;
+        let out = slim_message_line(line, 64 * 1024).expect("linha");
+        assert!(!out.contains("AAAA"), "base64 vazou para o histórico: {out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+        let block = &v["message"]["content"][0];
+        assert_eq!(block["type"], "text");
+        assert_eq!(block["img"]["mimeType"], "image/png");
+        assert_eq!(block["img"]["bytes"], 3);
+        assert!(block["text"].as_str().unwrap_or_default().starts_with("[imagem"));
+    }
+
     // ---------- resolve_pi_bin: decisão pura, sem env e sem fs ----------
     // Os testes fixam o sufixo POSIX ("") em `resolve_pi_bin_with`; o wrapper
     // `resolve_pi_bin` aplica `bin_suffix(cfg!(windows))` e é coberto à parte.
@@ -2794,7 +2881,7 @@ mod tests {
         assert!(meta.contains("\"total\":3"), "{meta}");
         assert_eq!(out.lines().count(), 4, "meta + 3 mensagens");
         assert!(out.contains("prompt que nao pode sumir"), "texto da mensagem sumiu: {out}");
-        assert!(out.contains("imagem omitida"), "marcador da imagem sumiu: {out}");
+        assert!(out.contains("[imagem"), "marcador da imagem sumiu: {out}");
         assert!(!out.contains(&big), "base64 gigante nao pode ir ao webview");
         assert!(out.contains("\"timestamp\":123"), "timestamp (ordem da row) deve sobreviver");
     }
