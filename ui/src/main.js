@@ -617,7 +617,8 @@ async function runSearch(append) {
     searchOffset += items.length;
     const total = (res && res.total) || 0;
     searchTotal = total;
-    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
+    const cov = res && res.files ? t('search.coverage', { n: res.scannedFiles || 0, m: res.files }) : '';
+    setSearchMeta(t('search.total', { n: total }) + (res && res.truncated ? ' · ' + t('search.capped') : '') + (cov ? ' · ' + cov : '') + (searchOffset < total ? ' · ' + t('search.showing', { n: searchOffset }) : ''));
     if (searchResults) searchResults.sync();
   } catch (e) {
     setSearchMeta(String(e));

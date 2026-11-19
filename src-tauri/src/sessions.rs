@@ -1892,6 +1892,15 @@ const MAX_PATCH_BYTES: usize = 64 * 1024;
 const MAX_EDIT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_EDIT_ENTRIES: usize = 500;
 
+/// Busca global: guardas por arquivo/total (bytes de mensagem) + orçamento de tempo.
+/// O teto das edições (4 MiB) não serve aqui: cinco sessões grandes já estouravam
+/// e a varredura abortava sem ler as outras centenas de arquivos. Medido em 107
+/// sessões (215 MB): varredura completa em ~2 s; o teto por arquivo só corta
+/// sessão patológica, não a sessão grande do dia a dia.
+const SEARCH_FILE_BYTES: usize = 32 * 1024 * 1024;
+const SEARCH_TOTAL_BYTES: usize = 96 * 1024 * 1024;
+const SEARCH_BUDGET_MS: u128 = 2500;
+
 /// Mesma lógica com o root explícito — testável sem tocar em `HOME`.
 fn session_edits_in(path: &Path, root: &Path) -> Result<String, String> {
     // Mesma checagem de contenção: path vem do webview.
@@ -2138,10 +2147,11 @@ pub fn list_sessions() -> Result<String, String> {
 /// Busca global no texto das sessões (`<root>/<proj>/<sess>.jsonl`).
 /// `query` casa por substring (case-insensitive) no texto + nomes de tool;
 /// `tool` restringe a mensagens que usam a tool; `errors_only` a `toolResult` com erro.
-/// Pagina com `limit` (1..=100, padrão 20) + `offset`, e para o scan ao estourar o
-/// teto de bytes (`MAX_EDIT_BYTES`, o mesmo das edições): árvore gigante não pode
-/// entupir o IPC do webview. Linha gigante (> `MAX_PATCH_BYTES`) é pulada.
-/// Retorna `{"total","truncated","results":[{"id","file","cwd","title","matches","snippet","tools","hasError"}]}`.
+/// Pagina com `limit` (1..=100, padrão 20) + `offset`. O scan para por orçamento de
+/// tempo (`SEARCH_BUDGET_MS`) ou de bytes (`SEARCH_FILE_BYTES` por arquivo,
+/// `SEARCH_TOTAL_BYTES` no total) — arquivo grande é cortado, mas a varredura
+/// continua nos seguintes. Linha gigante (> `MAX_PATCH_BYTES`) é pulada.
+/// Retorna `{"total","truncated","files","scannedFiles","results":[{"id","file","cwd","title","matches","snippet","tools","hasError"}]}`.
 #[tauri::command]
 pub fn search_sessions(
     query: String,
@@ -2172,6 +2182,32 @@ fn search_sessions_in(
     errors_only: bool,
     limit: Option<usize>,
     offset: Option<usize>,
+) -> Result<String, String> {
+    search_sessions_capped(
+        root,
+        query,
+        tool,
+        errors_only,
+        limit,
+        offset,
+        SEARCH_FILE_BYTES,
+        SEARCH_TOTAL_BYTES,
+        SEARCH_BUDGET_MS,
+    )
+}
+
+/// Mesma busca com as guardas explícitas (os testes apertam os tetos).
+#[allow(clippy::too_many_arguments)]
+fn search_sessions_capped(
+    root: &Path,
+    query: &str,
+    tool: Option<&str>,
+    errors_only: bool,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    file_cap: usize,
+    total_cap: usize,
+    budget_ms: u128,
 ) -> Result<String, String> {
     let q = query.trim().to_lowercase();
     let toolf = tool
@@ -2209,13 +2245,22 @@ fn search_sessions_in(
     files.sort_by_key(|a| std::cmp::Reverse(a.0));
 
     let mut scanned: usize = 0;
+    let mut seen: usize = 0;
+    let mut scanned_files: usize = 0;
     let mut truncated = false;
+    let started = std::time::Instant::now();
     let mut hits: Vec<SearchHit> = Vec::new();
 
     'files: for (mtime, file) in &files {
+        if started.elapsed().as_millis() > budget_ms {
+            truncated = true;
+            break 'files;
+        }
         let Ok(handle) = fs::File::open(file) else {
             continue;
         };
+        scanned_files += 1;
+        let mut file_bytes: usize = 0;
         let mut matches = 0usize;
         let mut snippet = String::new();
         let mut tools: Vec<String> = Vec::new();
@@ -2228,7 +2273,17 @@ fn search_sessions_in(
                 continue;
             }
             scanned += line.len();
-            if scanned > MAX_EDIT_BYTES {
+            file_bytes += line.len();
+            seen += 1;
+            // Corta só este arquivo (não a varredura inteira) quando ele passa do
+            // teto: um `bash` de vários MB não pode esconder as sessões seguintes.
+            if file_bytes > file_cap || scanned > total_cap {
+                truncated = true;
+                break;
+            }
+            // Orçamento de tempo também dentro do arquivo: um `.jsonl` gigante
+            // não pode segurar a busca sozinho.
+            if seen & 255 == 0 && started.elapsed().as_millis() > budget_ms {
                 truncated = true;
                 break 'files;
             }
@@ -2368,7 +2423,8 @@ fn search_sessions_in(
         ));
     }
     Ok(format!(
-        "{{\"total\":{total},\"truncated\":{truncated},\"results\":[{body}]}}"
+        "{{\"total\":{total},\"truncated\":{truncated},\"files\":{},\"scannedFiles\":{scanned_files},\"results\":[{body}]}}",
+        files.len()
     ))
 }
 
@@ -2819,6 +2875,50 @@ mod tests {
         assert_eq!(v1["results"].as_array().unwrap().len(), 1, "{p1}");
         assert_eq!(v2["results"].as_array().unwrap().len(), 1, "{p2}");
         assert_ne!(v1["results"][0]["id"], v2["results"][0]["id"], "{p1} vs {p2}");
+    }
+
+    #[test]
+    fn search_reports_coverage_counts() {
+        let t = Tmp::new("searchcov");
+        let root = t.at("sessions");
+        t.file(
+            "sessions/proj/a.jsonl",
+            &search_msg("user", r#""content":"alfa""#),
+        );
+        t.file(
+            "sessions/proj/b.jsonl",
+            &search_msg("user", r#""content":"beta""#),
+        );
+
+        let out = search_sessions_in(&root, "alfa", None, false, None, None).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["files"], 2, "{out}");
+        assert_eq!(v["scannedFiles"], 2, "{out}");
+        assert_eq!(v["truncated"], false, "{out}");
+    }
+
+    #[test]
+    fn search_keeps_scanning_after_a_file_hits_its_cap() {
+        // Um arquivo acima do teto por arquivo corta só ele: as sessões seguintes
+        // continuam sendo lidas (antes, um `bash` gigante abortava tudo).
+        let t = Tmp::new("searchcap");
+        let root = t.at("sessions");
+        let filler = "x".repeat(60 * 1024);
+        let mut big = vec![search_msg("user", r#""content":"alfa""#)];
+        for _ in 0..20 {
+            big.push(search_msg("user", &format!(r#""content":"{filler}""#)));
+        }
+        t.file("sessions/proj/big.jsonl", &big.join("\n"));
+        t.file(
+            "sessions/proj/small.jsonl",
+            &search_msg("user", r#""content":"beta""#),
+        );
+
+        let out = search_sessions_capped(&root, "beta", None, false, None, None, 4096, usize::MAX, 10_000).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["total"], 1, "{out}");
+        assert_eq!(v["results"][0]["id"], "small", "{out}");
+        assert_eq!(v["truncated"], true, "{out}");
     }
 
     // ---------- session_edits: arquivos editados + patch ----------

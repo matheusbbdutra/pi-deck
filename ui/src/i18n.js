@@ -267,6 +267,7 @@ export const STRINGS = {
     'search.total': '{n} sessão(ões)',
     'search.none': 'nada encontrado',
     'search.capped': 'teto de leitura atingido',
+    'search.coverage': '{n} de {m} sessões',
     'search.showing': 'mostrando {n}',
     'search.matches': '{id} · {n} trecho(s)',
 
@@ -637,6 +638,7 @@ export const STRINGS = {
     'search.total': '{n} session(s)',
     'search.none': 'nothing found',
     'search.capped': 'read cap reached',
+    'search.coverage': '{n} of {m} sessions',
     'search.showing': 'showing {n}',
     'search.matches': '{id} · {n} match(es)',
 
